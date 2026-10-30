@@ -12,6 +12,7 @@ const {
   decodeLayout,
   readLayout,
   writeLayout,
+  removeLayout,
 } = require('./layout-store.js')
 const {
   LAYOUT_VERSION,
@@ -383,6 +384,43 @@ test('writing without a workspace id writes nothing; a failing store is a silent
   assert.equal(unwritable.writes.length, 0)
   assert.equal(writeLayout(thrownStorage(new Error('quota')), threePaneLayout()), false)
   assert.equal(writeLayout(undefined, threePaneLayout()), false)
+})
+
+test('clearing one workspace layout removes only its key and never throws', () => {
+  const store = new Map()
+  const storage = {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => store.set(key, value),
+    removeItem: (key) => store.delete(key),
+  }
+  const w1 = threePaneLayout()
+  const w2 = openPane(createLayout('w2'), pane('p9', 's9'))
+  writeLayout(storage, w1)
+  writeLayout(storage, w2)
+
+  assert.equal(removeLayout(storage, 'w1'), true)
+  assert.equal(storage.getItem(layoutKey('w1')), null)
+  assert.deepEqual(readLayout(storage, 'w2'), w2)
+  // Removing a key that is already gone is still a successful cleanup.
+  assert.equal(removeLayout(storage, 'w1'), true)
+  assert.equal(removeLayout(storage, 'w2'), true)
+  assert.equal(store.size, 0)
+})
+
+test('clearing is a safe false without a workspace, a store or removeItem', () => {
+  assert.equal(removeLayout(undefined, 'w1'), false)
+  assert.equal(removeLayout(null, 'w1'), false)
+  assert.equal(removeLayout(fakeStorage(null), 'w1'), false)
+  assert.equal(removeLayout({ getItem: () => null }, 'w1'), false)
+  assert.equal(removeLayout(fakeStorage(null), ''), false)
+  assert.equal(removeLayout(fakeStorage(null), null), false)
+
+  const throwing = {
+    removeItem() {
+      throw new Error('security error')
+    },
+  }
+  assert.equal(removeLayout(throwing, 'w1'), false)
 })
 
 test('two workspaces persist under separate keys without overwriting each other', () => {
