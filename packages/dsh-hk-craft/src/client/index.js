@@ -16,7 +16,9 @@
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
  * and thin React views (`pane-view.js`); the HK Craft settings page
  * (`settings-view.js`) is the transitional home of the diagnostics and the
- * split-view switch (ticket 05).
+ * split-view switch (ticket 05). The strip's native-action seats keep the same
+ * shape: `pane-subagents.js` is the pure projection and
+ * `pane-subagents-view.js` its React seat (ticket 08).
  */
 
 const { dictionaries } = require('./locale.js')
@@ -25,6 +27,7 @@ const { createSectionActions } = require('./dsh-workspaces.js')
 const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
 const { createViewSwitch } = require('./dsh-view-switch.js')
 const { createPaneBody, createPaneHost } = require('./pane-view.js')
+const { createSubagentSeat } = require('./pane-subagents-view.js')
 const { createSettingsSection } = require('./settings-view.js')
 const { registerCommands } = require('./commands.js')
 
@@ -57,6 +60,44 @@ const inject = ['slots', 'locale', 'sessions', 'layout']
 const COMMAND_SERVICES = ['commandUi', 'sessions', 'workspaces', 'uiWorkspace']
 
 /**
+ * The subagent seat's on-open projection refresh.
+ *
+ * `refreshProjections(parentSessionId)` is a public `sessions` method (see
+ * `doc/upstream-contracts.md#subagent-catalog-direct-children`), but reading it
+ * through `ctx.get` keeps the seat a pure consumer: a shell that ever ships
+ * without the service leaves the refresh a no-op instead of failing to mount.
+ *
+ * @param {any} ctx Cordis context of the client plugin row.
+ * @returns {(sessionId: string) => unknown}
+ */
+function catalogRefresher(ctx) {
+  return (sessionId) => {
+    if (typeof ctx?.get !== 'function') return undefined
+    return ctx.get('sessions')?.refreshProjections?.(sessionId)
+  }
+}
+
+/**
+ * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
+ *
+ * Ticket 08 fills `subagents`; ticket 07 fills `mode` in parallel, so each
+ * ticket adds its own key here and neither touches the strip or the group. The
+ * `createSeat` option exists for tests: production always builds the real
+ * seat, and the callback wiring stays observable without rendering React.
+ *
+ * @param {any} ctx Cordis context of the client plugin row.
+ * @param {{createSeat?: (options: object) => Function}} [options]
+ * @returns {Record<string, Function>}
+ */
+function createStripSeats(ctx, options = {}) {
+  const createSeat =
+    typeof options?.createSeat === 'function' ? options.createSeat : createSubagentSeat
+  return {
+    subagents: createSeat({ refreshCatalog: catalogRefresher(ctx) }),
+  }
+}
+
+/**
  * @param {any} ctx Cordis context of the client plugin row.
  */
 function apply(ctx) {
@@ -68,12 +109,11 @@ function apply(ctx) {
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
 
   /**
-   * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
-   * Each later ticket fills its own key — `mode` (ticket 07) and `subagents`
-   * (ticket 08) — without touching the strip or the group; an empty object
+   * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`);
+   * `createStripSeats` fills the subagent viewer (ticket 08). An empty seat map
    * keeps the group invisible and leaves the tabs all the room.
    */
-  const stripSeats = {}
+  const stripSeats = createStripSeats(ctx)
   const PaneHost = createPaneHost(controller, { seats: stripSeats })
   const PaneBody = createPaneBody(controller)
 
@@ -190,4 +230,6 @@ module.exports = {
   SETTINGS_SLOT,
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,
+  catalogRefresher,
+  createStripSeats,
 }

@@ -12,6 +12,8 @@ const {
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,
   SETTINGS_SLOT,
+  catalogRefresher,
+  createStripSeats,
 } = require('./index.js')
 const { zh, en } = require('./locale.js')
 const { CONTENT_FACTORY, PANEL_KEY, PANE_SLOT } = require('./dsh-pane-host.js')
@@ -308,6 +310,58 @@ test('skips command registration when a command service is missing', () => {
   apply(ctx)
   assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
   assert.equal(ctx.calls.registered.length, 4)
+})
+
+test('the strip fills its subagent seat with an optional-service catalog refresher', () => {
+  const refreshed = []
+  const ctx = fakeCtx({
+    services: {
+      ...workspaceServices(),
+      sessions: {
+        list: { getSnapshot: () => ({ byId: {} }) },
+        refreshProjections(sessionId) {
+          refreshed.push(sessionId)
+          return Promise.resolve()
+        },
+      },
+    },
+  })
+  const seatOptions = []
+  const seats = createStripSeats(ctx, {
+    createSeat(options) {
+      seatOptions.push(options)
+      return function Seat() {
+        return null
+      }
+    },
+  })
+
+  assert.deepEqual(Object.keys(seats), ['subagents'])
+  assert.equal(typeof seats.subagents, 'function')
+  assert.equal(seatOptions.length, 1)
+  assert.equal(typeof seatOptions[0].refreshCatalog, 'function')
+
+  seatOptions[0].refreshCatalog('s1')
+  assert.deepEqual(refreshed, ['s1'])
+})
+
+test('the catalog refresher reads sessions through ctx.get and stays quiet without it', () => {
+  const refreshed = []
+  const withSessions = fakeCtx({
+    services: {
+      ...workspaceServices(),
+      sessions: {
+        refreshProjections(sessionId) {
+          refreshed.push(sessionId)
+        },
+      },
+    },
+  })
+  catalogRefresher(withSessions)('s9')
+  assert.deepEqual(refreshed, ['s9'])
+
+  const withoutSessions = fakeCtx({ services: { ...workspaceServices() } })
+  assert.equal(catalogRefresher(withoutSessions)('s9'), undefined)
 })
 
 test('apply is idempotent in shape: no module-level state leaks between loads', () => {
