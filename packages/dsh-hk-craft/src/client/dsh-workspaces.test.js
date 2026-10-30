@@ -59,6 +59,105 @@ test('sectionModel projects the shell snapshots into section rows', () => {
   assert.deepEqual(rows, [{ workspaceId: 'w1', title: 'A', light: 'yellow', current: false }])
 })
 
+/**
+ * Stand-in for the pane controller's "was this workspace ever opened in split"
+ * answer. Only `isWorkspaceEnabled` is needed by the projection.
+ */
+function fakePaneFace(enabledIds) {
+  const asked = []
+  const enabled = new Set(enabledIds)
+  return {
+    asked,
+    panes: {
+      isWorkspaceEnabled(workspaceId) {
+        asked.push(workspaceId)
+        return enabled.has(workspaceId)
+      },
+    },
+  }
+}
+
+/** Two workspaces, one with a finished conversation and one with a blank one. */
+function enablementSnapshots() {
+  return {
+    workspaces: {
+      phase: 'ready',
+      items: [
+        { workspaceId: 'w1', title: 'Opened', sessionIds: ['done'] },
+        { workspaceId: 'w2', title: 'Never opened', sessionIds: ['fresh'] },
+      ],
+      archivedSessionIds: [],
+    },
+    sessions: {
+      phase: 'ready',
+      ids: ['done', 'fresh'],
+      byId: {
+        done: { id: 'done', running: false, blank: false, retainedBy: {} },
+        fresh: { id: 'fresh', running: false, blank: true, retainedBy: {} },
+      },
+    },
+  }
+}
+
+test('sectionModel asks the pane controller which workspaces were opened in split', () => {
+  const { workspaces, sessions } = enablementSnapshots()
+  const { panes, asked } = fakePaneFace(['w1'])
+  const rows = sectionModel(workspaces, sessions, new Map(), panes)
+
+  assert.deepEqual(asked, ['w1', 'w2'])
+  assert.deepEqual(
+    rows.map((row) => [row.workspaceId, row.light]),
+    [
+      ['w1', 'green'],
+      ['w2', 'gray'],
+    ],
+  )
+})
+
+test('a never-opened workspace stays gray even with a session running or waiting', () => {
+  const { workspaces } = enablementSnapshots()
+  const sessions = {
+    phase: 'ready',
+    ids: ['busy'],
+    byId: { busy: { id: 'busy', running: true, blank: false, retainedBy: {} } },
+  }
+  workspaces.items[1].sessionIds = ['busy']
+  const { panes } = fakePaneFace([])
+  const rows = sectionModel(
+    workspaces,
+    sessions,
+    new Map([['busy', { running: true, pendingInteraction: { kind: 'approval' } }]]),
+    panes,
+  )
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    ['gray', 'gray'],
+  )
+})
+
+test('without a pane controller every workspace counts as enabled', () => {
+  const { workspaces, sessions } = enablementSnapshots()
+  const rows = sectionModel(workspaces, sessions, new Map())
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    ['green', 'gray'],
+  )
+})
+
+test('a controller that cannot answer degrades to all enabled, not to all gray', () => {
+  const { workspaces, sessions } = enablementSnapshots()
+  const panes = {
+    isWorkspaceEnabled() {
+      throw new Error('storage disabled')
+    },
+  }
+  const rows = sectionModel(workspaces, sessions, new Map(), panes)
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    ['green', 'gray'],
+  )
+})
+
 test('clicking a workspace starts (or reuses) its blank session with the draft kept', () => {
   const { ctx, calls } = fakeCtx()
   const actions = createSectionActions(ctx)
