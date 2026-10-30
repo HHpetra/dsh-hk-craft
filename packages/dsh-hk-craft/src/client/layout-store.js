@@ -1,0 +1,219 @@
+'use strict'
+
+/**
+ * The per-workspace layout store: a versioned codec plus the narrow storage
+ * seam. This module has no React, no DOM and no dsh imports.
+ *
+ * Why a key per workspace: `localStorage` is browser-origin-wide, so a single
+ * shared key would let two workspaces overwrite each other's tree. Every entry
+ * lives under `dsh.hkcraft.layout.v1.<workspaceId>` (spec §9).
+ *
+ * Payload (one JSON string per key):
+ *
+ *   {
+ *     version: 1,
+ *     root: LayoutNode | null,
+ *     panes: { [paneId]: { paneId, sessionId, view } },
+ *     activePaneId: string | null,
+ *   }
+ *
+ * The workspace id is *not* duplicated in the payload: it lives in the key and
+ * is the argument `decodeLayout` labels the result with. A payload carrying a
+ * foreign `workspaceId` cannot leak its scope.
+ *
+ * `decodeLayout` is the boot safety net: a corrupt, truncated, missing-field or
+ * version-mismatched payload decodes to the workspace's empty layout, never to
+ * a throw. Reconciliation against the live session catalog happens here too,
+ * because "the session no longer exists" is a decode-time fact:
+ * - panes whose `sessionId` is not in `knownSessionIds` are dropped;
+ * - a session mounted twice keeps only its first pane (spec §4.4: 1:1);
+ * - the tree is normalised (duplicate leaves pruned, ratios clamped, focus
+ *   repaired) by `layout-tree.js`.
+ *
+ * Passing `knownSessionIds: null`/`undefined` means "the catalog is not ready
+ * yet", and keeps every pane instead of guessing.
+ */
+
+const layoutTree = require('./layout-tree.js')
+
+/** Prefix of every workspace-scoped layout key; the trailing dot is required. */
+const LAYOUT_KEY_PREFIX = 'dsh.hkcraft.layout.v1.'
+
+/** The payload version. Kept equal to the layout's own structural version. */
+const LAYOUT_PAYLOAD_VERSION = layoutTree.LAYOUT_VERSION
+
+/**
+ * @param {unknown} workspaceId
+ * @returns {string|null} the scoped storage key, or null when there is no workspace
+ */
+function layoutKey(workspaceId) {
+  if (typeof workspaceId !== 'string' || workspaceId === '') return null
+  return `${LAYOUT_KEY_PREFIX}${workspaceId}`
+}
+
+/**
+ * @param {string|null} [workspaceId]
+ * @returns {object} the layout for a workspace with nothing open
+ */
+function emptyLayout(workspaceId = null) {
+  return layoutTree.createLayout(typeof workspaceId === 'string' && workspaceId !== '' ? workspaceId : null)
+}
+
+/**
+ * @param {unknown} value
+ * @returns {Record<string, unknown>|null}
+ */
+function parsePayload(value) {
+  let parsed = value
+  if (typeof value === 'string') {
+    if (value.trim() === '') return null
+    try {
+      parsed = JSON.parse(value)
+    } catch (_error) {
+      return null
+    }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  return parsed
+}
+
+/**
+ * Rebuild pane records from the map keys. The key is authoritative, so a
+ * payload whose records disagree with their keys still decodes safely, and a
+ * record without a usable `sessionId` is unusable at restore time and dropped.
+ *
+ * @param {unknown} panes
+ * @returns {Record<string, {paneId: string, sessionId: string, view: string}>}
+ */
+function panesFrom(panes) {
+  if (panes === null || typeof panes !== 'object' || Array.isArray(panes)) return {}
+  const rebuilt = {}
+  for (const [paneId, value] of Object.entries(panes)) {
+    if (paneId === '' || value === null || typeof value !== 'object' || Array.isArray(value)) continue
+    if (typeof value.sessionId !== 'string' || value.sessionId === '') continue
+    rebuilt[paneId] = {
+      paneId,
+      sessionId: value.sessionId,
+      view: value.view === 'trajectory' ? 'trajectory' : layoutTree.DEFAULT_VIEW,
+    }
+  }
+  return rebuilt
+}
+
+/**
+ * Encode a layout for persistence. The payload is normalised first, so a stale
+ * ratio or a foreign extra field can never be written back.
+ *
+ * @param {object|null|undefined} layout
+ * @returns {string|null} JSON string, or null when the value is not a layout
+ */
+function encodeLayout(layout) {
+  if (layout === null || layout === undefined || typeof layout !== 'object') return null
+  if (Array.isArray(layout)) return null
+  const normalized = layoutTree.normalizeLayout(layout)
+  return JSON.stringify({
+    version: LAYOUT_PAYLOAD_VERSION,
+    root: normalized.root,
+    panes: normalized.panes,
+    activePaneId: normalized.activePaneId,
+  })
+}
+
+/**
+ * Decode one stored payload into a safe layout. Never throws.
+ *
+ * @param {unknown} raw string from storage (a parsed object is accepted too)
+ * @param {{workspaceId?: string|null, knownSessionIds?: Set<string>|null}} [options]
+ *   `knownSessionIds` is the live catalog; omit or pass null while it is loading.
+ * @returns {object} always a normalized layout, empty when nothing survives
+ */
+function decodeLayout(raw, options = {}) {
+  const workspaceId =
+    typeof options.workspaceId === 'string' && options.workspaceId !== '' ? options.workspaceId : null
+  if (workspaceId === null) return emptyLayout(null)
+
+  const payload = parsePayload(raw)
+  if (payload === null || payload.version !== LAYOUT_PAYLOAD_VERSION) return emptyLayout(workspaceId)
+
+  const panes = panesFrom(payload.panes)
+  if (Object.keys(panes).length === 0) return emptyLayout(workspaceId)
+
+  let layout = layoutTree.normalizeLayout({
+    version: LAYOUT_PAYLOAD_VERSION,
+    workspaceId,
+    root: payload.root ?? null,
+    panes,
+    activePaneId: typeof payload.activePaneId === 'string' ? payload.activePaneId : null,
+  })
+
+  const known = options.knownSessionIds instanceof Set ? options.knownSessionIds : null
+  const seenSessions = new Set()
+  const surviving = {}
+  for (const paneId of layoutTree.leaves(layout.root)) {
+    const pane = layout.panes[paneId]
+    if (pane === undefined) continue
+    const knownSession = known === null || known.has(pane.sessionId)
+    if (!knownSession || seenSessions.has(pane.sessionId)) continue
+    seenSessions.add(pane.sessionId)
+    surviving[paneId] = pane
+  }
+
+  if (Object.keys(surviving).length !== Object.keys(layout.panes).length) {
+    layout = layoutTree.normalizeLayout({ ...layout, panes: surviving })
+  }
+  return layout
+}
+
+/**
+ * Read one workspace's layout through the storage seam.
+ *
+ * @param {{getItem?: (key: string) => unknown}|undefined|null} storage
+ * @param {string} workspaceId
+ * @param {{knownSessionIds?: Set<string>|null}} [options]
+ * @returns {object} a layout; the workspace's empty layout when absent or broken
+ */
+function readLayout(storage, workspaceId, options = {}) {
+  const key = layoutKey(workspaceId)
+  if (key === null) return emptyLayout(null)
+  let raw = null
+  try {
+    if (typeof storage?.getItem === 'function') raw = storage.getItem(key)
+  } catch (_error) {
+    // Private-mode storage and quota errors must not break boot.
+    raw = null
+  }
+  return decodeLayout(raw, { ...options, workspaceId })
+}
+
+/**
+ * Write one workspace's layout. Failures (quota, disabled storage, no key) are
+ * reported as `false` and never thrown: persisting is best-effort.
+ *
+ * @param {{setItem?: (key: string, value: string) => unknown}|undefined|null} storage
+ * @param {object} layout
+ * @returns {boolean}
+ */
+function writeLayout(storage, layout) {
+  const key = layoutKey(layout?.workspaceId)
+  if (key === null) return false
+  const raw = encodeLayout(layout)
+  if (raw === null) return false
+  if (typeof storage?.setItem !== 'function') return false
+  try {
+    storage.setItem(key, raw)
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
+module.exports = {
+  LAYOUT_KEY_PREFIX,
+  LAYOUT_PAYLOAD_VERSION,
+  layoutKey,
+  emptyLayout,
+  encodeLayout,
+  decodeLayout,
+  readLayout,
+  writeLayout,
+}

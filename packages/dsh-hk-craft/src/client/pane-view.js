@@ -86,6 +86,32 @@ const layoutStyle = {
   overflow: 'hidden',
 }
 
+/**
+ * The host box every workspace layer lives in. It is positioned so hidden
+ * workspaces can be absolutely covered by `display: none` without unmounting.
+ */
+const hostStyle = {
+  position: 'relative',
+  display: 'flex',
+  flexDirection: 'column',
+  flex: '1 1 auto',
+  minWidth: 0,
+  minHeight: 0,
+  height: '100%',
+  width: '100%',
+  overflow: 'hidden',
+}
+
+/** A workspace that stays mounted but is not the visible one (spec D5). */
+const hiddenWorkspaceStyle = {
+  position: 'absolute',
+  inset: 0,
+  display: 'none',
+  minWidth: 0,
+  minHeight: 0,
+  overflow: 'hidden',
+}
+
 /** Tab strip height (spec §5: 36px, the Agent10 density). */
 const TAB_STRIP_HEIGHT = 36
 
@@ -891,6 +917,102 @@ function PaneCloseConfirm({ controller, t }) {
 }
 
 /**
+ * One workspace's tree. Every loaded workspace gets one of these and stays
+ * mounted; `visible` only flips `display` (ticket 08, spec D5).
+ *
+ * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, kit: any, t: (key: string) => string }} props
+ */
+function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
+  const React = react()
+  const h = React.createElement
+  const attributes = {
+    style: visible ? workspaceStyle : hiddenWorkspaceStyle,
+    'data-hkcraft-workspace': workspaceId ?? '',
+    'data-hkcraft-workspace-active': visible ? 'true' : 'false',
+    'aria-hidden': visible ? undefined : 'true',
+  }
+
+  if (layout.root === null) {
+    return h(
+      'div',
+      attributes,
+      h(PaneEmptyState, {
+        t,
+        onNew: () => {
+          const attempt = controller.newInFocused(workspaceId ?? undefined)
+          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+            attempt.catch(() => {})
+          }
+        },
+      }),
+    )
+  }
+
+  const geometry = computeLayout(layout.root)
+  return h(
+    'div',
+    attributes,
+    // Only the visible workspace owns a tab strip: hidden strips would register
+    // duplicate document-level Ctrl+1..4 handlers. The pane bodies below stay
+    // mounted regardless, which is what D5 actually protects.
+    visible ? h(TabStrip, { controller, state: layout, kit, t }) : null,
+    h(
+      'div',
+      { style: layoutStyle, 'data-hkcraft-layout': '' },
+      geometry.panes.map((paneRect) => {
+        const pane = layout.panes[paneRect.paneId]
+        if (pane === undefined) return null
+        return h(PaneFrame, {
+          key: paneRect.paneId,
+          controller,
+          pane,
+          rect: paneRect,
+          focused: visible && paneRect.paneId === layout.activePaneId,
+          kit,
+          t,
+        })
+      }),
+      geometry.separators.map((separator) =>
+        h(PaneSeparator, {
+          key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
+          controller,
+          separator,
+        }),
+      ),
+    ),
+  )
+}
+
+/**
+ * The workspace trees to render. `layouts` is the authoritative map; the
+ * unscoped layout (a shell with no workspaces service, or a unit-test fake) is
+ * not in it and is appended by hand. Exactly one group is visible.
+ *
+ * @param {any} state controller snapshot
+ * @returns {Array<{workspaceId: string|null, layout: object, visible: boolean}>}
+ */
+function workspaceGroups(state) {
+  const entries = Object.entries(state.layouts ?? {})
+  const visibleWorkspaceId =
+    state.workspaceId !== null && state.layouts?.[state.workspaceId] !== undefined
+      ? state.workspaceId
+      : (entries[0]?.[0] ?? state.workspaceId)
+  const groups = entries.map(([workspaceId, layout]) => ({
+    workspaceId,
+    layout,
+    visible: workspaceId === visibleWorkspaceId,
+  }))
+  if (state.workspaceId === null && (state.root !== null || groups.length === 0)) {
+    groups.push({
+      workspaceId: null,
+      layout: { root: state.root, panes: state.panes, activePaneId: state.activePaneId },
+      visible: state.root !== null || groups.length === 0,
+    })
+  }
+  return groups
+}
+
+/**
  * The `main` keyed-slot entry. dsh hands it `SessionProvider` and the
  * authorized `renderSlot` for a session-scoped child because the registration
  * declares one non-root child.
@@ -909,56 +1031,26 @@ function createPaneHost(controller) {
 
     if (!state.active) return null
 
+    // One dialog for the whole pane host: a close is a single pending action
+    // even though several workspace trees are mounted at once.
     const dialog = h(PaneCloseConfirm, { controller, t })
 
-    if (state.root === null) {
-      return h(
-        React.Fragment,
-        null,
-        h(PaneEmptyState, {
-          t,
-          onNew: () => {
-            const attempt = controller.newInFocused()
-            if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
-              attempt.catch(() => {})
-            }
-          },
-        }),
-        dialog,
-      )
-    }
-
-    const geometry = computeLayout(state.root)
     return h(
       React.Fragment,
       null,
       h(
         'div',
-        { style: workspaceStyle, 'data-hkcraft-workspace': '' },
-        h(TabStrip, { controller, state, kit: props, t }),
-        h(
-          'div',
-          { style: layoutStyle, 'data-hkcraft-layout': '' },
-          geometry.panes.map((paneRect) => {
-            const pane = state.panes[paneRect.paneId]
-            if (pane === undefined) return null
-            return h(PaneFrame, {
-              key: paneRect.paneId,
-              controller,
-              pane,
-              rect: paneRect,
-              focused: paneRect.paneId === state.activePaneId,
-              kit: props,
-              t,
-            })
+        { style: hostStyle, 'data-hkcraft-layout-host': '' },
+        workspaceGroups(state).map((group) =>
+          h(PaneWorkspace, {
+            key: group.workspaceId ?? '\u0000unscoped',
+            controller,
+            workspaceId: group.workspaceId,
+            layout: group.layout,
+            visible: group.visible,
+            kit: props,
+            t,
           }),
-          geometry.separators.map((separator) =>
-            h(PaneSeparator, {
-              key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
-              controller,
-              separator,
-            }),
-          ),
         ),
       ),
       dialog,
@@ -1084,6 +1176,8 @@ module.exports = {
   PaneFrame,
   PaneSeparator,
   PaneEmptyState,
+  PaneWorkspace,
+  workspaceGroups,
   PaneViewSwitch,
   PaneCloseConfirm,
   TabStrip,

@@ -121,8 +121,14 @@ function apply(ctx) {
 
   // The workspace section replaces a slot declared by ui-workspace and drives its
   // public service, so both services must exist before the entry is registered.
+  // In pane mode the click switches the visible workspace tree instead of
+  // letting a native reveal dismiss the pane workspace (ticket 08).
+  const workspacePanes = {
+    active: () => controller.getSnapshot().active,
+    switchWorkspace: (workspaceId) => controller.switchWorkspace(workspaceId),
+  }
   ctx.inject(['uiWorkspace', 'workspaces'], (scoped) => {
-    const actions = createSectionActions(scoped)
+    const actions = createSectionActions(scoped, { panes: workspacePanes })
     scoped.slots.inject('sidebar.workspaces', () =>
       scoped.slots.register(
         {

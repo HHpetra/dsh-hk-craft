@@ -1005,6 +1005,40 @@ test('/clear can open the first pane from the empty state without a session', as
 })
 
 // ---------------------------------------------------------------------------
+// Per-workspace scope and the staged close (tickets 08 / 09 together)
+// ---------------------------------------------------------------------------
+
+const TWO_WORKSPACES = [
+  { workspaceId: 'w1', sessionIds: ['s1', 's2'] },
+  { workspaceId: 'w2', sessionIds: ['s3'] },
+]
+
+test('switching workspace dismisses the staged close of the workspace being left', async () => {
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: TWO_WORKSPACES,
+    rows: { s1: { id: 's1', running: true } },
+  })
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => 'p1' })
+  controller.markRegistered()
+  controller.activate('s1')
+
+  assert.equal(controller.closePane('p1'), false)
+  assert.deepEqual(controller.getSnapshot().pendingClose, { paneId: 'p1', sessionId: 's1' })
+
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.getSnapshot().pendingClose, null)
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.deepEqual(controller.getSnapshot().layouts.w1.panes.p1, {
+    paneId: 'p1',
+    sessionId: 's1',
+    view: 'chat',
+  })
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
 // Tab strip actions (ticket 06)
 // ---------------------------------------------------------------------------
 

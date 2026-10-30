@@ -20,6 +20,7 @@ const {
   replaceSession,
   setView,
   paneOfSession,
+  renamePanes,
 } = require('./layout-tree.js')
 
 /** @param {string} paneId @param {string} sessionId */
@@ -369,4 +370,33 @@ test('transitions never mutate their input', () => {
   focus(original, "p1")
 
   assert.deepEqual(original, snapshot)
+})
+
+test('renaming pane ids rewrites the tree, the records and the focus, keeping shape', () => {
+  const layout = resize(split(single(), "p1", "row", P2), [], 0.4)
+  const renamed = renamePanes(layout, new Map([["p1", "pane-restored"]]))
+
+  assert.deepEqual(leaves(renamed.root), ["pane-restored", "p2"])
+  assert.equal(renamed.root.ratio, 0.4)
+  assert.deepEqual(Object.keys(renamed.panes).sort(), ["p2", "pane-restored"])
+  assert.deepEqual(renamed.panes["pane-restored"], {
+    paneId: "pane-restored",
+    sessionId: "s1",
+    view: "chat",
+  })
+  assert.equal(renamed.activePaneId, "p2")
+})
+
+test('renaming an empty mapping or an unknown id changes nothing', () => {
+  const layout = split(single(), "p1", "row", P2)
+  assert.equal(renamePanes(layout, new Map()), layout)
+  assert.equal(renamePanes(layout, new Map([["ghost", "x"]])), layout)
+})
+
+test('renaming the focused pane moves the focus to its new id', () => {
+  const layout = focus(split(single(), "p1", "row", P2), "p1")
+  const renamed = renamePanes(layout, new Map([["p1", "pane-9"]]))
+
+  assert.equal(renamed.activePaneId, "pane-9")
+  assert.equal(layout.activePaneId, "p1")
 })
