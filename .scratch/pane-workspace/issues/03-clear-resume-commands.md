@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-human
+**Status:** resolved
 
 - [ ] 两条命令出现在 `/` 触发菜单中，名称与描述在中文与英文下都有文案
 - [ ] `/clear` 新建会话并把当前视图切过去；旧会话仍可从 `/resume` 找回
