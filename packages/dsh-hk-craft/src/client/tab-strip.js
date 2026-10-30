@@ -15,9 +15,10 @@
 
 const { leaves } = require('./layout-tree.js')
 const { readStatus, sessionSignal } = require('./workspace-status.js')
+const { FOCUS_LIMIT, focusShortcutLabel, tabShortcutIndex } = require('./pane-shortcuts.js')
 
-/** Ctrl+1..4 address the first four tabs (issue 06; no shortcut beyond four). */
-const TAB_SHORTCUT_LIMIT = 4
+/** Ctrl+1..4 address the first four tabs (ticket 06; no shortcut beyond four). */
+const TAB_SHORTCUT_LIMIT = FOCUS_LIMIT
 
 const TAB_STATUS_RUNNING = 'running'
 const TAB_STATUS_WAITING = 'waiting'
@@ -63,26 +64,6 @@ function tabItems(layout) {
 function paneIdForTabIndex(layout, index) {
   if (!Number.isInteger(index) || index < 1 || index > TAB_SHORTCUT_LIMIT) return null
   return leaves(layout?.root ?? null)[index - 1] ?? null
-}
-
-/**
- * The 1-based tab number a keyboard event addresses, or null.
- *
- * Ctrl (or Cmd on macOS) plus a bare digit 1–4. Any other modifier, a higher
- * digit, or an event something already handled is ignored. Kept separate from
- * the DOM listener so the chord rules are testable in Node.
- *
- * @param {{key?: string, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean, defaultPrevented?: boolean}|null|undefined} event
- * @returns {number|null}
- */
-function tabShortcutIndex(event) {
-  if (event === null || event === undefined || typeof event !== 'object') return null
-  if (event.defaultPrevented === true) return null
-  if (event.ctrlKey !== true && event.metaKey !== true) return null
-  if (event.altKey === true || event.shiftKey === true) return null
-  if (typeof event.key !== 'string') return null
-  if (!/^[1-4]$/u.test(event.key)) return null
-  return Number(event.key)
 }
 
 /**
@@ -134,7 +115,7 @@ function projectTabs(layout, sessions, statuses, untitled) {
       ...tab,
       title: tabTitle(byId[tab.sessionId]?.title, untitled),
       status,
-      ...(tab.index <= TAB_SHORTCUT_LIMIT ? { shortcut: `Ctrl+${tab.index}` } : {}),
+      ...(tab.index <= TAB_SHORTCUT_LIMIT ? { shortcut: focusShortcutLabel(tab.index) } : {}),
     }
   })
 }

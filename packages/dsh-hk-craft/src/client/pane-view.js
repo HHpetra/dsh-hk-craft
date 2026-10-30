@@ -20,12 +20,18 @@ const { effectiveView, viewSegments } = require('./dsh-view-switch.js')
 const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
 const { ratioFromDrag } = require('./layout-tree.js')
 const {
+  paneShortcutAction,
+  paneShortcutHint,
+  shortcutLabel,
+  withShortcut,
+} = require('./pane-shortcuts.js')
+const { buildResumeRows } = require('./resume-list.js')
+const {
   TAB_STATUS_ERROR,
   TAB_STATUS_IDLE,
   TAB_STATUS_RUNNING,
   TAB_STATUS_WAITING,
   projectTabs,
-  tabShortcutIndex,
 } = require('./tab-strip.js')
 
 let reactModule = null
@@ -148,14 +154,18 @@ const tabStyle = {
   height: '100%',
   padding: '0 8px',
   border: 'none',
+  // Always reserved, so focusing a tab never changes its width or the row's
+  // geometry (ticket 10: status/focus must not shift the strip).
   borderTop: '2px solid transparent',
-  borderRight: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+  borderRight: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
   background: 'transparent',
   color: 'inherit',
   font: 'inherit',
   fontSize: 12,
   cursor: 'pointer',
   userSelect: 'none',
+  // Pointer dragging (not HTML5 DnD) needs the browser not to claim the gesture.
+  touchAction: 'none',
 }
 
 /** Titles truncate instead of squeezing their neighbours (spec §5). */
@@ -167,12 +177,19 @@ const tabTitleStyle = {
   whiteSpace: 'nowrap',
 }
 
+/**
+ * A fixed-size dot whose two rings (the tab background and a `currentColor`
+ * halo) keep it legible on both the light and the dark palette. Neither ring
+ * takes part in layout, and the dot is always rendered — running/waiting/idle
+ * changes only its colour, never the row's geometry.
+ */
 const tabDotStyle = {
   flex: 'none',
   width: 7,
   height: 7,
   borderRadius: '50%',
-  boxShadow: '0 0 0 1px color-mix(in srgb, CanvasText 12%, transparent)',
+  boxShadow:
+    '0 0 0 1px var(--dsw-alias-bg-base, Canvas), 0 0 0 2px color-mix(in srgb, currentColor 32%, transparent)',
 }
 
 const tabCloseStyle = {
@@ -197,15 +214,20 @@ const tabNewStyle = {
   ...buttonStyle,
   flex: 'none',
   border: 'none',
-  borderLeft: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+  borderLeft: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
   borderRadius: 0,
   padding: '0 10px',
 }
 
-/** Dot colours per tab status; waiting / error stay distinguishable (red vs orange). */
+/**
+ * Dot colours per tab status. Running and waiting use the shell's state tokens
+ * so they follow the active palette; idle green and the error orange have no
+ * matching token today and stay explicit mid-tones, which read on both the
+ * light and the dark background once the adaptive ring above is applied.
+ */
 const TAB_STATUS_COLORS = {
-  [TAB_STATUS_RUNNING]: '#d9a400',
-  [TAB_STATUS_WAITING]: '#e5484d',
+  [TAB_STATUS_RUNNING]: 'var(--dsw-alias-state-warn-primary, #d9a400)',
+  [TAB_STATUS_WAITING]: 'var(--dsw-alias-state-error-primary, #e5484d)',
   [TAB_STATUS_ERROR]: '#f76b15',
   [TAB_STATUS_IDLE]: '#30a46c',
 }
@@ -217,7 +239,7 @@ const headerStyle = {
   flex: 'none',
   minHeight: 36,
   padding: '0 10px',
-  borderBottom: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
+  borderBottom: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
   fontSize: 12,
 }
 
@@ -247,6 +269,85 @@ const fallbackStyle = {
   fontSize: 13,
   lineHeight: 1.6,
   opacity: 0.9,
+}
+
+/** How many recent conversations the empty state offers. */
+const EMPTY_RECENT_LIMIT = 5
+
+/** The empty state's hero plus its recent list, centred in the workspace box. */
+const emptyStackStyle = {
+  margin: 'auto',
+  width: '100%',
+  maxWidth: 520,
+  padding: 24,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'stretch',
+  gap: 10,
+  textAlign: 'center',
+  fontSize: 13,
+  lineHeight: 1.6,
+  boxSizing: 'border-box',
+}
+
+const emptyActionStyle = { ...buttonStyle, alignSelf: 'center' }
+
+const recentHeadingStyle = {
+  marginTop: 6,
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase',
+  opacity: 0.6,
+  textAlign: 'left',
+}
+
+const recentListStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
+
+const recentRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  width: '100%',
+  boxSizing: 'border-box',
+  border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',
+  borderRadius: 6,
+  background: 'color-mix(in srgb, currentColor 4%, transparent)',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '20px',
+  cursor: 'pointer',
+  padding: '4px 8px',
+  textAlign: 'left',
+}
+
+const recentLabelStyle = {
+  flex: '1 1 auto',
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const recentDetailStyle = { flex: 'none', opacity: 0.6, fontSize: 11 }
+
+const recentBadgeStyle = {
+  flex: 'none',
+  fontSize: 10,
+  lineHeight: '16px',
+  padding: '0 5px',
+  borderRadius: 999,
+  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
+  opacity: 0.8,
+}
+
+const hintStyle = {
+  marginTop: 6,
+  fontSize: 11,
+  lineHeight: 1.5,
+  opacity: 0.62,
+  textAlign: 'center',
 }
 
 /** The 对话 | 轨迹 control is a segmented switch, not a tab strip (spec §6). */
@@ -376,24 +477,157 @@ function PaneFallback({ t, text, detail, label, onBack }) {
   )
 }
 
+/** Swallow a controller promise the view does not await (errors surface in state). */
+function runAttempt(attempt) {
+  if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+    attempt.catch(() => {})
+  }
+}
+
 /**
- * The empty state: the workspace has no panes at all. It offers the one action
- * that can create a first pane (`/clear`'s host-side path, `newInFocused`).
+ * The document-level pane shortcuts (ticket 10).
  *
- * @param {{ t: (key: string) => string, onNew: () => void }} props
+ * Only the visible workspace mounts this, so a hidden tree cannot answer a
+ * chord. The bindings come from `pane-shortcuts.js`, which is also the source
+ * of every tooltip/hint, so the UI can never advertise a different chord.
+ * Shell modal layers own the keyboard while they are open — the shell's own
+ * shortcut service blocks background commands the same way.
+ *
+ * @param {{ controller: any, workspaceId: string|null }} props
+ * @returns {null}
  */
-function PaneEmptyState({ t, onNew }) {
+function PaneShortcuts({ controller, workspaceId }) {
+  const React = react()
+  React.useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const onKeyDown = (event) => {
+      const action = paneShortcutAction(event)
+      if (action === null) return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]') !== null) return
+
+      if (action.kind === 'focus') {
+        event.preventDefault()
+        controller.focusTab(action.index)
+        return
+      }
+      if (action.kind === 'new') {
+        event.preventDefault()
+        event.stopPropagation()
+        runAttempt(controller.newInFocused(workspaceId ?? undefined))
+        return
+      }
+      const pane = controller.focusedPane()
+      if (pane === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (action.kind === 'split') runAttempt(controller.split(pane.paneId, action.dir))
+      else if (action.kind === 'close') controller.closePane(pane.paneId)
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [controller, workspaceId])
+  return null
+}
+
+/**
+ * The empty state: the workspace has no panes at all (ticket 10).
+ *
+ * It offers the two ways back in — a new conversation in the first pane
+ * (`/clear`'s host-side path, `newInFocused`) and one of the workspace's recent
+ * conversations. The recent rows are built by the same `/resume` pipeline
+ * (`controller.recentConversations` → `buildResumeRows`): same workspace
+ * scoping, same blank/archived filtering, same newest-first order, same
+ * title → first-prompt fallback.
+ *
+ * @param {{ controller: any, workspaceId: string|null, visible: boolean, t: (key: string) => string }} props
+ */
+function PaneEmptyState({ controller, workspaceId, visible, t }) {
   const React = react()
   const h = React.createElement
+  const [recent, setRecent] = React.useState(null)
+  const tRef = React.useRef(t)
+  tRef.current = t
+
+  React.useEffect(() => {
+    if (!visible) return undefined
+    let cancelled = false
+    // The empty state has no session to anchor `/resume` to, so the controller
+    // projects the workspace directly through the same adapter.
+    Promise.resolve(controller.recentConversations(workspaceId ?? undefined))
+      .then((rows) => {
+        if (cancelled) return
+        const projected = buildResumeRows(rows, {
+          now: Date.now(),
+          t: tRef.current,
+          limits: { title: 48, prompt: 32, label: 96 },
+        })
+        setRecent(projected.slice(0, EMPTY_RECENT_LIMIT))
+      })
+      .catch(() => {
+        if (!cancelled) setRecent([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [controller, workspaceId, visible])
+
+  const startNew = () => {
+    runAttempt(controller.newInFocused(workspaceId ?? undefined))
+  }
+
   return h(
     'div',
     { style: paneStyle, 'data-hkcraft-empty': '' },
     h(
       'div',
-      { style: fallbackStyle, role: 'status' },
-      h('div', { style: { fontWeight: 600, marginBottom: 6 } }, t('pane.empty.workspace.title')),
-      h('div', { style: { opacity: 0.75, marginBottom: 12 } }, t('pane.empty.workspace.body')),
-      h('button', { type: 'button', style: buttonStyle, onClick: onNew }, t('pane.empty.new')),
+      { style: emptyStackStyle },
+      h(
+        'div',
+        { style: { fontWeight: 600, fontSize: 15, marginBottom: 2 } },
+        t('pane.empty.workspace.title'),
+      ),
+      h('div', { style: { opacity: 0.75 } }, t('pane.empty.workspace.body')),
+      h(
+        'button',
+        {
+          type: 'button',
+          style: emptyActionStyle,
+          title: withShortcut(t('pane.empty.new'), shortcutLabel('new-conversation')),
+          onClick: startNew,
+        },
+        t('pane.empty.new'),
+      ),
+      recent === null
+        ? null
+        : recent.length === 0
+          ? h('div', { style: { opacity: 0.62, fontSize: 12 } }, t('command.resume.search.empty'))
+          : h(
+              'div',
+              { style: recentListStyle, 'data-hkcraft-empty-recent': '' },
+              h('div', { style: recentHeadingStyle }, t('pane.empty.recent')),
+              recent.map((row) =>
+                h(
+                  'button',
+                  {
+                    key: row.sessionId,
+                    type: 'button',
+                    style: recentRowStyle,
+                    title:
+                      row.detail === undefined ? row.label : `${row.label} — ${row.detail}`,
+                    'data-hkcraft-empty-session': row.sessionId,
+                    onClick: () => controller.activate(row.sessionId),
+                  },
+                  h('span', { style: recentLabelStyle }, row.label),
+                  row.badge === undefined
+                    ? null
+                    : h('span', { style: recentBadgeStyle }, row.badge),
+                  row.detail === undefined
+                    ? null
+                    : h('span', { style: recentDetailStyle }, row.detail),
+                ),
+              ),
+            ),
+      h('div', { style: hintStyle }, paneShortcutHint(t)),
     ),
   )
 }
@@ -494,15 +728,22 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     overflow: 'hidden',
     boxSizing: 'border-box',
     // A visible focus ring is the only reliable "this pane receives input"
-    // signal in a split view (issue 05; Agent10's flat strip lost it).
+    // signal in a split view (issue 05; Agent10's flat strip lost it). The
+    // shell's theme presenter writes `color-scheme` plus its palette tokens on
+    // the document, so this pair resolves on both the light and the dark theme
+    // (the fallbacks cover a shell without those tokens).
     outline: focused
-      ? '2px solid var(--dsw-alias-border-accent, Highlight)'
+      ? '2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, Highlight))'
       : '2px solid transparent',
     outlineOffset: '-2px',
     zIndex: focused ? 1 : 0,
     background: 'var(--dsw-alias-bg-base, Canvas)',
     color: 'var(--dsw-alias-label-primary, CanvasText)',
   }
+
+  const splitRightHint = withShortcut(t('pane.splitRight'), shortcutLabel('split-right'))
+  const splitDownHint = withShortcut(t('pane.splitDown'), shortcutLabel('split-down'))
+  const closeHint = withShortcut(t('pane.close'), shortcutLabel('close-pane'))
 
   const header = h(
     'div',
@@ -514,10 +755,10 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
       {
         type: 'button',
         style: buttonStyle,
-        title: t('pane.splitRight'),
-        'aria-label': t('pane.splitRight'),
+        title: splitRightHint,
+        'aria-label': splitRightHint,
         onClick: () => {
-          controller.split(pane.paneId, 'row')
+          runAttempt(controller.split(pane.paneId, 'row'))
         },
       },
       '⫽',
@@ -527,10 +768,10 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
       {
         type: 'button',
         style: buttonStyle,
-        title: t('pane.splitDown'),
-        'aria-label': t('pane.splitDown'),
+        title: splitDownHint,
+        'aria-label': splitDownHint,
         onClick: () => {
-          controller.split(pane.paneId, 'col')
+          runAttempt(controller.split(pane.paneId, 'col'))
         },
       },
       '⫙',
@@ -540,8 +781,8 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
       {
         type: 'button',
         style: buttonStyle,
-        title: t('pane.close'),
-        'aria-label': t('pane.close'),
+        title: closeHint,
+        'aria-label': closeHint,
         onClick: close,
       },
       '×',
@@ -608,7 +849,12 @@ function PaneSeparator({ controller, separator }) {
   const React = react()
   const h = React.createElement
   const drag = React.useRef(null)
+  const [hot, setHot] = React.useState(false)
   const row = separator.dir === 'row'
+
+  const lineColor = hot
+    ? 'color-mix(in srgb, currentColor 55%, transparent)'
+    : 'color-mix(in srgb, currentColor 30%, transparent)'
 
   const hitStyle = row
     ? {
@@ -642,8 +888,8 @@ function PaneSeparator({ controller, separator }) {
       }
 
   const lineStyle = row
-    ? { width: SEPARATOR_LINE_PX, background: 'color-mix(in srgb, currentColor 22%, transparent)' }
-    : { height: SEPARATOR_LINE_PX, width: '100%', background: 'color-mix(in srgb, currentColor 22%, transparent)' }
+    ? { width: SEPARATOR_LINE_PX, background: lineColor }
+    : { height: SEPARATOR_LINE_PX, width: '100%', background: lineColor }
 
   const onPointerDown = (event) => {
     if (event.button !== undefined && event.button !== 0) return
@@ -691,6 +937,8 @@ function PaneSeparator({ controller, separator }) {
       onPointerMove,
       onPointerUp: endDrag,
       onPointerCancel: endDrag,
+      onPointerEnter: () => setHot(true),
+      onPointerLeave: () => setHot(false),
     },
     h('div', { style: lineStyle }),
   )
@@ -699,6 +947,30 @@ function PaneSeparator({ controller, separator }) {
 /** Stable stand-in so a missing hook never changes the hook call count. */
 function absentHook() {
   return undefined
+}
+
+/** Drags shorter than this stay clicks (spec §5's 6px threshold). */
+const TAB_DRAG_THRESHOLD_PX = 6
+
+/** @param {any} target event target @returns {boolean} */
+function insideTabClose(target) {
+  return typeof target?.closest === 'function' && target.closest('[data-hkcraft-tab-close]') !== null
+}
+
+/**
+ * The pane whose tab is under the pointer, or null. Pointer capture keeps the
+ * move events on the source tab, so the drop target has to be hit-tested.
+ *
+ * @param {number} clientX
+ * @param {number} clientY
+ * @returns {string|null}
+ */
+function tabPaneIdAt(clientX, clientY) {
+  if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null
+  const element = document.elementFromPoint(clientX, clientY)
+  const tab = typeof element?.closest === 'function' ? element.closest('[data-hkcraft-tab]') : null
+  const paneId = tab?.getAttribute?.('data-hkcraft-tab')
+  return typeof paneId === 'string' && paneId !== '' ? paneId : null
 }
 
 /**
@@ -726,20 +998,11 @@ function TabStrip({ controller, state, kit, t }) {
   const statuses = useSessionStatus((snapshot) => snapshot)
   const [hovered, setHovered] = React.useState(null)
   const [creating, setCreating] = React.useState(false)
-
-  // Ctrl+1..4 focuses the Nth tab. Document-level so the chord works from the
-  // composer too; the tab strip only exists while the pane workspace is shown.
-  React.useEffect(() => {
-    if (typeof document === 'undefined') return undefined
-    const onKeyDown = (event) => {
-      const index = tabShortcutIndex(event)
-      if (index === null) return
-      event.preventDefault()
-      controller.focusTab(index)
-    }
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => document.removeEventListener('keydown', onKeyDown, true)
-  }, [controller])
+  const [drag, setDrag] = React.useState(null)
+  /** The in-flight pointer drag; state above only drives the visible feedback. */
+  const dragRef = React.useRef(null)
+  /** A drag's pointerup is followed by a click; that click must not re-focus. */
+  const suppressClick = React.useRef(false)
 
   const tabs = projectTabs(state, sessions, statuses, t('session.untitled'))
 
@@ -759,9 +1022,85 @@ function TabStrip({ controller, state, kit, t }) {
       .then(() => setCreating(false))
   }
 
+  const clearDrag = () => {
+    dragRef.current = null
+    setDrag(null)
+  }
+
+  /**
+   * Start a pointer drag. The close button keeps its own click; a drag must
+   * never steal it.
+   */
+  const onTabPointerDown = (tab) => (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    if (insideTabClose(event.target)) return
+    dragRef.current = {
+      sourcePaneId: tab.paneId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      targetPaneId: null,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const onTabPointerMove = (event) => {
+    const current = dragRef.current
+    if (current === null) return
+    if (!current.active) {
+      const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY)
+      if (distance < TAB_DRAG_THRESHOLD_PX) return
+      current.active = true
+      setDrag({ sourcePaneId: current.sourcePaneId, targetPaneId: null })
+    }
+    const over = tabPaneIdAt(event.clientX, event.clientY)
+    const targetPaneId = over === null || over === current.sourcePaneId ? null : over
+    if (targetPaneId !== current.targetPaneId) {
+      current.targetPaneId = targetPaneId
+      setDrag({ sourcePaneId: current.sourcePaneId, targetPaneId })
+    }
+    event.preventDefault()
+  }
+
+  const onTabPointerUp = (event) => {
+    const current = dragRef.current
+    if (current === null) return
+    clearDrag()
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (!current.active) return
+    // Dropping anywhere but another tab is a complete no-op: no swap, no focus
+    // change, no layout write. The following click is swallowed once.
+    suppressClick.current = true
+    if (current.targetPaneId !== null) {
+      controller.swapPanes(current.sourcePaneId, current.targetPaneId)
+    }
+    if (typeof globalThis.setTimeout === 'function') {
+      globalThis.setTimeout(() => {
+        suppressClick.current = false
+      }, 0)
+    }
+  }
+
+  const onTabPointerCancel = (event) => {
+    clearDrag()
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
+  const focusTab = (tab) => {
+    if (suppressClick.current) {
+      suppressClick.current = false
+      return
+    }
+    controller.focusPane(tab.paneId)
+  }
+
+  const hint = paneShortcutHint(t)
+
   const tabElements = tabs.map((tab) => {
     const statusLabel = t(`tab.status.${tab.status}`)
     const label = tab.shortcut === undefined ? tab.title : `${tab.title} (${tab.shortcut})`
+    const source = drag !== null && drag.sourcePaneId === tab.paneId
+    const target = drag !== null && drag.targetPaneId === tab.paneId
     return h(
       'div',
       {
@@ -773,22 +1112,38 @@ function TabStrip({ controller, state, kit, t }) {
         title: `${label} — ${statusLabel}`,
         'data-hkcraft-tab': tab.paneId,
         'data-hkcraft-tab-active': tab.focused ? 'true' : 'false',
+        'data-hkcraft-tab-drop-target': target ? 'true' : 'false',
         style: {
           ...tabStyle,
-          borderTopColor: tab.focused ? 'var(--dsw-alias-border-accent, Highlight)' : 'transparent',
-          background: tab.focused
-            ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
-            : hovered === tab.paneId
-              ? 'color-mix(in srgb, currentColor 6%, transparent)'
-              : 'transparent',
-          fontWeight: tab.focused ? 600 : 400,
+          opacity: source ? 0.55 : 1,
+          // Both a highlighted tab and a drop target use the shell's business
+          // accent token, which the theme presenter rewrites per palette.
+          borderTopColor: tab.focused
+            ? 'var(--dsw-alias-state-business-primary, Highlight)'
+            : 'transparent',
+          background: target
+            ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight) 18%, transparent)'
+            : tab.focused
+              ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
+              : hovered === tab.paneId
+                ? 'color-mix(in srgb, currentColor 6%, transparent)'
+                : 'transparent',
+          outline: target
+            ? '2px dashed var(--dsw-alias-state-business-primary, Highlight)'
+            : '2px solid transparent',
+          outlineOffset: target ? '-3px' : 0,
+          cursor: drag === null ? 'pointer' : 'grabbing',
         },
-        onClick: () => controller.focusPane(tab.paneId),
+        onClick: () => focusTab(tab),
         onKeyDown: (event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()
-          controller.focusPane(tab.paneId)
+          focusTab(tab)
         },
+        onPointerDown: onTabPointerDown(tab),
+        onPointerMove: onTabPointerMove,
+        onPointerUp: onTabPointerUp,
+        onPointerCancel: onTabPointerCancel,
         onMouseEnter: () => setHovered(tab.paneId),
         onMouseLeave: () => setHovered((current) => (current === tab.paneId ? null : current)),
       },
@@ -805,7 +1160,16 @@ function TabStrip({ controller, state, kit, t }) {
           title: t('tab.close'),
           'aria-label': t('tab.close'),
           'data-hkcraft-tab-close': tab.paneId,
-          style: { ...tabCloseStyle, visibility: hovered === tab.paneId ? 'visible' : 'hidden' },
+          style: {
+            ...tabCloseStyle,
+            // `visibility` (not `display`) keeps the space reserved, so hovering
+            // a tab can never resize it or shift its neighbours.
+            visibility: hovered === tab.paneId ? 'visible' : 'hidden',
+            background:
+              hovered === tab.paneId
+                ? 'color-mix(in srgb, currentColor 16%, transparent)'
+                : 'transparent',
+          },
           onClick: (event) => {
             event.stopPropagation()
             closeTab(tab)
@@ -823,6 +1187,9 @@ function TabStrip({ controller, state, kit, t }) {
       role: 'tablist',
       'aria-label': t('tab.aria'),
       'data-hkcraft-tabstrip': '',
+      // The full key table lives here and in the empty state, built from the
+      // same labels the listener accepts.
+      title: hint,
       style: tabStripStyle,
     },
     h('div', { style: tabViewportStyle }, tabElements),
@@ -830,8 +1197,8 @@ function TabStrip({ controller, state, kit, t }) {
       'button',
       {
         type: 'button',
-        title: t('tab.new'),
-        'aria-label': t('tab.new'),
+        title: withShortcut(t('tab.new'), shortcutLabel('new-conversation')),
+        'aria-label': withShortcut(t('tab.new'), shortcutLabel('new-conversation')),
         'data-hkcraft-tab-new': '',
         disabled: creating,
         style: { ...tabNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
@@ -931,20 +1298,18 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
     'data-hkcraft-workspace-active': visible ? 'true' : 'false',
     'aria-hidden': visible ? undefined : 'true',
   }
+  // Only the visible workspace owns the document-level shortcut listener, so a
+  // hidden tree can never answer a chord for the user.
+  const shortcuts = visible
+    ? h(PaneShortcuts, { key: 'pane-shortcuts', controller, workspaceId })
+    : null
 
   if (layout.root === null) {
     return h(
       'div',
       attributes,
-      h(PaneEmptyState, {
-        t,
-        onNew: () => {
-          const attempt = controller.newInFocused(workspaceId ?? undefined)
-          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
-            attempt.catch(() => {})
-          }
-        },
-      }),
+      shortcuts,
+      h(PaneEmptyState, { controller, workspaceId, visible, t }),
     )
   }
 
@@ -952,9 +1317,10 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
   return h(
     'div',
     attributes,
-    // Only the visible workspace owns a tab strip: hidden strips would register
-    // duplicate document-level Ctrl+1..4 handlers. The pane bodies below stay
-    // mounted regardless, which is what D5 actually protects.
+    shortcuts,
+    // Only the visible workspace owns a tab strip: hidden strips would render a
+    // second row over an invisible tree. The pane bodies below stay mounted
+    // regardless, which is what D5 actually protects.
     visible ? h(TabStrip, { controller, state: layout, kit, t }) : null,
     h(
       'div',
@@ -1176,6 +1542,7 @@ module.exports = {
   PaneFrame,
   PaneSeparator,
   PaneEmptyState,
+  PaneShortcuts,
   PaneWorkspace,
   workspaceGroups,
   PaneViewSwitch,

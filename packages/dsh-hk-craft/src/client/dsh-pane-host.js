@@ -47,7 +47,7 @@
  *   only guarantee the mainView references it owns — one, on the focused pane.
  */
 
-const { workspaceIdOf } = require('./dsh-sessions.js')
+const { listWorkspaceConversations, workspaceIdOf } = require('./dsh-sessions.js')
 const layoutTree = require('./layout-tree.js')
 const { emptyLayout, readLayout, writeLayout } = require('./layout-store.js')
 const { paneIdForTabIndex } = require('./tab-strip.js')
@@ -404,28 +404,21 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Take the pane retention for a pane, replacing an older session's retention
-   * in place. Throws before mutating anything when the retain fails, so a
-   * caller can abort the layout change instead of leaving a half-built pane.
-   */
-  function holdPane(pane) {
-    const existing = refs.get(pane.paneId)
-    if (existing !== undefined && existing.sessionId === pane.sessionId) return existing
-    const reference = retainSource(pane.sessionId, PANE_SOURCE)
-    if (existing !== undefined) {
-      releaseHeld(existing)
-      refs.delete(pane.paneId)
-    }
-    const held = { sessionId: pane.sessionId, pane: reference, main: undefined }
-    refs.set(pane.paneId, held)
-    return held
-  }
-
-  /**
    * Make the retained references match every loaded layout and return the first
-   * failure (or null). Stale references are released before new ones are
-   * acquired, and the old `mainView` is always released before the new one is
-   * taken. Panes of hidden workspaces stay retained under `hkcraftPane` only.
+   * failure (or null). Panes of hidden workspaces stay retained under
+   * `hkcraftPane` only.
+   *
+   * Every new retention is taken *before* any stale one is released. That order
+   * matters for the tab-drag swap (ticket 10): pane A's and pane B's sessions
+   * trade places in one layout change, and releasing first would momentarily
+   * drop each session to zero client references — tearing down the dsh client
+   * generation and losing the scroll position / composer draft that the split
+   * view exists to preserve.
+   *
+   * A failed acquire leaves the existing references untouched (the speculative
+   * ones are released again), so a caller can abort the layout change instead of
+   * leaving a half-built pane. The old `mainView` is released before the new one
+   * is taken, as before.
    *
    * @param {Record<string, object>} nextLayouts
    * @returns {{failure: string|null, failed: Array<{paneId: string, workspaceId: string, error: any}>}}
@@ -436,21 +429,43 @@ function createPaneController(ctx, options = {}) {
     for (const [workspaceId, value] of Object.entries(nextLayouts)) {
       for (const pane of Object.values(value.panes)) desired.set(pane.paneId, pane)
     }
-    for (const [paneId, held] of [...refs]) {
+
+    /** Retentions that still match the desired layout, kept by identity. */
+    const keep = new Map()
+    /** Retentions the new layout no longer wants (different session or gone). */
+    const stale = []
+    for (const [paneId, held] of refs) {
       const pane = desired.get(paneId)
-      if (pane === undefined || pane.sessionId !== held.sessionId) {
-        releaseHeld(held)
-        refs.delete(paneId)
-      }
+      if (pane !== undefined && pane.sessionId === held.sessionId) keep.set(paneId, held)
+      else stale.push(held)
     }
+
+    /** @type {Array<{sessionId: string, pane: any, main: undefined}>} */
+    const acquired = []
     for (const pane of desired.values()) {
-      if (refs.get(pane.paneId) !== undefined) continue
+      if (keep.has(pane.paneId)) continue
       try {
-        holdPane(pane)
+        const held = { sessionId: pane.sessionId, pane: retainSource(pane.sessionId, PANE_SOURCE), main: undefined }
+        keep.set(pane.paneId, held)
+        acquired.push(held)
       } catch (error) {
         failed.push({ paneId: pane.paneId, workspaceId: workspaceOfPane(nextLayouts, pane.paneId), error })
       }
     }
+
+    if (failed.length > 0) {
+      // Undo the speculative acquires and keep the previous reference set as it
+      // was; the caller's rollback then finds nothing to repair.
+      for (const held of acquired) releaseHeld(held)
+      return {
+        failure: messageOf(failed[0].error),
+        failed,
+      }
+    }
+
+    for (const held of stale) releaseHeld(held)
+    refs.clear()
+    for (const [paneId, held] of keep) refs.set(paneId, held)
 
     const focused = focusedPaneOf(nextLayouts)
     for (const [paneId, held] of [...refs]) {
@@ -645,6 +660,28 @@ function createPaneController(ctx, options = {}) {
 
   function refreshProbe() {
     emit({ probe: probeConversationContent(slots) })
+  }
+
+  /**
+   * The workspace's recent conversations for the empty state (ticket 10).
+   *
+   * Reuses the `/resume` projection and prompt fallback
+   * (`dsh-sessions.js:listWorkspaceConversations`) instead of inventing a second
+   * list; the view applies `buildResumeRows` for filtering, ordering and
+   * truncation, exactly as the command does. With no workspace id the active
+   * workspace is used, falling back to the first catalog workspace — the same
+   * target the empty state's "new conversation" button uses.
+   *
+   * @param {string} [workspaceId]
+   * @returns {Promise<object[]>} raw conversation rows (never rejects)
+   */
+  function recentConversationsValue(workspaceId) {
+    const target =
+      typeof workspaceId === 'string' && workspaceId !== '' ? workspaceId : focusedWorkspaceId()
+    if (typeof target !== 'string' || target === '') return Promise.resolve([])
+    return listWorkspaceConversations({ sessions, workspaces: workspacesFace() }, target).catch(
+      () => [],
+    )
   }
 
   /**
@@ -1070,6 +1107,32 @@ function createPaneController(ctx, options = {}) {
     return paneId === null ? false : focusPaneValue(paneId)
   }
 
+  /**
+   * Drag a tab onto another tab: exchange the two panes' contents (spec §4.2).
+   *
+   * The two panes must live in the same workspace tree — a drag can never leave
+   * one tab strip (spec D3) — and the transition is the pure `swap` of
+   * `layout-tree.js`: pane ids, leaf positions, ratios and the focus stay put,
+   * while the session and the remembered view move. The reference reconciliation
+   * acquires both new pane retentions before releasing the old ones, so neither
+   * conversation's client generation is torn down by the swap.
+   *
+   * @param {string} a
+   * @param {string} b
+   * @returns {boolean} whether the contents were swapped
+   */
+  function swapPanesValue(a, b) {
+    if (disposed) return false
+    if (typeof a !== 'string' || typeof b !== 'string' || a === b) return false
+    const first = locatePane(a)
+    const second = locatePane(b)
+    if (first === null || second === null) return false
+    if (first.workspaceId !== second.workspaceId) return false
+    const current = layoutOf(first.workspaceId)
+    const next = layoutTree.swap(current, a, b)
+    if (next === current) return false
+    return apply(next, first.workspaceId)
+  }
 
   return {
     getSnapshot: () => snapshot,
@@ -1089,6 +1152,17 @@ function createPaneController(ctx, options = {}) {
     focusedPane,
     /** The workspace the pane workspace is currently showing. */
     focusedWorkspaceId,
+    /**
+     * The workspace's recent conversations, for the empty state (ticket 10).
+     * Rows are raw (`buildResumeRows` filters / sorts / truncates them); the
+     * promise never rejects, so the empty state can render an empty list.
+     *
+     * @param {string} [workspaceId] defaults to the active workspace
+     * @returns {Promise<object[]>}
+     */
+    recentConversations(workspaceId) {
+      return recentConversationsValue(workspaceId)
+    },
     /** Called by apply once the `main` entry exists, so selectPanel can succeed. */
     markRegistered() {
       registered = true
@@ -1266,6 +1340,16 @@ function createPaneController(ctx, options = {}) {
      * @returns {boolean}
      */
     focusTab: focusTabValue,
+    /**
+     * Tab-to-tab drag: exchange two panes' sessions and remembered views while
+     * keeping the tree shape, the ratios and the focus (ticket 10). Dropping on
+     * the same tab, an unknown pane or a pane of another workspace is a no-op.
+     *
+     * @param {string} a
+     * @param {string} b
+     * @returns {boolean}
+     */
+    swapPanes: swapPanesValue,
     /**
      * Ask to close one pane. An idle session closes immediately; a running one
      * only stages `pendingClose` so the view can show the interrupt confirmation

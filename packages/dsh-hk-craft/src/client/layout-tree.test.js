@@ -21,6 +21,7 @@ const {
   setView,
   paneOfSession,
   renamePanes,
+  swap,
 } = require('./layout-tree.js')
 
 /** @param {string} paneId @param {string} sessionId */
@@ -391,6 +392,46 @@ test('renaming an empty mapping or an unknown id changes nothing', () => {
   const layout = split(single(), "p1", "row", P2)
   assert.equal(renamePanes(layout, new Map()), layout)
   assert.equal(renamePanes(layout, new Map([["ghost", "x"]])), layout)
+})
+
+test('swapping two panes exchanges their sessions and views but not the tree', () => {
+  // row(p1, col(p2, p3)) with a non-default ratio and a remembered view: the
+  // swap must leave the shape, the ratio and the focus exactly as they were.
+  const three = resize(split(split(single(), 'p1', 'row', P2), 'p1', 'col', P3), [], 0.37)
+  const before = setView(three, 'p1', 'trajectory')
+  const after = swap(before, 'p1', 'p2')
+
+  assert.equal(after.root, before.root)
+  assert.deepEqual(after.root, before.root)
+  assert.equal(after.root.ratio, 0.37)
+  assert.deepEqual(after.panes.p1, { paneId: 'p1', sessionId: 's2', view: 'chat' })
+  assert.deepEqual(after.panes.p2, { paneId: 'p2', sessionId: 's1', view: 'trajectory' })
+  assert.deepEqual(after.panes.p3, before.panes.p3)
+  assert.deepEqual(leaves(after.root), ['p1', 'p3', 'p2'])
+  assert.equal(after.activePaneId, before.activePaneId)
+  assert.equal(after.workspaceId, before.workspaceId)
+  assert.equal(after.version, before.version)
+  // The swap is symmetric and does not depend on argument order.
+  assert.deepEqual(swap(before, 'p2', 'p1'), after)
+})
+
+test('swapping a pane with itself or an unknown pane changes nothing', () => {
+  const two = split(single(), 'p1', 'row', P2)
+
+  assert.equal(swap(two, 'p1', 'p1'), two)
+  assert.equal(swap(two, 'p1', 'missing'), two)
+  assert.equal(swap(two, 'missing', 'p1'), two)
+  const noRecords = { ...two, panes: {} }
+  assert.equal(swap(noRecords, 'p1', 'p2'), noRecords)
+})
+
+test('a swap never mutates its input', () => {
+  const two = split(single(), 'p1', 'row', P2)
+  const snapshot = JSON.parse(JSON.stringify(two))
+
+  swap(two, 'p1', 'p2')
+
+  assert.deepEqual(two, snapshot)
 })
 
 test('renaming the focused pane moves the focus to its new id', () => {

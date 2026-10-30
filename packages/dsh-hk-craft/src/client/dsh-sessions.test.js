@@ -10,6 +10,7 @@ const {
   firstUserPromptOf,
   firstPromptOf,
   listConversations,
+  listWorkspaceConversations,
   openConversation,
   startConversation,
 } = require('./dsh-sessions.js')
@@ -234,6 +235,64 @@ test('listConversations returns nothing when the session is in no workspace', as
     await listConversations({ sessions, workspaces: { list: { getSnapshot: () => workspaces } } }, 'a'),
     [],
   )
+})
+
+test('listWorkspaceConversations reuses the /resume projection for an explicit workspace', async () => {
+  const { session } = fakeSession([[userEntry('first prompt text')]])
+  const sessions = fakeSessions(
+    sessionsSnapshot([
+      sessionRow({ id: 'a', title: 'Titled', updatedAt: 5 }),
+      sessionRow({ id: 'b', updatedAt: 9 }),
+      sessionRow({ id: 'c', blank: true }),
+      sessionRow({ id: 'other', title: 'Elsewhere' }),
+    ]),
+    { b: session },
+  )
+  const workspaces = workspacesSnapshot([
+    { workspaceId: 'w1', sessionIds: ['a', 'b', 'c'] },
+    { workspaceId: 'w2', sessionIds: ['other'] },
+  ])
+
+  const rows = await listWorkspaceConversations(
+    { sessions, workspaces: { list: { getSnapshot: () => workspaces } } },
+    'w1',
+  )
+
+  // The same rows `/resume` builds: catalog order, durable fields, and the
+  // first-prompt fallback for titleless non-blank conversations.
+  assert.deepEqual(
+    rows.map((row) => row.sessionId),
+    ['a', 'b', 'c'],
+  )
+  assert.equal(rows[1].firstPrompt, 'first prompt text')
+  assert.equal(rows[0].title, 'Titled')
+  assert.deepEqual(
+    sessions.calls.using.map((call) => call.target),
+    ['b'],
+  )
+})
+
+test('listWorkspaceConversations returns nothing without a usable workspace or catalog', async () => {
+  const sessions = fakeSessions(sessionsSnapshot([sessionRow({ id: 'a' })]))
+  const workspaces = workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['a'] }])
+  const services = { sessions, workspaces: { list: { getSnapshot: () => workspaces } } }
+
+  assert.deepEqual(await listWorkspaceConversations(services, 'nope'), [])
+  assert.deepEqual(await listWorkspaceConversations(services, ''), [])
+  assert.deepEqual(await listWorkspaceConversations(services, undefined), [])
+  assert.deepEqual(await listWorkspaceConversations({}, 'w1'), [])
+  assert.deepEqual(await listWorkspaceConversations(services, 'w1'), [
+    {
+      sessionId: 'a',
+      workspaceId: 'w1',
+      title: '',
+      firstPrompt: '',
+      updatedAt: 1_000,
+      running: false,
+      blank: false,
+      archived: false,
+    },
+  ])
 })
 
 test('openConversation asks the workspace service to reveal the session', () => {
