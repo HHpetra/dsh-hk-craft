@@ -16,6 +16,7 @@
 
 const { createTranslator } = require('./diagnostics.js')
 const { CONTENT_FACTORY, PANE_SLOT, derivePanePhase } = require('./dsh-pane-host.js')
+const { effectiveView, viewSegments } = require('./dsh-view-switch.js')
 const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
 const { ratioFromDrag } = require('./layout-tree.js')
 
@@ -103,6 +104,35 @@ const fallbackStyle = {
   opacity: 0.9,
 }
 
+/** The 对话 | 轨迹 control is a segmented switch, not a tab strip (spec §6). */
+const segmentedStyle = {
+  display: 'inline-flex',
+  alignItems: 'stretch',
+  flex: 'none',
+  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
+  borderRadius: 6,
+  overflow: 'hidden',
+}
+
+const segmentStyle = {
+  border: 'none',
+  borderRadius: 0,
+  background: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer',
+  font: 'inherit',
+  fontSize: 11,
+  lineHeight: '18px',
+  padding: '1px 7px',
+}
+
+const segmentActiveStyle = {
+  background: 'color-mix(in srgb, currentColor 16%, transparent)',
+  fontWeight: 600,
+}
+
+const segmentDisabledStyle = { opacity: 0.45, cursor: 'not-allowed' }
+
 /** Subscribe a component to the controller's frozen snapshot. */
 function usePaneSnapshot(React, controller) {
   return React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
@@ -176,6 +206,66 @@ function PaneEmptyState({ t, onNew }) {
 }
 
 /**
+ * The pane's own `对话 | 轨迹` segmented switch (ticket 07, spec D1 + §6).
+ *
+ * dsh's native tab row lives in `conversation.session.header`, which is a child
+ * slot of the `main.conversation` root — the pane renders only the
+ * `conversation.content` factory, so that header (and its `role="tablist"`) is
+ * never mounted here. This control replaces it per pane.
+ *
+ * The trajectory segment is disabled with a tooltip while developer tools are
+ * off, mirroring dsh's own filter instead of silently doing nothing.
+ *
+ * @param {{ controller: any, pane: object, t: (key: string) => string }} props
+ */
+function PaneViewSwitch({ controller, pane, t }) {
+  const React = react()
+  const h = React.createElement
+  const trajectoryAvailable = React.useSyncExternalStore(
+    controller.subscribeViewAvailability,
+    controller.isTrajectoryAvailable,
+    controller.isTrajectoryAvailable,
+  )
+  const selected = effectiveView(pane.view, trajectoryAvailable)
+  const labels = {
+    chat: t('pane.view.chat'),
+    trajectory: t('pane.view.trajectory'),
+  }
+  return h(
+    'div',
+    {
+      role: 'group',
+      'aria-label': t('pane.view.title'),
+      'data-hkcraft-view-switch': pane.view,
+      style: segmentedStyle,
+    },
+    viewSegments(trajectoryAvailable).map((segment) =>
+      h(
+        'button',
+        {
+          key: segment.id,
+          type: 'button',
+          role: 'radio',
+          'aria-checked': segment.id === selected,
+          disabled: segment.disabled,
+          title: segment.disabled ? t('pane.view.trajectoryDisabled') : t('pane.view.title'),
+          style: {
+            ...segmentStyle,
+            ...(segment.id === selected ? segmentActiveStyle : {}),
+            ...(segment.disabled ? segmentDisabledStyle : {}),
+          },
+          onClick: () => {
+            if (segment.disabled) return
+            controller.setView(pane.paneId, segment.id)
+          },
+        },
+        labels[segment.id] ?? segment.id,
+      ),
+    ),
+  )
+}
+
+/**
  * One pane: header actions plus the session-scoped child slot.
  *
  * The element type is module-level and the key is the pane id, so the pane is
@@ -225,6 +315,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     'div',
     { style: headerStyle },
     h('span', { style: titleStyle }, title ?? t('pane.title')),
+    h(PaneViewSwitch, { key: 'view', controller, pane, t }),
     h(
       'button',
       {
@@ -491,6 +582,14 @@ function createPaneBody(controller) {
           )
         : undefined
     const { phase, hero } = derivePanePhase({ sessionId, session, summaryBlank })
+    const sessionReady = session !== undefined
+    React.useEffect(() => {
+      if (sessionId === undefined || !sessionReady) return
+      // The pane's own memory wins over dsh's per-session View preference.
+      // `activate` is the same call the native tab row makes, so this swaps the
+      // resident view instead of rebuilding the session.
+      controller.restoreViewFor(sessionId)
+    }, [sessionId, sessionReady])
     const boundary = errorBoundaryClass()
     const close = () => controller.closePaneBySession(sessionId)
 
@@ -581,6 +680,7 @@ module.exports = {
   PaneFrame,
   PaneSeparator,
   PaneEmptyState,
+  PaneViewSwitch,
   createPaneHost,
   createPaneBody,
   createPaneToggle,

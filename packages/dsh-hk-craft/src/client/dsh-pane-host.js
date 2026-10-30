@@ -150,13 +150,15 @@ function derivePanePhase({ sessionId, session, conversation, summaryBlank }) {
  *   release the matching references.
  *
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
- * @param {{ nextPaneId?: () => string }} [options] pane-id factory (tests inject a
- *   deterministic sequence; persistence will reuse restored ids, ticket 08)
+ * @param {{ nextPaneId?: () => string, viewSwitch?: any }} [options] pane-id factory (tests
+ *   inject a deterministic sequence; persistence will reuse restored ids, ticket 08) and the
+ *   conversation View adapter (ticket 07 — `dsh-view-switch.js`, tests inject a fake)
  */
 function createPaneController(ctx, options = {}) {
   const sessions = ctx?.sessions
   const layout = ctx?.layout
   const slots = ctx?.slots
+  const viewSwitch = options?.viewSwitch
 
   /**
    * `workspaces` is optional and may load after this plugin: read it through
@@ -382,6 +384,48 @@ function createPaneController(ctx, options = {}) {
     emit({ probe: probeConversationContent(slots) })
   }
 
+  /**
+   * Whether a pane may offer the trajectory segment. Mirrors ui-conversation's
+   * own gate (ui-conversation:19753-19758): the View only exists while
+   * developer tools are enabled. Without an adapter the pane stays chat-only.
+   */
+  function isTrajectoryAvailable() {
+    return typeof viewSwitch?.isTrajectoryAvailable === 'function'
+      ? viewSwitch.isTrajectoryAvailable() === true
+      : false
+  }
+
+  /**
+   * Follow the developer-tools gate so the segment (and a remembered
+   * trajectory choice) react when the setting flips. No-op without an adapter.
+   *
+   * @param {() => void} listener
+   * @returns {() => void}
+   */
+  function subscribeViewAvailability(listener) {
+    return typeof viewSwitch?.subscribeAvailability === 'function'
+      ? viewSwitch.subscribeAvailability(listener)
+      : () => {}
+  }
+
+  /**
+   * Drive the real conversation View through the public binding. This is the
+   * same call dsh's own tab row makes, so the session is not rebuilt and the
+   * draft / scroll state are dsh's own.
+   *
+   * @returns {{ok: boolean, error?: string}}
+   */
+  function activateView(pane, view) {
+    if (typeof viewSwitch?.activate !== 'function') {
+      return { ok: false, error: 'view switching is unavailable in this shell' }
+    }
+    try {
+      return viewSwitch.activate(pane.sessionId, view) ?? { ok: false, error: 'view switch returned no result' }
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    }
+  }
+
   const unsubscribePanel =
     layout?.panelInfo?.subscribe?.(() => {
       if (disposed) return
@@ -409,6 +453,17 @@ function createPaneController(ctx, options = {}) {
         },
       })
     }) ?? (() => {})
+
+  // Developer tools gate the trajectory View. Turning them back on re-asserts
+  // the trajectory choice each pane remembered; turning them off is left to
+  // dsh, whose own refreshViews restores every tracked binding (usually chat).
+  const unsubscribeViewAvailability = subscribeViewAvailability(() => {
+    if (disposed) return
+    if (!isTrajectoryAvailable()) return
+    for (const pane of Object.values(layoutState.panes)) {
+      if (pane.view === 'trajectory') activateView(pane, pane.view)
+    }
+  })
 
   /** Focus a pane; false when it is absent or already focused. */
   function focusPaneValue(paneId) {
@@ -638,8 +693,13 @@ function createPaneController(ctx, options = {}) {
       return apply(next)
     },
     /**
-     * Remember a pane's conversation view (ticket 07 drives the toggle; the
-     * state is per pane and travels with the layout).
+     * Switch one pane's conversation view. The remembered choice lives on that
+     * pane only; the tree, the focus and every retained reference are
+     * untouched, and the session itself is not rebuilt (ticket 07).
+     *
+     * A trajectory request while developer tools are disabled is refused rather
+     * than remembered as an unreachable selection; the segment is disabled for
+     * the same reason.
      *
      * @param {string} paneId
      * @param {'chat'|'trajectory'} view
@@ -647,8 +707,39 @@ function createPaneController(ctx, options = {}) {
      */
     setView(paneId, view) {
       if (disposed) return false
+      const pane = layoutState.panes[paneId]
+      if (pane === undefined) return false
+      if (view !== 'chat' && view !== 'trajectory') return false
+      if (pane.view === view) return true
+      if (view === 'trajectory' && !isTrajectoryAvailable()) return false
+      if (viewSwitch !== undefined) {
+        const result = activateView(pane, view)
+        if (result?.ok !== true) {
+          emit({ error: result?.error ?? 'could not switch the conversation view' })
+          return false
+        }
+      }
       return apply(layoutTree.setView(layoutState, paneId, view))
     },
+    /**
+     * Re-assert the view a pane remembered, once its conversation binding is
+     * available. Called from the pane body after mount; dsh restores the
+     * per-session preference on its own, but the pane's memory must win.
+     *
+     * @param {string} sessionId
+     * @returns {boolean}
+     */
+    restoreViewFor(sessionId) {
+      if (disposed) return false
+      const paneId = layoutTree.paneOfSession(layoutState, sessionId)
+      if (paneId === undefined) return false
+      const pane = layoutState.panes[paneId]
+      if (pane.view === 'trajectory' && !isTrajectoryAvailable()) return false
+      return activateView(pane, pane.view).ok === true
+    },
+    /** Whether the trajectory segment is offered (developer-tools gate). */
+    isTrajectoryAvailable,
+    subscribeViewAvailability,
     /**
      * Drag a separator: `path` addresses the split (a/b steps from the root).
      *
@@ -666,6 +757,7 @@ function createPaneController(ctx, options = {}) {
       disposed = true
       unsubscribePanel()
       unsubscribeEntryError()
+      unsubscribeViewAvailability()
       releaseAll()
       try {
         if (panelId() === PANEL_KEY) layout.selectPanel(null)

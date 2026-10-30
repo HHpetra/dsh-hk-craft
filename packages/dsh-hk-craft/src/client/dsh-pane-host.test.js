@@ -359,14 +359,44 @@ function livePaneRefs(fake) {
 
 const WORKSPACE = [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }]
 
+/** Stand-in for the `dsh-view-switch.js` adapter (ticket 07). */
+function fakeViewSwitch({ trajectoryAvailable = true, failActivate = false } = {}) {
+  const calls = []
+  const listeners = new Set()
+  let available = trajectoryAvailable
+  let failing = failActivate
+  return {
+    calls,
+    activate(sessionId, viewId) {
+      if (failing) return { ok: false, error: 'view switch exploded' }
+      calls.push({ sessionId, viewId })
+      return { ok: true }
+    },
+    isTrajectoryAvailable: () => available,
+    subscribeAvailability(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    setAvailable(next) {
+      available = next
+      for (const listener of [...listeners]) listener()
+    },
+    failNext(next = true) {
+      failing = next
+    },
+    listenerCount: () => listeners.size,
+  }
+}
+
 /** Activate one pane with a session and return the ready controller. */
 async function readyController(options = {}) {
   const ids = [...(options.paneIds ?? ['p1', 'p2', 'p3'])]
+  const viewSwitch = options.viewSwitch ?? fakeViewSwitch()
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, workspaces: WORKSPACE, ...options })
-  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift(), viewSwitch })
   controller.markRegistered()
   controller.activate('s1')
-  return { fake, controller }
+  return { fake, controller, viewSwitch }
 }
 
 test('splitting creates a new session beside the pane and moves the main view to it', async () => {
@@ -582,11 +612,12 @@ test('a split without a resolvable workspace reports an error and adds no pane',
   controller.dispose()
 })
 
-test('view and ratio changes are pure layout updates on the snapshot', async () => {
-  const { controller } = await readyController({ created: ['s2'] })
+test('a view change drives only that pane and keeps the layout a pure update', async () => {
+  const { controller, viewSwitch } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
 
   assert.equal(controller.setView('p1', 'trajectory'), true)
+  assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
   assert.equal(controller.getSnapshot().panes.p1.view, 'trajectory')
   assert.equal(controller.getSnapshot().panes.p2.view, 'chat')
 
@@ -596,6 +627,85 @@ test('view and ratio changes are pure layout updates on the snapshot', async () 
   assert.equal(controller.resize(['missing'], 0.2), false)
   assert.equal(controller.setView('missing', 'chat'), false)
   controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Per-pane conversation View switch (ticket 07)
+// ---------------------------------------------------------------------------
+
+test('switching a pane view never re-retains its session or touches the tree', async () => {
+  const { fake, controller, viewSwitch } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  const reference = controller.paneReference('p1')
+  const retained = fake.calls.retain.length
+  const rootBefore = controller.getSnapshot().root
+
+  assert.equal(controller.setView('p1', 'trajectory'), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
+  assert.deepEqual(state.panes.p1, { paneId: 'p1', sessionId: 's1', view: 'trajectory' })
+  assert.deepEqual(state.panes.p2, { paneId: 'p2', sessionId: 's2', view: 'chat' })
+  // A View switch is not a session swap: same retained reference, same panes,
+  // same tree — only the remembered view differs.
+  assert.equal(controller.paneReference('p1'), reference)
+  assert.equal(fake.calls.retain.length, retained)
+  assert.deepEqual(state.root, rootBefore)
+  assert.equal(state.sessionId, 's2')
+  controller.dispose()
+})
+
+test('a disabled trajectory segment cannot switch a pane even when asked directly', async () => {
+  const { controller, viewSwitch } = await readyController({
+    viewSwitch: fakeViewSwitch({ trajectoryAvailable: false }),
+  })
+
+  assert.equal(controller.isTrajectoryAvailable(), false)
+  assert.equal(controller.setView('p1', 'trajectory'), false)
+  assert.deepEqual(viewSwitch.calls, [])
+  assert.equal(controller.getSnapshot().panes.p1.view, 'chat')
+  controller.dispose()
+})
+
+test('a failed View activation keeps the remembered view and surfaces the error', async () => {
+  const { controller } = await readyController({ viewSwitch: fakeViewSwitch({ failActivate: true }) })
+
+  assert.equal(controller.setView('p1', 'trajectory'), false)
+  assert.equal(controller.getSnapshot().panes.p1.view, 'chat')
+  assert.match(controller.getSnapshot().error, /view switch exploded/)
+  controller.dispose()
+})
+
+test('mounting a pane re-asserts its remembered view on that session binding', async () => {
+  const { controller, viewSwitch } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  controller.setView('p1', 'trajectory')
+  viewSwitch.calls.length = 0
+
+  assert.equal(controller.restoreViewFor('s1'), true)
+  assert.equal(controller.restoreViewFor('s2'), true)
+  assert.equal(controller.restoreViewFor('gone'), false)
+  assert.deepEqual(viewSwitch.calls, [
+    { sessionId: 's1', viewId: 'trajectory' },
+    { sessionId: 's2', viewId: 'chat' },
+  ])
+  controller.dispose()
+})
+
+test('re-enabling developer tools re-applies the pane trajectory memory', async () => {
+  const { controller, viewSwitch } = await readyController()
+  controller.setView('p1', 'trajectory')
+  viewSwitch.calls.length = 0
+
+  viewSwitch.setAvailable(false)
+  assert.equal(controller.isTrajectoryAvailable(), false)
+  assert.deepEqual(viewSwitch.calls, [])
+
+  viewSwitch.setAvailable(true)
+  assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
+
+  controller.dispose()
+  assert.equal(viewSwitch.listenerCount(), 0)
 })
 
 test('deactivating keeps the layout and releases references; activating restores them', async () => {
