@@ -14,12 +14,12 @@
 ## 2. 命令
 
 ```powershell
-node packages\dsh-hk-craft\scripts\build-client.mjs     # 生成 lib/client.js（已 gitignore）
-cd packages\dsh-hk-craft; node --test --test-isolation=none
-node scripts\check-bundle.mjs
+pnpm build            # 构建 lib/client.js；沙箱挡住 esbuild 服务时会自动回退到 CLI
+pnpm test
+pnpm check            # 需要先 build
 ```
 
-`lib/client.js` **不入库**；`check` 需要它存在，先 build 再 check。
+`lib/client.js` **不入库**。如果 `build` 报 `spawn EPERM`，那是沙箱限制，脚本已自动回退——不要手工拼 esbuild 命令。
 
 ## 3. 客户端模块约定
 
