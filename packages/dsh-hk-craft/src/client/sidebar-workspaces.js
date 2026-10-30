@@ -136,6 +136,9 @@ const dotStyle = {
  */
 const addRowStyle = {
   ...rowStyle,
+  // The row container no longer owns the light-to-name gap; the add row is a
+  // real button, so it restores the 8px gap it had before ticket 01.
+  gap: 8,
   padding: '0 8px',
   border: 'none',
   color: 'var(--dsw-alias-label-secondary, inherit)',
