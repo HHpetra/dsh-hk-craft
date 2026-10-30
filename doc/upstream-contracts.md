@@ -414,9 +414,10 @@ section is slim and uninstall restores the native one.
 **Provider:** `@deepseek-ai/dsh-client-ui-settings-general` (the settings shell).
 
 **Semantics:** the shell declares `settings.section` as a `list` root slot and
-renders the active page with `renderSlot("settings.section", { close }, { only:
-active })`. A contribution registers `{ name, id, order, label, locale }` (plus
-optional `children` / `inject`) through `ctx.slots.inject` followed by
+renders the active page with
+`renderSlot("settings.section", { close }, { only: active })`. A contribution
+registers `{ name, id, order, label, locale }` (plus optional
+`children` / `inject`) through `ctx.slots.inject` followed by
 `ctx.slots.register`; a list entry requires an `id`. The navigation projects
 every entry as `{ id, order, label }` and sorts by `order` ascending. The
 official top-level sections use `account -10` (when signed in), `general 0`,
