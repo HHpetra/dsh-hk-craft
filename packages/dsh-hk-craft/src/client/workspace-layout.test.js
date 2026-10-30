@@ -52,8 +52,14 @@ function memoryStorage(seed = {}) {
     setItem(key, value) {
       entries.set(key, value)
     },
+    removeItem(key) {
+      entries.delete(key)
+    },
     raw(workspaceId) {
       return entries.get(layoutKey(workspaceId)) ?? null
+    },
+    has(workspaceId) {
+      return entries.has(layoutKey(workspaceId))
     },
     read(workspaceId, options = {}) {
       return decodeLayout(this.raw(workspaceId), { workspaceId, ...options })
@@ -66,7 +72,7 @@ function memoryStorage(seed = {}) {
  * the workspace catalog (session → workspace) and a status map.
  */
 function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 'ready', selectPanelFails = false } = {}) {
-  const calls = { retain: [], selectPanel: [], create: [] }
+  const calls = { retain: [], selectPanel: [], create: [], interrupt: [] }
   const references = []
   let createdCount = 0
   const panelListeners = new Set()
@@ -89,6 +95,16 @@ function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 're
   }
   const sessions = {
     list: { getSnapshot: () => ({ phase: 'ready', byId: rows }) },
+    // Only `pane-close.js` reaches for these; recording them lets a delete test
+    // prove it never interrupts a running turn.
+    scope(sessionId) {
+      calls.interrupt.push(sessionId)
+      return { get: () => undefined }
+    },
+    binding(sessionId) {
+      calls.interrupt.push(sessionId)
+      return {}
+    },
     retain(sessionId, options) {
       const reference = {
         sessionId,
@@ -542,5 +558,131 @@ test('switching to an unknown workspace id is refused', () => {
   assert.equal(controller.switchWorkspace(''), false)
   assert.equal(controller.switchWorkspace(undefined), false)
   assert.equal(controller.getSnapshot().workspaceId, null)
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Deleting a workspace (ticket 03, spec §2)
+//
+// A delete only removes the registration: its layout and persisted key go, its
+// pane references are released, and a visible workspace hands the view to its
+// host-order neighbour. Running turns are not interrupted.
+// ---------------------------------------------------------------------------
+
+test('deleting the visible workspace drops its layout and key, releases its panes and moves to the next host workspace', () => {
+  const layouts = twoWorkspaces()
+  const storage = memoryStorage(layouts)
+  const { fake, controller } = readyController({ storage })
+  controller.activate('s1')
+  let emissions = 0
+  controller.subscribe(() => {
+    emissions += 1
+  })
+
+  assert.equal(controller.forgetWorkspace('w1', { order: ['w1', 'w2', 'w3'] }), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.workspaceId, 'w2')
+  assert.equal(state.layouts.w1, undefined, 'the deleted workspace layout is gone')
+  assert.deepEqual(state.layouts.w2, layouts.w2, 'the neighbour tree is shown')
+  assert.equal(state.sessionId, 's3')
+  assert.equal(storage.has('w1'), false, 'the persisted key is cleared')
+  assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId), ['s3'])
+  assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
+  // Deleting a registration is not closing panes: no interrupt, no panel nav.
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.deepEqual(fake.calls.selectPanel, [PANEL_KEY])
+  assert.ok(emissions > 0, 'the controller publishes a new snapshot')
+  controller.dispose()
+})
+
+test('deleting the last host workspace falls back to the previous one', () => {
+  const layouts = twoWorkspaces()
+  const storage = memoryStorage(layouts)
+  const { fake, controller } = readyController({ storage })
+  controller.activate('s3')
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+
+  assert.equal(controller.forgetWorkspace('w2', { order: ['w1', 'w2'] }), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.workspaceId, 'w1')
+  assert.equal(state.sessionId, 's1')
+  assert.equal(storage.has('w2'), false)
+  assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s1'])
+  controller.dispose()
+})
+
+test('deleting the only workspace leaves no active workspace and no retained reference', () => {
+  const only = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: only })
+  const { fake, controller } = readyController({
+    storage,
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1'] }],
+  })
+  controller.activate('s1')
+
+  assert.equal(controller.forgetWorkspace('w1', { order: ['w1'] }), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.workspaceId, null)
+  assert.deepEqual(state.layouts, {})
+  assert.equal(state.root, null)
+  assert.deepEqual(livePaneRefs(fake), [])
+  assert.deepEqual(liveMainView(fake), [])
+  assert.equal(storage.has('w1'), false)
+  controller.dispose()
+})
+
+test('deleting a hidden workspace clears only its layout, key and references', () => {
+  const layouts = twoWorkspaces()
+  const storage = memoryStorage(layouts)
+  const { fake, controller } = readyController({ storage })
+  controller.activate('s1')
+  assert.equal(controller.switchWorkspace('w2'), true)
+  assert.equal(controller.switchWorkspace('w1'), true)
+
+  assert.equal(controller.forgetWorkspace('w2', { order: ['w1', 'w2'] }), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.workspaceId, 'w1')
+  assert.equal(state.sessionId, 's1')
+  assert.equal(state.layouts.w2, undefined)
+  assert.equal(storage.has('w2'), false)
+  assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId), ['s1'])
+  assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s1'])
+  controller.dispose()
+})
+
+test('deleting a workspace that was never opened here only clears its stored key', () => {
+  const stored = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: stored })
+  const { fake, controller } = readyController({ storage })
+  controller.activate('s3')
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  const before = controller.getSnapshot()
+
+  assert.equal(controller.forgetWorkspace('w1', { order: ['w1', 'w2'] }), true)
+
+  assert.equal(storage.has('w1'), false)
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.deepEqual(controller.getSnapshot().layouts, before.layouts)
+  assert.deepEqual(fake.calls.interrupt, [])
+  controller.dispose()
+})
+
+test('an unknown workspace id is a no-op', () => {
+  const storage = memoryStorage()
+  const { fake, controller } = readyController({ storage })
+  controller.activate('s1')
+  const before = controller.getSnapshot()
+
+  assert.equal(controller.forgetWorkspace('missing', { order: ['w1', 'w2'] }), false)
+  assert.equal(controller.forgetWorkspace('', { order: ['w1', 'w2'] }), false)
+  assert.equal(controller.forgetWorkspace(undefined), false)
+
+  assert.equal(controller.getSnapshot(), before, 'no snapshot is published for an unknown id')
+  assert.equal(storage.has('w1'), true)
+  assert.deepEqual(fake.calls.interrupt, [])
   controller.dispose()
 })

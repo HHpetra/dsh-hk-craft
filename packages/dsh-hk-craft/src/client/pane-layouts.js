@@ -14,7 +14,13 @@
  */
 
 const layoutTree = require('./layout-tree.js')
-const { emptyLayout, pruneToKnownSessions, readLayout, writeLayout } = require('./layout-store.js')
+const {
+  emptyLayout,
+  pruneToKnownSessions,
+  readLayout,
+  removeLayout,
+  writeLayout,
+} = require('./layout-store.js')
 
 /**
  * Internal key for the memory-only layout used when no workspace can be
@@ -224,6 +230,31 @@ function createPaneLayouts(options = {}) {
     activeWorkspaceId = null
   }
 
+  /**
+   * Drop one workspace's loaded layout and its persisted key.
+   *
+   * Called when the workspace registration itself is deleted (ticket 03): the
+   * key must not outlive its workspace, or the "enabled" inference would
+   * resurrect a ghost workspace after a restart. Deleting a workspace that was
+   * never loaded still clears the key and reports that there was no layout to
+   * drop, so deleting an unused workspace has no visible layout side effect.
+   *
+   * The active workspace is *not* changed here; the controller owns the
+   * neighbour choice.
+   *
+   * @param {string} workspaceId
+   * @returns {boolean} whether a loaded layout was dropped
+   */
+  function forget(workspaceId) {
+    if (typeof workspaceId !== 'string' || workspaceId === '') return false
+    removeLayout(storage, workspaceId)
+    if (layouts[workspaceId] === undefined) return false
+    const next = { ...layouts }
+    delete next[workspaceId]
+    layouts = next
+    return true
+  }
+
   return {
     UNSCOPED_WORKSPACE,
     layoutOf,
@@ -243,6 +274,7 @@ function createPaneLayouts(options = {}) {
     locatePaneIn,
     workspaceOfPane,
     focusedPaneOf,
+    forget,
     clear,
   }
 }
