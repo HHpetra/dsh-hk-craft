@@ -7,14 +7,28 @@
  * `lib/client.js` by `scripts/build-client.mjs`. The id passed to the shell
  * loader must equal the bundle patch row name (`dsh-hk-craft`).
  *
- * Everything here goes through public plugin services only: `slots`, `locale`
- * today; session/workspace/layout services are added by later tickets.
+ * Everything here goes through public plugin services only: `slots`, `locale`,
+ * and — for the sidebar workspace section — `uiWorkspace` and `workspaces`,
+ * which are awaited through `ctx.inject` so the footer action keeps working even
+ * when the workspace plugin is absent.
  */
 
 const { dictionaries } = require('./locale.js')
 const { DiagnosticsAction } = require('./diagnostics.js')
+const { WorkspaceSection } = require('./sidebar-workspaces.js')
+const { createSectionActions } = require('./dsh-workspaces.js')
 
 const NS = 'dsh-hk-craft'
+
+/**
+ * The priority that shadows dsh's own `sidebar.workspaces` occupant.
+ *
+ * `sidebar.workspaces` is a `single` slot; the slot core orders its entries by
+ * `priority ?? 0` ascending and renders the first ("lowest renders"). The shipped
+ * occupant (ui-workspace) registers without a priority, i.e. 0, so any negative
+ * value replaces it for every entry that is not a same-priority duplicate.
+ */
+const WORKSPACE_SLOT_PRIORITY = -100
 
 /** Cordis services this plugin needs before `apply` runs. */
 const inject = ['slots', 'locale']
@@ -35,6 +49,27 @@ function apply(ctx) {
       DiagnosticsAction,
     ),
   )
+
+  // The workspace section replaces a slot declared by ui-workspace and drives its
+  // public service, so both services must exist before the entry is registered.
+  ctx.inject(['uiWorkspace', 'workspaces'], (scoped) => {
+    const actions = createSectionActions(scoped)
+    scoped.slots.inject('sidebar.workspaces', () =>
+      scoped.slots.register(
+        {
+          name: 'sidebar.workspaces',
+          id: 'dsh-hk-craft.workspaces',
+          priority: WORKSPACE_SLOT_PRIORITY,
+          locale: NS,
+          inject: () => ({
+            openWorkspace: actions.openWorkspace,
+            addWorkspace: actions.addWorkspace,
+          }),
+        },
+        WorkspaceSection,
+      ),
+    )
+  })
 }
 
-module.exports = { NS, inject, apply }
+module.exports = { NS, inject, apply, WORKSPACE_SLOT_PRIORITY }
