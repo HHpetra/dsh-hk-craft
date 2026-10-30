@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 标签条结构为：外层条 + 可横向滚动视口（标签区 + 紧跟的新增会话按钮）+ 视口之外的固定右侧操作组。
 - [ ] 新增会话按钮紧贴最后一个标签；标签少时紧跟、标签多时随标签一起滚动；不再占据最右侧。
@@ -14,3 +14,7 @@
 - [ ] 本版不出现“打开右侧边栏”按钮，也不放 jobs、open-in-app、schedule、会话日志等原生头部件。
 - [ ] 上游契约页记录：分屏面板激活时原生右侧边栏被隐藏、其“当前会话”为空，因此本版暂缓右侧边栏；右侧组是未来原生工具的预留位置。
 - [ ] 视觉冒烟：1 个、2 个、5 个标签时新增会话按钮都紧贴最后标签；空工作区的空状态不显示工具栏。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `3e0d0f1`. Code-review fixes merged at `2353730` (empty seats now contribute no box; strip keeps an 8px right inset). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Overflow scrolling, `+` adjacency and the pinned group at extreme widths remain manual smoke items.

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 侧栏工作区行结构预重构
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 拖动超过 6px 才进入排序状态；未超过阈值的按下仍按点击打开工作区；拖动后的 click 不触发打开。
 - [ ] 动作位上的指针按下不启动拖动（与删除入口并行实现时互不干扰）。
@@ -15,3 +15,7 @@
 - [ ] 纯落点函数单元测试覆盖前/后/追加/原位/源等于目标/未知 id/空列表/单元素列表。
 - [ ] 适配层测试覆盖“前/后”到 Host 锚点的换算（含追加）、失败上抛。
 - [ ] 上游契约页记录工作区顺序的 Host 持久化语义、锚点缺省表示追加、客户端乐观排序与失败恢复。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `7d9a85e`. Code-review fixes merged at `2353730` (threshold is now strictly >6px; drag gesture extracted to `workspace-drag.js`). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Drag feel, persistence across restart and failure recovery remain manual smoke items.

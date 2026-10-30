@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 侧栏工作区行结构预重构
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 行内删除入口在行悬停或行内键盘焦点时可见，有独立可访问名，且不会误触发打开工作区。
 - [ ] 确认弹窗包含工作区显示名、保留边界说明，以及（有运行中会话时）数量提示和“删除不会停止它们”的说明。
@@ -17,3 +17,7 @@
 - [ ] 弹窗使用 `role="dialog"`、`aria-modal` 和可访问名；错误使用 `role="alert"`。
 - [ ] 单元测试覆盖：删除服务失败时不清理、删除当前/非当前工作区、相邻工作区切换、布局键清理、引用释放、未知工作区无操作。
 - [ ] 上游契约页记录删除语义：只移除登记、不删目录与会话、失败抛出。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `ee71c57`. Code-review fixes merged at `2353730` (delete-success focus is next row else Add). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Manual desktop smoke, including “running session keeps running after delete”, still pending.

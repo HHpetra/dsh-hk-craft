@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 侧栏 footer 不再注册或渲染诊断按钮与分屏切换按钮。
 - [ ] 设置导航出现独立的 HK Craft 分区，标签跟随界面语言，位置排在官方分区之后。
@@ -16,3 +16,7 @@
 - [ ] 中英文案键集合一致；入口注册与设置页组件工厂有单元测试。
 - [ ] 上游契约页记录设置分区槽的注册形态、组件收到的关闭回调、导航标签随语言刷新。
 - [ ] 说明文案明确：这两个是过渡入口，长期入口确定后会移走。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `00df89a`. Code-review fixes merged at `2353730` (docs, glossary, README, translator params). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Settings-page visual behavior and close-on-success still need installed-desktop smoke.

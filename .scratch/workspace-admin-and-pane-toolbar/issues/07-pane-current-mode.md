@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — 标签条工具栏骨架
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 右侧组的模式扩展位显示焦点会话的预设标签；点击其他标签或窗格后标签跟着切换。
 - [ ] 数据来自会话汇总里的预设标识，与原生头部标签同源。
@@ -14,3 +14,7 @@
 - [ ] 标签不可点击，不写会话状态；`title` 使用预设描述（若有）或一句“该会话启动时选择的模式”。
 - [ ] 纯工具栏投影与预设名解析有单元测试，覆盖自定义/内置/未知/名册失败/名册缺失。
 - [ ] 上游契约页记录会话汇总的预设字段与名册读取的可选性。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `914b102`. Code-review fixes merged at `2353730` (shared React accessor, seat spacing on its own root). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Roster availability and badge rendering on the installed desktop remain manual smoke items.

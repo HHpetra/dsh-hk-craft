@@ -4,10 +4,14 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 点击行仍打开或切换到对应工作区：分屏内切换可见布局，分屏外走原生揭示路径。
 - [ ] 行仍可用键盘聚焦并触发；当前工作区高亮、灯色、名称与修改前一致。
 - [ ] 行内存在独立动作位，主选择控件与动作位不是嵌套按钮；动作位有稳定的标记，后续票可以无歧义地让拖动忽略它上面的指针按下。
 - [ ] 现有单元测试全绿；没有新增用户可见行为。
 - [ ] 行的可访问名仍包含工作区名与灯色说明。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `5aa8510`; the add-row spacing follow-up merged at `60b9882`. Code-review fixes merged at `2353730`. Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Manual desktop smoke (install → restart → uninstall) still pending.

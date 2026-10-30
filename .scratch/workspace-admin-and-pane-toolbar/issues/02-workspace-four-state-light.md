@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 侧栏工作区行结构预重构
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 未启用判定：既没有已加载的窗格布局、也没有持久化布局记录的工作区显示灰灯；在原生视图里打开工作区不算启用。
 - [ ] 已启用且任一成员等待用户（审批、提问、计划确认）显示红灯；任一成员运行中显示黄灯；至少一个成员非空白且没有运行/等待显示绿灯；只有空白新会话显示灰灯。
@@ -15,3 +15,7 @@
 - [ ] 没有“错误灯”：不读取失败位，也不打开会话历史。
 - [ ] 单元测试覆盖四态各一例、优先级、未启用、空白会话、归档/未知会话、未就绪快照、空启用集合与降级语义。
 - [ ] 上游契约页记录 `blank` 的含义与“启用 = 有窗格布局记录”的判定，并注明原生视图打开不算启用。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `ba5ed85`. Code-review fixes merged at `2353730` (explicit not-ready session phase → gray). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Manual desktop smoke still pending.

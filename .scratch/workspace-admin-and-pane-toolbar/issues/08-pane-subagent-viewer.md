@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — 标签条工具栏骨架
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 右侧组的子代理扩展位显示直接子会话总数与运行中数量；目录不存在或为空时不渲染入口。
 - [ ] 下拉列出直接子项：名字（缺失时退回 id）、模式（continuable / one-shot / unknown / external，本地化）、活动状态（运行中/已完成/空闲，外部行不显示活动）。
@@ -14,3 +14,7 @@
 - [ ] 只实现直接子会话；嵌套展开、悬停展开、失败重试、父级面包屑不在本票内。
 - [ ] 纯工具栏投影测试覆盖：目录缺失/为空时隐藏、计数与运行中计数、活动状态来自状态映射并有汇总行回退、外部行标记不可导航。
 - [ ] 上游契约页记录子代理目录的读取位置、刷新能力与在新窗格打开会话的公开路径。
+
+## Comments
+
+- 2026-10-30 — Implemented and merged into `feat/workspace-admin-pane-toolbar` at `40e8fcf`. Code-review fixes merged at `2353730` (dead exports removed, shared React accessor). Integration gates: `pnpm build` pass, `pnpm check` 29/29, `pnpm test` 458 pass / 0 fail. Dropdown painting outside the strip and Escape/outside focus return remain manual smoke items.
