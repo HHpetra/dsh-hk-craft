@@ -11,6 +11,7 @@ const {
   probeConversationContent,
   findCurrentSession,
   derivePanePhase,
+  interruptSession,
   createPaneController,
 } = require('./dsh-pane-host.js')
 
@@ -60,6 +61,66 @@ test('probe stays optimistic when the shell exposes no snapshot capability', () 
 
   assert.equal(probe.ok, true)
   assert.equal(probe.status, 'unknown')
+})
+
+test('interruptSession uses the same scoped conversation.cancel as the stop button', async () => {
+  const calls = []
+  const sessions = {
+    scope(sessionId) {
+      calls.push(['scope', sessionId])
+      return {
+        get(name) {
+          assert.equal(name, 'conversation')
+          return {
+            cancel() {
+              calls.push(['cancel'])
+              return Promise.resolve({ ok: true })
+            },
+          }
+        },
+      }
+    },
+  }
+
+  await interruptSession(sessions, 's1')
+  assert.deepEqual(calls, [['scope', 's1'], ['cancel']])
+})
+
+test('interruptSession falls back to the session cancel binding', async () => {
+  const calls = []
+  const sessions = {
+    scope: () => ({ get: () => undefined }),
+    binding(sessionId) {
+      return {
+        session: {
+          cancel() {
+            calls.push(sessionId)
+            return Promise.resolve({ ok: true })
+          },
+        },
+      }
+    },
+  }
+
+  await interruptSession(sessions, 's1')
+  assert.deepEqual(calls, ['s1'])
+})
+
+test('interruptSession turns a binding failure result into a rejection', async () => {
+  const sessions = {
+    scope: () => ({ get: () => undefined }),
+    binding: () => ({
+      session: {
+        cancel: () => Promise.resolve({ ok: false, error: { code: 'session/not-running', message: 'no turn' } }),
+      },
+    }),
+  }
+
+  await assert.rejects(() => interruptSession(sessions, 's1'), /no turn/)
+})
+
+test('interruptSession reports a missing public route instead of silently succeeding', async () => {
+  await assert.rejects(() => interruptSession({}, 's1'), /public interrupt/)
 })
 
 test('the explicitly chosen target defaults to the derived current session', () => {
@@ -123,8 +184,11 @@ function fakeControllerCtx({
   createFails = false,
   created = [],
   workspaces = [],
+  interruptFails = false,
+  deferredInterrupts = null,
 } = {}) {
-  const calls = { retain: [], selectPanel: [], create: [] }
+  const calls = { retain: [], selectPanel: [], create: [], interrupt: [] }
+  let interruptFailure = interruptFails
   const references = []
   const createdIds = [...created]
   let createCount = 0
@@ -171,6 +235,36 @@ function fakeControllerCtx({
       createCount += 1
       return next ?? `created-${createCount}`
     },
+    scope(sessionId) {
+      return {
+        get(name) {
+          if (name !== 'conversation') return undefined
+          return {
+            cancel() {
+              calls.interrupt.push({ sessionId, route: 'conversation' })
+              if (deferredInterrupts !== null) {
+                return new Promise((resolve, reject) => {
+                  deferredInterrupts.push({ resolve, reject })
+                })
+              }
+              if (interruptFailure) return Promise.reject(new Error('interrupt failed'))
+              return Promise.resolve({ ok: true })
+            },
+          }
+        },
+      }
+    },
+    binding(sessionId) {
+      return {
+        session: {
+          cancel() {
+            calls.interrupt.push({ sessionId, route: 'binding' })
+            if (interruptFailure) return Promise.resolve({ ok: false, error: { message: 'interrupt failed' } })
+            return Promise.resolve({ ok: true })
+          },
+        },
+      }
+    },
   }
   const slots = {
     snapshot(name) {
@@ -190,7 +284,11 @@ function fakeControllerCtx({
     ctx: { sessions, layout, slots, workspaces: workspacesService },
     calls,
     references,
+    rows,
     panel,
+    setInterruptFailure(value) {
+      interruptFailure = value
+    },
     reportEntryError(key, entry, error) {
       for (const listener of [...entryErrorListeners]) listener(key, entry, error, { abdicated: false })
     },
@@ -359,14 +457,44 @@ function livePaneRefs(fake) {
 
 const WORKSPACE = [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }]
 
+/** Stand-in for the `dsh-view-switch.js` adapter (ticket 07). */
+function fakeViewSwitch({ trajectoryAvailable = true, failActivate = false } = {}) {
+  const calls = []
+  const listeners = new Set()
+  let available = trajectoryAvailable
+  let failing = failActivate
+  return {
+    calls,
+    activate(sessionId, viewId) {
+      if (failing) return { ok: false, error: 'view switch exploded' }
+      calls.push({ sessionId, viewId })
+      return { ok: true }
+    },
+    isTrajectoryAvailable: () => available,
+    subscribeAvailability(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    setAvailable(next) {
+      available = next
+      for (const listener of [...listeners]) listener()
+    },
+    failNext(next = true) {
+      failing = next
+    },
+    listenerCount: () => listeners.size,
+  }
+}
+
 /** Activate one pane with a session and return the ready controller. */
 async function readyController(options = {}) {
   const ids = [...(options.paneIds ?? ['p1', 'p2', 'p3'])]
+  const viewSwitch = options.viewSwitch ?? fakeViewSwitch()
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, workspaces: WORKSPACE, ...options })
-  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift(), viewSwitch })
   controller.markRegistered()
   controller.activate('s1')
-  return { fake, controller }
+  return { fake, controller, viewSwitch }
 }
 
 test('splitting creates a new session beside the pane and moves the main view to it', async () => {
@@ -460,6 +588,119 @@ test('closing the last pane keeps the panel active with the empty state and no r
   assert.equal(state.sessionId, null)
   assert.equal(livePaneRefs(fake).length, 0)
   assert.equal(liveMainView(fake).length, 0)
+  assert.deepEqual(fake.calls.interrupt, [])
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Closing a running pane interrupts its conversation (ticket 09)
+// ---------------------------------------------------------------------------
+
+/** Rows with `s1` mid-turn, which is what makes a close ask for confirmation. */
+function runningRows() {
+  return { s1: { id: 's1', running: true } }
+}
+
+test('closing a running pane asks first and leaves the session and its refs untouched', async () => {
+  const { fake, controller } = await readyController({ rows: runningRows() })
+
+  assert.equal(controller.closePane('p1'), false)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.pendingClose, { paneId: 'p1', sessionId: 's1' })
+  assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(Object.keys(state.panes), ['p1'])
+  assert.equal(state.sessionId, 's1')
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.equal(livePaneRefs(fake).length, 1)
+  assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+test('cancelling the close confirmation changes nothing', async () => {
+  const { fake, controller } = await readyController({ rows: runningRows() })
+  controller.closePane('p1')
+
+  assert.equal(controller.cancelClose(), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.pendingClose, null)
+  assert.equal(state.closeError, null)
+  assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
+  assert.equal(state.sessionId, 's1')
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.equal(livePaneRefs(fake).length, 1)
+  controller.dispose()
+})
+
+test('confirming interrupts the turn once, then releases the pane and keeps the history row', async () => {
+  const { fake, controller } = await readyController({ rows: runningRows() })
+  controller.closePane('p1')
+
+  assert.equal(await controller.confirmClose(), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  assert.equal(state.pendingClose, null)
+  assert.equal(state.closeBusy, false)
+  assert.equal(state.root, null)
+  assert.deepEqual(state.panes, {})
+  assert.equal(livePaneRefs(fake).length, 0)
+  assert.equal(liveMainView(fake).length, 0)
+  // Release is a client-reference teardown, not a delete: the row /resume reads
+  // is still in the host list snapshot.
+  assert.equal(fake.rows.s1.running, true)
+  assert.equal(await controller.confirmClose(), false)
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  controller.dispose()
+})
+
+test('a second confirm while the interrupt is in flight is ignored', async () => {
+  const deferred = []
+  const { fake, controller } = await readyController({
+    rows: runningRows(),
+    deferredInterrupts: deferred,
+  })
+  controller.closePane('p1')
+
+  const first = controller.confirmClose()
+  assert.equal(controller.getSnapshot().closeBusy, true)
+  assert.equal(await controller.confirmClose(), false)
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+
+  deferred[0].resolve({ ok: true })
+  assert.equal(await first, true)
+  assert.equal(controller.getSnapshot().closeBusy, false)
+  assert.equal(controller.getSnapshot().root, null)
+  controller.dispose()
+})
+
+test('a failed interrupt keeps the pane mounted, its references and the dialog error visible', async () => {
+  const { fake, controller } = await readyController({
+    rows: runningRows(),
+    interruptFails: true,
+  })
+  controller.closePane('p1')
+
+  assert.equal(await controller.confirmClose(), false)
+
+  const state = controller.getSnapshot()
+  assert.match(state.closeError, /interrupt failed/)
+  assert.equal(state.closeBusy, false)
+  assert.deepEqual(state.pendingClose, { paneId: 'p1', sessionId: 's1' })
+  assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(Object.keys(state.panes), ['p1'])
+  assert.equal(livePaneRefs(fake).length, 1)
+  assert.equal(liveMainView(fake).length, 1)
+
+  // The user can retry after the transient failure, and that retry closes it.
+  fake.setInterruptFailure(false)
+  assert.equal(await controller.confirmClose(), true)
+  assert.equal(controller.getSnapshot().root, null)
+  assert.deepEqual(fake.calls.interrupt, [
+    { sessionId: 's1', route: 'conversation' },
+    { sessionId: 's1', route: 'conversation' },
+  ])
   controller.dispose()
 })
 
@@ -582,11 +823,12 @@ test('a split without a resolvable workspace reports an error and adds no pane',
   controller.dispose()
 })
 
-test('view and ratio changes are pure layout updates on the snapshot', async () => {
-  const { controller } = await readyController({ created: ['s2'] })
+test('a view change drives only that pane and keeps the layout a pure update', async () => {
+  const { controller, viewSwitch } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
 
   assert.equal(controller.setView('p1', 'trajectory'), true)
+  assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
   assert.equal(controller.getSnapshot().panes.p1.view, 'trajectory')
   assert.equal(controller.getSnapshot().panes.p2.view, 'chat')
 
@@ -596,6 +838,85 @@ test('view and ratio changes are pure layout updates on the snapshot', async () 
   assert.equal(controller.resize(['missing'], 0.2), false)
   assert.equal(controller.setView('missing', 'chat'), false)
   controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Per-pane conversation View switch (ticket 07)
+// ---------------------------------------------------------------------------
+
+test('switching a pane view never re-retains its session or touches the tree', async () => {
+  const { fake, controller, viewSwitch } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  const reference = controller.paneReference('p1')
+  const retained = fake.calls.retain.length
+  const rootBefore = controller.getSnapshot().root
+
+  assert.equal(controller.setView('p1', 'trajectory'), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
+  assert.deepEqual(state.panes.p1, { paneId: 'p1', sessionId: 's1', view: 'trajectory' })
+  assert.deepEqual(state.panes.p2, { paneId: 'p2', sessionId: 's2', view: 'chat' })
+  // A View switch is not a session swap: same retained reference, same panes,
+  // same tree — only the remembered view differs.
+  assert.equal(controller.paneReference('p1'), reference)
+  assert.equal(fake.calls.retain.length, retained)
+  assert.deepEqual(state.root, rootBefore)
+  assert.equal(state.sessionId, 's2')
+  controller.dispose()
+})
+
+test('a disabled trajectory segment cannot switch a pane even when asked directly', async () => {
+  const { controller, viewSwitch } = await readyController({
+    viewSwitch: fakeViewSwitch({ trajectoryAvailable: false }),
+  })
+
+  assert.equal(controller.isTrajectoryAvailable(), false)
+  assert.equal(controller.setView('p1', 'trajectory'), false)
+  assert.deepEqual(viewSwitch.calls, [])
+  assert.equal(controller.getSnapshot().panes.p1.view, 'chat')
+  controller.dispose()
+})
+
+test('a failed View activation keeps the remembered view and surfaces the error', async () => {
+  const { controller } = await readyController({ viewSwitch: fakeViewSwitch({ failActivate: true }) })
+
+  assert.equal(controller.setView('p1', 'trajectory'), false)
+  assert.equal(controller.getSnapshot().panes.p1.view, 'chat')
+  assert.match(controller.getSnapshot().error, /view switch exploded/)
+  controller.dispose()
+})
+
+test('mounting a pane re-asserts its remembered view on that session binding', async () => {
+  const { controller, viewSwitch } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  controller.setView('p1', 'trajectory')
+  viewSwitch.calls.length = 0
+
+  assert.equal(controller.restoreViewFor('s1'), true)
+  assert.equal(controller.restoreViewFor('s2'), true)
+  assert.equal(controller.restoreViewFor('gone'), false)
+  assert.deepEqual(viewSwitch.calls, [
+    { sessionId: 's1', viewId: 'trajectory' },
+    { sessionId: 's2', viewId: 'chat' },
+  ])
+  controller.dispose()
+})
+
+test('re-enabling developer tools re-applies the pane trajectory memory', async () => {
+  const { controller, viewSwitch } = await readyController()
+  controller.setView('p1', 'trajectory')
+  viewSwitch.calls.length = 0
+
+  viewSwitch.setAvailable(false)
+  assert.equal(controller.isTrajectoryAvailable(), false)
+  assert.deepEqual(viewSwitch.calls, [])
+
+  viewSwitch.setAvailable(true)
+  assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
+
+  controller.dispose()
+  assert.equal(viewSwitch.listenerCount(), 0)
 })
 
 test('deactivating keeps the layout and releases references; activating restores them', async () => {
@@ -680,5 +1001,121 @@ test('/clear can open the first pane from the empty state without a session', as
   assert.equal(controller.getSnapshot().activePaneId, 'p9')
   assert.equal(controller.getSnapshot().panes.p9.sessionId, 'created-1')
   assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Per-workspace scope and the staged close (tickets 08 / 09 together)
+// ---------------------------------------------------------------------------
+
+const TWO_WORKSPACES = [
+  { workspaceId: 'w1', sessionIds: ['s1', 's2'] },
+  { workspaceId: 'w2', sessionIds: ['s3'] },
+]
+
+test('switching workspace dismisses the staged close of the workspace being left', async () => {
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: TWO_WORKSPACES,
+    rows: { s1: { id: 's1', running: true } },
+  })
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => 'p1' })
+  controller.markRegistered()
+  controller.activate('s1')
+
+  assert.equal(controller.closePane('p1'), false)
+  assert.deepEqual(controller.getSnapshot().pendingClose, { paneId: 'p1', sessionId: 's1' })
+
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.getSnapshot().pendingClose, null)
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.deepEqual(controller.getSnapshot().layouts.w1.panes.p1, {
+    paneId: 'p1',
+    sessionId: 's1',
+    view: 'chat',
+  })
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Tab strip actions (ticket 06)
+// ---------------------------------------------------------------------------
+
+test('focusTab focuses the Nth tab in layout order', async () => {
+  const { controller } = await readyController({ created: ['s2', 's3'] })
+  await controller.split('p1', 'row')
+  await controller.split('p2', 'col')
+
+  // row(p1, col(p2, p3)): p3 is focused.
+  assert.equal(controller.getSnapshot().activePaneId, 'p3')
+
+  assert.equal(controller.focusTab(1), true)
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(controller.focusTab(3), true)
+  assert.equal(controller.getSnapshot().activePaneId, 'p3')
+
+  assert.equal(controller.focusTab(4), false)
+  assert.equal(controller.focusTab(0), false)
+  assert.equal(controller.focusTab(1.5), false)
+  controller.dispose()
+})
+
+test('+ creates a conversation in a new pane beside the focused one', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+
+  assert.equal(await controller.newTab(), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.root, {
+    kind: 'split',
+    dir: 'row',
+    ratio: 0.5,
+    a: { kind: 'leaf', paneId: 'p1' },
+    b: { kind: 'leaf', paneId: 'p2' },
+  })
+  assert.equal(state.panes.p2.sessionId, 's2')
+  assert.equal(state.activePaneId, 'p2')
+  assert.deepEqual(fake.calls.create, [{ workspaceId: 'w1' }])
+  controller.dispose()
+})
+
+test('+ from the empty state opens the first pane instead of doing nothing', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+  controller.closePane('p1')
+
+  assert.equal(await controller.newTab(), true)
+
+  const activePaneId = controller.getSnapshot().activePaneId
+  assert.equal(activePaneId, 'p2')
+  assert.equal(controller.getSnapshot().panes[activePaneId].sessionId, 's2')
+  assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+test('Ctrl+Enter opens a chosen conversation in a new pane beside the focused one', async () => {
+  const { fake, controller } = await readyController()
+
+  assert.equal(await controller.openInNewPane('s9'), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.root.a, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(state.root.b, { kind: 'leaf', paneId: 'p2' })
+  assert.deepEqual(state.panes.p2, { paneId: 'p2', sessionId: 's9', view: 'chat' })
+  assert.equal(state.activePaneId, 'p2')
+  assert.deepEqual(fake.calls.create, [])
+  assert.equal(liveMainView(fake)[0].sessionId, 's9')
+  controller.dispose()
+})
+
+test('Ctrl+Enter on a conversation already open focuses its pane instead of duplicating it', async () => {
+  const { controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+
+  assert.equal(await controller.openInNewPane('s1'), false)
+
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
   controller.dispose()
 })

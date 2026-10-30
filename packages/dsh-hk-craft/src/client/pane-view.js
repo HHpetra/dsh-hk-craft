@@ -16,8 +16,17 @@
 
 const { createTranslator } = require('./diagnostics.js')
 const { CONTENT_FACTORY, PANE_SLOT, derivePanePhase } = require('./dsh-pane-host.js')
+const { effectiveView, viewSegments } = require('./dsh-view-switch.js')
 const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
 const { ratioFromDrag } = require('./layout-tree.js')
+const {
+  TAB_STATUS_ERROR,
+  TAB_STATUS_IDLE,
+  TAB_STATUS_RUNNING,
+  TAB_STATUS_WAITING,
+  projectTabs,
+  tabShortcutIndex,
+} = require('./tab-strip.js')
 
 let reactModule = null
 
@@ -52,10 +61,39 @@ const paneStyle = {
   color: 'var(--dsw-alias-label-primary, CanvasText)',
 }
 
-/** The workspace box every pane rect is a fraction of. */
+/** The workspace box: the tab strip on top, the pane area filling the rest. */
+const workspaceStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  flex: '1 1 auto',
+  minWidth: 0,
+  minHeight: 0,
+  height: '100%',
+  width: '100%',
+  overflow: 'hidden',
+  background: 'var(--dsw-alias-bg-base, Canvas)',
+  color: 'var(--dsw-alias-label-primary, CanvasText)',
+}
+
+/** The pane area the fractional rectangles are drawn in. */
 const layoutStyle = {
   position: 'relative',
   display: 'block',
+  flex: '1 1 auto',
+  minWidth: 0,
+  minHeight: 0,
+  width: '100%',
+  overflow: 'hidden',
+}
+
+/**
+ * The host box every workspace layer lives in. It is positioned so hidden
+ * workspaces can be absolutely covered by `display: none` without unmounting.
+ */
+const hostStyle = {
+  position: 'relative',
+  display: 'flex',
+  flexDirection: 'column',
   flex: '1 1 auto',
   minWidth: 0,
   minHeight: 0,
@@ -64,17 +102,113 @@ const layoutStyle = {
   overflow: 'hidden',
 }
 
-/** One workspace's layer; the hidden ones stay mounted with `display: none`. */
-const workspaceStyle = {
+/** A workspace that stays mounted but is not the visible one (spec D5). */
+const hiddenWorkspaceStyle = {
   position: 'absolute',
   inset: 0,
-  display: 'block',
+  display: 'none',
   minWidth: 0,
   minHeight: 0,
   overflow: 'hidden',
 }
 
-const hiddenWorkspaceStyle = { ...workspaceStyle, display: 'none' }
+/** Tab strip height (spec §5: 36px, the Agent10 density). */
+const TAB_STRIP_HEIGHT = 36
+
+const tabStripStyle = {
+  display: 'flex',
+  alignItems: 'stretch',
+  flex: 'none',
+  height: TAB_STRIP_HEIGHT,
+  minHeight: TAB_STRIP_HEIGHT,
+  minWidth: 0,
+  borderBottom: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
+  background: 'var(--dsw-alias-bg-base, Canvas)',
+}
+
+/** Only this inner box scrolls; `+` stays pinned at the right. */
+const tabViewportStyle = {
+  display: 'flex',
+  alignItems: 'stretch',
+  flex: '1 1 auto',
+  minWidth: 0,
+  overflowX: 'auto',
+  overflowY: 'hidden',
+  whiteSpace: 'nowrap',
+  scrollbarWidth: 'thin',
+}
+
+const tabStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  flex: '0 0 auto',
+  maxWidth: 200,
+  minWidth: 0,
+  height: '100%',
+  padding: '0 8px',
+  border: 'none',
+  borderTop: '2px solid transparent',
+  borderRight: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 12,
+  cursor: 'pointer',
+  userSelect: 'none',
+}
+
+/** Titles truncate instead of squeezing their neighbours (spec §5). */
+const tabTitleStyle = {
+  maxWidth: 128,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const tabDotStyle = {
+  flex: 'none',
+  width: 7,
+  height: 7,
+  borderRadius: '50%',
+  boxShadow: '0 0 0 1px color-mix(in srgb, CanvasText 12%, transparent)',
+}
+
+const tabCloseStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flex: 'none',
+  width: 18,
+  height: 18,
+  padding: 0,
+  border: 'none',
+  borderRadius: 4,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: 1,
+  cursor: 'pointer',
+}
+
+const tabNewStyle = {
+  ...buttonStyle,
+  flex: 'none',
+  border: 'none',
+  borderLeft: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+  borderRadius: 0,
+  padding: '0 10px',
+}
+
+/** Dot colours per tab status; waiting / error stay distinguishable (red vs orange). */
+const TAB_STATUS_COLORS = {
+  [TAB_STATUS_RUNNING]: '#d9a400',
+  [TAB_STATUS_WAITING]: '#e5484d',
+  [TAB_STATUS_ERROR]: '#f76b15',
+  [TAB_STATUS_IDLE]: '#30a46c',
+}
 
 const headerStyle = {
   display: 'flex',
@@ -113,6 +247,83 @@ const fallbackStyle = {
   fontSize: 13,
   lineHeight: 1.6,
   opacity: 0.9,
+}
+
+/** The 对话 | 轨迹 control is a segmented switch, not a tab strip (spec §6). */
+const segmentedStyle = {
+  display: 'inline-flex',
+  alignItems: 'stretch',
+  flex: 'none',
+  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
+  borderRadius: 6,
+  overflow: 'hidden',
+}
+
+const segmentStyle = {
+  border: 'none',
+  borderRadius: 0,
+  background: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer',
+  font: 'inherit',
+  fontSize: 11,
+  lineHeight: '18px',
+  padding: '1px 7px',
+}
+
+const segmentActiveStyle = {
+  background: 'color-mix(in srgb, currentColor 16%, transparent)',
+  fontWeight: 600,
+}
+
+const segmentDisabledStyle = { opacity: 0.45, cursor: 'not-allowed' }
+
+const closeOverlayStyle = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 2147483000,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 16,
+  background: 'rgba(0, 0, 0, 0.35)',
+}
+
+const closeDialogStyle = {
+  width: 440,
+  maxWidth: 'calc(100vw - 32px)',
+  padding: '18px 20px',
+  borderRadius: 12,
+  border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
+  background: 'Canvas',
+  color: 'CanvasText',
+  boxShadow: '0 16px 40px rgba(0, 0, 0, 0.24)',
+  fontSize: 13,
+  lineHeight: 1.6,
+}
+
+const closeTitleStyle = {
+  fontSize: 12,
+  opacity: 0.7,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  marginBottom: 6,
+}
+
+const closeActionsStyle = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 8,
+  marginTop: 16,
+}
+
+const closeErrorStyle = {
+  marginTop: 10,
+  padding: '6px 8px',
+  borderRadius: 6,
+  background: 'color-mix(in srgb, tomato 16%, transparent)',
+  wordBreak: 'break-word',
 }
 
 /** Subscribe a component to the controller's frozen snapshot. */
@@ -188,6 +399,66 @@ function PaneEmptyState({ t, onNew }) {
 }
 
 /**
+ * The pane's own `对话 | 轨迹` segmented switch (ticket 07, spec D1 + §6).
+ *
+ * dsh's native tab row lives in `conversation.session.header`, which is a child
+ * slot of the `main.conversation` root — the pane renders only the
+ * `conversation.content` factory, so that header (and its `role="tablist"`) is
+ * never mounted here. This control replaces it per pane.
+ *
+ * The trajectory segment is disabled with a tooltip while developer tools are
+ * off, mirroring dsh's own filter instead of silently doing nothing.
+ *
+ * @param {{ controller: any, pane: object, t: (key: string) => string }} props
+ */
+function PaneViewSwitch({ controller, pane, t }) {
+  const React = react()
+  const h = React.createElement
+  const trajectoryAvailable = React.useSyncExternalStore(
+    controller.subscribeViewAvailability,
+    controller.isTrajectoryAvailable,
+    controller.isTrajectoryAvailable,
+  )
+  const selected = effectiveView(pane.view, trajectoryAvailable)
+  const labels = {
+    chat: t('pane.view.chat'),
+    trajectory: t('pane.view.trajectory'),
+  }
+  return h(
+    'div',
+    {
+      role: 'group',
+      'aria-label': t('pane.view.title'),
+      'data-hkcraft-view-switch': pane.view,
+      style: segmentedStyle,
+    },
+    viewSegments(trajectoryAvailable).map((segment) =>
+      h(
+        'button',
+        {
+          key: segment.id,
+          type: 'button',
+          role: 'radio',
+          'aria-checked': segment.id === selected,
+          disabled: segment.disabled,
+          title: segment.disabled ? t('pane.view.trajectoryDisabled') : t('pane.view.title'),
+          style: {
+            ...segmentStyle,
+            ...(segment.id === selected ? segmentActiveStyle : {}),
+            ...(segment.disabled ? segmentDisabledStyle : {}),
+          },
+          onClick: () => {
+            if (segment.disabled) return
+            controller.setView(pane.paneId, segment.id)
+          },
+        },
+        labels[segment.id] ?? segment.id,
+      ),
+    ),
+  )
+}
+
+/**
  * One pane: header actions plus the session-scoped child slot.
  *
  * The element type is module-level and the key is the pane id, so the pane is
@@ -237,6 +508,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     'div',
     { style: headerStyle },
     h('span', { style: titleStyle }, title ?? t('pane.title')),
+    h(PaneViewSwitch, { key: 'view', controller, pane, t }),
     h(
       'button',
       {
@@ -424,20 +696,237 @@ function PaneSeparator({ controller, separator }) {
   )
 }
 
+/** Stable stand-in so a missing hook never changes the hook call count. */
+function absentHook() {
+  return undefined
+}
+
+/**
+ * The tab strip: the current workspace's open conversations, in `leaves()`
+ * order (ticket 06, spec §5).
+ *
+ * Every tab is a pane — clicking it focuses that pane, its × closes the pane
+ * (after a confirmation when the session is live), and `+` creates a new
+ * conversation in a new pane beside the focused one. Status dots come from the
+ * live session status map; nothing here reorders tabs by status.
+ *
+ * The title and status read the shell's root standard hooks (`useSessions`,
+ * `useSessionStatus`); ui-session provides them as `sessions` and
+ * `sessionStatus` (dsh-client-ui-session/lib/client.js:1104-1113), which is the
+ * same pair the shipped sidebar consumes.
+ *
+ * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string }} props
+ */
+function TabStrip({ controller, state, kit, t }) {
+  const React = react()
+  const h = React.createElement
+  const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
+  const useSessionStatus = typeof kit?.useSessionStatus === 'function' ? kit.useSessionStatus : absentHook
+  const sessions = useSessions((snapshot) => snapshot)
+  const statuses = useSessionStatus((snapshot) => snapshot)
+  const [hovered, setHovered] = React.useState(null)
+  const [creating, setCreating] = React.useState(false)
+
+  // Ctrl+1..4 focuses the Nth tab. Document-level so the chord works from the
+  // composer too; the tab strip only exists while the pane workspace is shown.
+  React.useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const onKeyDown = (event) => {
+      const index = tabShortcutIndex(event)
+      if (index === null) return
+      event.preventDefault()
+      controller.focusTab(index)
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [controller])
+
+  const tabs = projectTabs(state, sessions, statuses, t('session.untitled'))
+
+  const closeTab = (tab) => {
+    // Closing a pane is `controller.closePane`: idle panes close immediately,
+    // a running one stages `pendingClose`, which the shared `PaneCloseConfirm`
+    // dialog (ticket 09) interrupts and closes after confirmation. The strip
+    // does not own a second confirmation UI.
+    controller.closePane(tab.paneId)
+  }
+
+  const createTab = () => {
+    if (creating) return
+    setCreating(true)
+    Promise.resolve(controller.newTab())
+      .catch(() => {})
+      .then(() => setCreating(false))
+  }
+
+  const tabElements = tabs.map((tab) => {
+    const statusLabel = t(`tab.status.${tab.status}`)
+    const label = tab.shortcut === undefined ? tab.title : `${tab.title} (${tab.shortcut})`
+    return h(
+      'div',
+      {
+        key: tab.paneId,
+        role: 'tab',
+        tabIndex: 0,
+        'aria-selected': tab.focused ? 'true' : 'false',
+        'aria-label': `${label} — ${statusLabel}`,
+        title: `${label} — ${statusLabel}`,
+        'data-hkcraft-tab': tab.paneId,
+        'data-hkcraft-tab-active': tab.focused ? 'true' : 'false',
+        style: {
+          ...tabStyle,
+          borderTopColor: tab.focused ? 'var(--dsw-alias-border-accent, Highlight)' : 'transparent',
+          background: tab.focused
+            ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
+            : hovered === tab.paneId
+              ? 'color-mix(in srgb, currentColor 6%, transparent)'
+              : 'transparent',
+          fontWeight: tab.focused ? 600 : 400,
+        },
+        onClick: () => controller.focusPane(tab.paneId),
+        onKeyDown: (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          controller.focusPane(tab.paneId)
+        },
+        onMouseEnter: () => setHovered(tab.paneId),
+        onMouseLeave: () => setHovered((current) => (current === tab.paneId ? null : current)),
+      },
+      h('span', {
+        'aria-hidden': 'true',
+        'data-hkcraft-tab-status': tab.status,
+        style: { ...tabDotStyle, background: TAB_STATUS_COLORS[tab.status] ?? TAB_STATUS_COLORS[TAB_STATUS_IDLE] },
+      }),
+      h('span', { style: tabTitleStyle }, tab.title),
+      h(
+        'button',
+        {
+          type: 'button',
+          title: t('tab.close'),
+          'aria-label': t('tab.close'),
+          'data-hkcraft-tab-close': tab.paneId,
+          style: { ...tabCloseStyle, visibility: hovered === tab.paneId ? 'visible' : 'hidden' },
+          onClick: (event) => {
+            event.stopPropagation()
+            closeTab(tab)
+          },
+          onKeyDown: (event) => event.stopPropagation(),
+        },
+        '×',
+      ),
+    )
+  })
+
+  return h(
+    'div',
+    {
+      role: 'tablist',
+      'aria-label': t('tab.aria'),
+      'data-hkcraft-tabstrip': '',
+      style: tabStripStyle,
+    },
+    h('div', { style: tabViewportStyle }, tabElements),
+    h(
+      'button',
+      {
+        type: 'button',
+        title: t('tab.new'),
+        'aria-label': t('tab.new'),
+        'data-hkcraft-tab-new': '',
+        disabled: creating,
+        style: { ...tabNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
+        onClick: createTab,
+      },
+      '＋',
+    ),
+  )
+}
+
+/**
+ * The interrupt confirmation for closing a running pane (spec D4). It is
+ * rendered by the pane host itself, so it exists only while the pane panel is
+ * selected; cancelling dismisses it without touching the session.
+ *
+ * @param {{ controller: any, t: (key: string) => string }} props
+ */
+function PaneCloseConfirm({ controller, t }) {
+  const React = react()
+  const h = React.createElement
+  const state = usePaneSnapshot(React, controller)
+  const pending = state.pendingClose
+  if (pending === null || pending === undefined) return null
+
+  const confirm = () => {
+    const attempt = controller.confirmClose()
+    if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+      attempt.catch(() => {})
+    }
+  }
+
+  return h(
+    'div',
+    { style: closeOverlayStyle },
+    h(
+      'div',
+      {
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': t('pane.close.confirm.title'),
+        style: closeDialogStyle,
+      },
+      pending.title === undefined ? null : h('div', { style: closeTitleStyle }, pending.title),
+      h(
+        'div',
+        { style: { fontWeight: 600, marginBottom: 6 } },
+        t('pane.close.confirm.title'),
+      ),
+      h('div', { style: { opacity: 0.78 } }, t('pane.close.confirm.body')),
+      state.closeError === null
+        ? null
+        : h(
+            'div',
+            { role: 'alert', style: closeErrorStyle },
+            `${t('pane.close.confirm.error')}: ${state.closeError}`,
+          ),
+      h(
+        'div',
+        { style: closeActionsStyle },
+        h(
+          'button',
+          {
+            type: 'button',
+            style: buttonStyle,
+            disabled: state.closeBusy,
+            onClick: () => controller.cancelClose(),
+          },
+          t('pane.close.confirm.cancel'),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: buttonStyle,
+            disabled: state.closeBusy,
+            onClick: confirm,
+          },
+          state.closeBusy ? t('pane.close.confirm.busy') : t('pane.close.confirm.action'),
+        ),
+      ),
+    ),
+  )
+}
+
 /**
  * One workspace's tree. Every loaded workspace gets one of these and stays
- * mounted: switching workspace flips `display`, never unmounts, so streaming
- * output, scroll position and composer drafts of the hidden workspaces survive
- * (spec D5 / §4.3, ticket 08).
+ * mounted; `visible` only flips `display` (ticket 08, spec D5).
  *
  * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, kit: any, t: (key: string) => string }} props
  */
 function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
   const React = react()
   const h = React.createElement
-  const style = visible ? workspaceStyle : hiddenWorkspaceStyle
   const attributes = {
-    style,
+    style: visible ? workspaceStyle : hiddenWorkspaceStyle,
     'data-hkcraft-workspace': workspaceId ?? '',
     'data-hkcraft-workspace-active': visible ? 'true' : 'false',
     'aria-hidden': visible ? undefined : 'true',
@@ -463,33 +952,41 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
   return h(
     'div',
     attributes,
-    geometry.panes.map((paneRect) => {
-      const pane = layout.panes[paneRect.paneId]
-      if (pane === undefined) return null
-      return h(PaneFrame, {
-        key: paneRect.paneId,
-        controller,
-        pane,
-        rect: paneRect,
-        focused: visible && paneRect.paneId === layout.activePaneId,
-        kit,
-        t,
-      })
-    }),
-    geometry.separators.map((separator) =>
-      h(PaneSeparator, {
-        key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
-        controller,
-        separator,
+    // Only the visible workspace owns a tab strip: hidden strips would register
+    // duplicate document-level Ctrl+1..4 handlers. The pane bodies below stay
+    // mounted regardless, which is what D5 actually protects.
+    visible ? h(TabStrip, { controller, state: layout, kit, t }) : null,
+    h(
+      'div',
+      { style: layoutStyle, 'data-hkcraft-layout': '' },
+      geometry.panes.map((paneRect) => {
+        const pane = layout.panes[paneRect.paneId]
+        if (pane === undefined) return null
+        return h(PaneFrame, {
+          key: paneRect.paneId,
+          controller,
+          pane,
+          rect: paneRect,
+          focused: visible && paneRect.paneId === layout.activePaneId,
+          kit,
+          t,
+        })
       }),
+      geometry.separators.map((separator) =>
+        h(PaneSeparator, {
+          key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
+          controller,
+          separator,
+        }),
+      ),
     ),
   )
 }
 
 /**
- * The workspace trees to render, active first in visibility but not in order:
- * `display` decides. `layouts` is the authoritative map; the unscoped layout
- * (a shell with no workspaces service) is not in it and is appended by hand.
+ * The workspace trees to render. `layouts` is the authoritative map; the
+ * unscoped layout (a shell with no workspaces service, or a unit-test fake) is
+ * not in it and is appended by hand. Exactly one group is visible.
  *
  * @param {any} state controller snapshot
  * @returns {Array<{workspaceId: string|null, layout: object, visible: boolean}>}
@@ -534,20 +1031,29 @@ function createPaneHost(controller) {
 
     if (!state.active) return null
 
+    // One dialog for the whole pane host: a close is a single pending action
+    // even though several workspace trees are mounted at once.
+    const dialog = h(PaneCloseConfirm, { controller, t })
+
     return h(
-      'div',
-      { style: layoutStyle, 'data-hkcraft-layout': '' },
-      workspaceGroups(state).map((group) =>
-        h(PaneWorkspace, {
-          key: group.workspaceId ?? '\u0000unscoped',
-          controller,
-          workspaceId: group.workspaceId,
-          layout: group.layout,
-          visible: group.visible,
-          kit: props,
-          t,
-        }),
+      React.Fragment,
+      null,
+      h(
+        'div',
+        { style: hostStyle, 'data-hkcraft-layout-host': '' },
+        workspaceGroups(state).map((group) =>
+          h(PaneWorkspace, {
+            key: group.workspaceId ?? '\u0000unscoped',
+            controller,
+            workspaceId: group.workspaceId,
+            layout: group.layout,
+            visible: group.visible,
+            kit: props,
+            t,
+          }),
+        ),
       ),
+      dialog,
     )
   }
 }
@@ -572,6 +1078,14 @@ function createPaneBody(controller) {
           )
         : undefined
     const { phase, hero } = derivePanePhase({ sessionId, session, summaryBlank })
+    const sessionReady = session !== undefined
+    React.useEffect(() => {
+      if (sessionId === undefined || !sessionReady) return
+      // The pane's own memory wins over dsh's per-session View preference.
+      // `activate` is the same call the native tab row makes, so this swaps the
+      // resident view instead of rebuilding the session.
+      controller.restoreViewFor(sessionId)
+    }, [sessionId, sessionReady])
     const boundary = errorBoundaryClass()
     const close = () => controller.closePaneBySession(sessionId)
 
@@ -664,6 +1178,9 @@ module.exports = {
   PaneEmptyState,
   PaneWorkspace,
   workspaceGroups,
+  PaneViewSwitch,
+  PaneCloseConfirm,
+  TabStrip,
   createPaneHost,
   createPaneBody,
   createPaneToggle,

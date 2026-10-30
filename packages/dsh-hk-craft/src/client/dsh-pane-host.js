@@ -50,6 +50,7 @@
 const { workspaceIdOf } = require('./dsh-sessions.js')
 const layoutTree = require('./layout-tree.js')
 const { emptyLayout, readLayout, writeLayout } = require('./layout-store.js')
+const { paneIdForTabIndex } = require('./tab-strip.js')
 
 const MAIN_SLOT = 'main'
 const PANEL_KEY = 'hkcraft.panes'
@@ -96,6 +97,58 @@ function probeConversationContent(slots) {
       message: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+/**
+ * Interrupt the running turn of one session through the public client route the
+ * shell's own stop button uses.
+ *
+ * Verified against the unpacked bundles:
+ * - the stop action resolves its session-scoped conversation face as
+ *   `sessions.scope(id).get("conversation")` (ui-conversation:19674-19680) and
+ *   calls `cancel()` on it (ui-conversation:19808-19810);
+ * - that `cancel()` forwards to `sessions.binding(id).session.cancel()`
+ *   (ui-conversation:4940-4953), which is the Host RPC
+ *   `remote.session.cancel({ sessionId })`
+ *   (dsh-api-session-controller:2429-2440, types/session.js:257-267).
+ *
+ * The direct binding is the fallback, because it is the same call with one less
+ * hop; it reports failures as `{ ok: false }` instead of throwing, so this
+ * adapter normalises that. Releasing a Session reference is *not* a substitute:
+ * it only tears down the client generation and never stops the Host Agent
+ * (dsh-api-session-controller/README.md:82).
+ *
+ * @param {any} sessions the `ctx.sessions` face
+ * @param {string} sessionId
+ * @returns {Promise<void>} rejects when no public route exists or the Host
+ *   refuses to cancel the turn
+ */
+async function interruptSession(sessions, sessionId) {
+  if (typeof sessionId !== 'string' || sessionId === '') {
+    throw new Error('interruptSession: a session id is required')
+  }
+  if (typeof sessions?.scope === 'function') {
+    const scoped = sessions.scope(sessionId)
+    const conversation = scoped?.get?.('conversation')
+    if (conversation !== undefined && typeof conversation.cancel === 'function') {
+      await conversation.cancel()
+      return
+    }
+  }
+  if (typeof sessions?.binding === 'function') {
+    const session = sessions.binding(sessionId)?.session
+    if (session !== undefined && typeof session.cancel === 'function') {
+      const result = await session.cancel()
+      if (result !== null && result !== undefined && result.ok === false) {
+        const error = result.error ?? {}
+        throw new Error(
+          `session.cancel failed: ${error.code ?? 'unknown'}: ${error.message ?? 'unknown error'}`,
+        )
+      }
+      return
+    }
+  }
+  throw new Error(`no public interrupt route for session "${sessionId}"`)
 }
 
 /**
@@ -182,8 +235,10 @@ function defaultStorage() {
  * session is gone are dropped at restore time.
  *
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
- * @param {{ nextPaneId?: () => string, storage?: any }} [options] `nextPaneId` is a
- *   deterministic id factory for tests; `storage` defaults to `localStorage`
+ * @param {{ nextPaneId?: () => string, storage?: any, viewSwitch?: any }} [options]
+ *   `nextPaneId` is a deterministic id factory and `storage` a storage seam for
+ *   tests (defaults to `localStorage`); `viewSwitch` is the conversation View
+ *   adapter (ticket 07 — `dsh-view-switch.js`, tests inject a fake)
  * @returns {any}
  */
 function createPaneController(ctx, options = {}) {
@@ -191,6 +246,7 @@ function createPaneController(ctx, options = {}) {
   const layout = ctx?.layout
   const slots = ctx?.slots
   const storage = options.storage === undefined ? defaultStorage() : options.storage
+  const viewSwitch = options?.viewSwitch
 
   /**
    * `workspaces` is optional and may load after this plugin: read it through
@@ -229,6 +285,9 @@ function createPaneController(ctx, options = {}) {
     root: null,
     panes: {},
     activePaneId: null,
+    pendingClose: null,
+    closeBusy: false,
+    closeError: null,
   })
 
   function emit(patch) {
@@ -588,6 +647,48 @@ function createPaneController(ctx, options = {}) {
     emit({ probe: probeConversationContent(slots) })
   }
 
+  /**
+   * Whether a pane may offer the trajectory segment. Mirrors ui-conversation's
+   * own gate (ui-conversation:19753-19758): the View only exists while
+   * developer tools are enabled. Without an adapter the pane stays chat-only.
+   */
+  function isTrajectoryAvailable() {
+    return typeof viewSwitch?.isTrajectoryAvailable === 'function'
+      ? viewSwitch.isTrajectoryAvailable() === true
+      : false
+  }
+
+  /**
+   * Follow the developer-tools gate so the segment (and a remembered
+   * trajectory choice) react when the setting flips. No-op without an adapter.
+   *
+   * @param {() => void} listener
+   * @returns {() => void}
+   */
+  function subscribeViewAvailability(listener) {
+    return typeof viewSwitch?.subscribeAvailability === 'function'
+      ? viewSwitch.subscribeAvailability(listener)
+      : () => {}
+  }
+
+  /**
+   * Drive the real conversation View through the public binding. This is the
+   * same call dsh's own tab row makes, so the session is not rebuilt and the
+   * draft / scroll state are dsh's own.
+   *
+   * @returns {{ok: boolean, error?: string}}
+   */
+  function activateView(pane, view) {
+    if (typeof viewSwitch?.activate !== 'function') {
+      return { ok: false, error: 'view switching is unavailable in this shell' }
+    }
+    try {
+      return viewSwitch.activate(pane.sessionId, view) ?? { ok: false, error: 'view switch returned no result' }
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    }
+  }
+
   const unsubscribePanel =
     layout?.panelInfo?.subscribe?.(() => {
       if (disposed) return
@@ -597,7 +698,14 @@ function createPaneController(ctx, options = {}) {
         // unmounted, so drop the references but keep the layout for the next
         // activation.
         releaseAll()
-        emit({ ...statePatch(false), active: false, error: null })
+        emit({
+          ...statePatch(false),
+          active: false,
+          error: null,
+          pendingClose: null,
+          closeBusy: false,
+          closeError: null,
+        })
       }
     }) ?? (() => {})
 
@@ -616,6 +724,19 @@ function createPaneController(ctx, options = {}) {
       })
     }) ?? (() => {})
 
+  // Developer tools gate the trajectory View. Turning them back on re-asserts
+  // the trajectory choice each pane remembered; turning them off is left to
+  // dsh, whose own refreshViews restores every tracked binding (usually chat).
+  const unsubscribeViewAvailability = subscribeViewAvailability(() => {
+    if (disposed) return
+    if (!isTrajectoryAvailable()) return
+    for (const layoutValue of Object.values(layouts)) {
+      for (const pane of Object.values(layoutValue.panes)) {
+        if (pane.view === 'trajectory') activateView(pane, pane.view)
+      }
+    }
+  })
+
   /** Focus a pane; false when it is absent or already focused. */
   function focusPaneValue(paneId) {
     if (disposed) return false
@@ -627,12 +748,113 @@ function createPaneController(ctx, options = {}) {
     return apply(layoutTree.focus(layoutOf(located.workspaceId), paneId), located.workspaceId)
   }
 
+  /** The session list row the shell publishes for a session, if still known. */
+  function rowOf(sessionId) {
+    try {
+      return sessions?.list?.getSnapshot?.()?.byId?.[sessionId]
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * A session is "running" when its published summary says so — the same bit the
+   * sidebar's yellow light and the workspace status projection use
+   * (`workspace-status.js:sessionSignal`).
+   */
+  function isSessionRunning(sessionId) {
+    return rowOf(sessionId)?.running === true
+  }
+
+  /** Drop a pending close (and its error); no layout or session change. */
+  function clearPendingClose() {
+    if (
+      snapshot.pendingClose === null &&
+      snapshot.closeError === null &&
+      snapshot.closeBusy === false
+    ) {
+      return
+    }
+    emit({ pendingClose: null, closeBusy: false, closeError: null })
+  }
+
   /** Close a pane by id; false when it is absent. */
   function closePaneValue(paneId) {
     if (disposed) return false
     const located = locatePane(paneId)
     if (located === null) return false
     return apply(layoutTree.close(layoutOf(located.workspaceId), paneId), located.workspaceId)
+  }
+
+  /**
+   * Ask to close one pane. An idle session closes immediately. A running one is
+   * only staged in `pendingClose`: the user must confirm, because closing the
+   * pane interrupts the turn (spec D4).
+   *
+   * @param {string} paneId
+   * @returns {boolean} whether the pane closed immediately
+   */
+  function requestClose(paneId) {
+    if (disposed) return false
+    const located = locatePane(paneId)
+    if (located === null) return false
+    const pane = located.pane
+    if (!isSessionRunning(pane.sessionId)) {
+      const closed = closePaneValue(paneId)
+      if (closed) clearPendingClose()
+      return closed
+    }
+    const title = rowOf(pane.sessionId)?.title
+    emit({
+      pendingClose: {
+        paneId,
+        sessionId: pane.sessionId,
+        ...(typeof title === 'string' && title !== '' ? { title } : {}),
+      },
+      closeBusy: false,
+      closeError: null,
+    })
+    return false
+  }
+
+  /**
+   * Confirm the staged close: interrupt the running turn first, then release the
+   * pane. A failed interrupt keeps the pane mounted and leaves the dialog open
+   * with `closeError`, so nothing is half-closed and the user can retry or
+   * cancel.
+   *
+   * @returns {Promise<boolean>} whether the pane was closed
+   */
+  async function confirmCloseValue() {
+    if (disposed) return false
+    const pending = snapshot.pendingClose
+    if (pending === null || snapshot.closeBusy) return false
+    emit({ closeBusy: true, closeError: null })
+    try {
+      await interruptSession(sessions, pending.sessionId)
+    } catch (error) {
+      if (disposed) return false
+      emit({ closeBusy: false, closeError: messageOf(error) })
+      return false
+    }
+    if (disposed) return false
+    // The panel may have been hidden (or another close requested) while the
+    // interrupt was in flight; in that case the pane already lost its refs and
+    // must not be structurally re-reconciled from an inactive panel.
+    if (!snapshot.active || snapshot.pendingClose?.paneId !== pending.paneId) {
+      emit({ closeBusy: false })
+      return false
+    }
+    const closed = closePaneValue(pending.paneId)
+    emit({ pendingClose: null, closeBusy: false, closeError: null })
+    return closed
+  }
+
+  /** Dismiss the staged close without changing the session or the layout. */
+  function cancelCloseValue() {
+    if (disposed || snapshot.pendingClose === null || snapshot.closeBusy) return false
+    emit({ pendingClose: null, closeError: null })
+    return true
   }
 
   /** Replace the focused pane's session, focusing an existing holder instead. */
@@ -687,7 +909,16 @@ function createPaneController(ctx, options = {}) {
         return false
       }
     }
-    emit({ ...statePatch(snapshot.active), error: null })
+    // A staged close belongs to a pane of the workspace being left; leaving the
+    // confirmation open over another workspace would be a trap. The interrupt
+    // itself is never started by a switch, so there is nothing to cancel.
+    emit({
+      ...statePatch(snapshot.active),
+      error: null,
+      pendingClose: null,
+      closeBusy: false,
+      closeError: null,
+    })
     return true
   }
 
@@ -722,6 +953,123 @@ function createPaneController(ctx, options = {}) {
     emit({ ...statePatch(true), active: true, error: null })
     return true
   }
+
+  /** Split `paneId` and open (or create) the conversation beside it. */
+  async function splitPane(paneId, dir, options = {}) {
+    if (disposed || !registered) return false
+    const located = locatePane(paneId)
+    if (located === null) return false
+    const origin = located.pane
+    const workspaceId = located.workspaceId
+    if (dir !== 'row' && dir !== 'col') return false
+
+    let sessionId = options?.sessionId
+    if (sessionId !== undefined) {
+      if (typeof sessionId !== 'string' || sessionId === '') return false
+      const owningWorkspace = workspaceOf(sessionId)
+      if (owningWorkspace !== undefined && workspaceId !== null && owningWorkspace !== workspaceId) {
+        // A pane tree only holds sessions of one workspace (spec D3): show the
+        // session in its own workspace instead of mounting it across trees.
+        if (!ensureWorkspace(owningWorkspace)) {
+          emit({ error: `cannot show workspace ${owningWorkspace}` })
+          return false
+        }
+        const holder = locatePaneIn(sessionId)
+        if (holder !== null) focusPaneValue(holder.paneId)
+        else switchWorkspaceValue(owningWorkspace)
+        return false
+      }
+      const holder = locatePaneIn(sessionId)
+      if (holder !== null) {
+        if (holder.paneId !== paneId || holder.workspaceId !== workspaceId) {
+          focusPaneValue(holder.paneId)
+        }
+        return false
+      }
+    } else {
+      const owningWorkspace =
+        workspaceOf(origin.sessionId) ??
+        (workspaceId === null ? undefined : layoutOf(workspaceId).workspaceId) ??
+        undefined
+      if (owningWorkspace === undefined) {
+        emit({ error: `cannot split: pane ${paneId} has no workspace` })
+        return false
+      }
+      try {
+        sessionId = await createSession(owningWorkspace)
+      } catch (error) {
+        emit({ error: messageOf(error) })
+        return false
+      }
+    }
+
+    const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+    const next = layoutTree.split(layoutOf(workspaceId), paneId, dir, pane)
+    if (next === layoutOf(workspaceId)) return false
+    return apply(next, workspaceId)
+  }
+
+  /** Pane-aware `/clear`: new conversation in the focused pane (or first pane). */
+  async function newInFocusedValue(workspaceId) {
+    if (disposed || !registered) return false
+    if (!snapshot.active) return false
+    const targetWorkspace = workspaceId ?? focusedWorkspaceId()
+    if (typeof targetWorkspace !== 'string' || targetWorkspace === '') return false
+    if (!ensureWorkspace(targetWorkspace)) return false
+    if (targetWorkspace !== activeWorkspaceId) {
+      if (!switchWorkspaceValue(targetWorkspace)) return false
+    }
+    let sessionId
+    try {
+      sessionId = await createSession(targetWorkspace)
+    } catch (error) {
+      emit({ error: messageOf(error) })
+      return false
+    }
+    const current = activeLayout()
+    if (current.activePaneId !== null) return replaceFocusedValue(sessionId)
+    const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+    return apply(layoutTree.openPane(current, pane), targetWorkspace)
+  }
+
+  /** `+`: new conversation in a new pane beside the focused one. */
+  async function newTabValue() {
+    if (disposed || !registered) return false
+    if (!snapshot.active) return false
+    const paneId = activeLayout().activePaneId
+    if (paneId === null) return newInFocusedValue()
+    return splitPane(paneId, 'row')
+  }
+
+  /** Ctrl+Enter in `/resume`: the chosen conversation in a new pane. */
+  async function openInNewPaneValue(sessionId) {
+    if (disposed || !registered) return false
+    if (typeof sessionId !== 'string' || sessionId === '') return false
+    // The strip and the command path only act while the pane panel is showing;
+    // outside it there is no visible pane to split beside.
+    if (!snapshot.active) return false
+    const targetWorkspace = workspaceOf(sessionId) ?? focusedWorkspaceId()
+    if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
+      if (!ensureWorkspace(targetWorkspace)) return false
+      if (targetWorkspace !== activeWorkspaceId && !switchWorkspaceValue(targetWorkspace)) {
+        return false
+      }
+    }
+    const paneId = activeLayout().activePaneId
+    if (paneId === null) {
+      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+      return apply(layoutTree.openPane(activeLayout(), pane))
+    }
+    return splitPane(paneId, 'row', { sessionId })
+  }
+
+  /** Ctrl+1..4: focus the Nth tab of the visible workspace. */
+  function focusTabValue(index) {
+    if (disposed) return false
+    const paneId = paneIdForTabIndex(activeLayout(), index)
+    return paneId === null ? false : focusPaneValue(paneId)
+  }
+
 
   return {
     getSnapshot: () => snapshot,
@@ -865,7 +1213,14 @@ function createPaneController(ctx, options = {}) {
         }
       }
       releaseAll()
-      emit({ ...statePatch(false), active: false, error: null })
+      emit({
+        ...statePatch(false),
+        active: false,
+        error: null,
+        pendingClose: null,
+        closeBusy: false,
+        closeError: null,
+      })
     },
     /** Move the focus (and with it dsh's "current session"). */
     focusPane(paneId) {
@@ -876,83 +1231,69 @@ function createPaneController(ctx, options = {}) {
      *
      * With no `options.sessionId` a brand-new conversation is created in the
      * pane's workspace and the new pane takes the focus. Passing an explicit
-     * session is the seam the tab strip's `+` and `/resume`'s Ctrl+Enter will
-     * use (tickets 06): the session is opened in the new pane instead of being
-     * created. A session already mounted in another pane is focused rather than
-     * mounted twice (spec §4.4).
+     * session is the seam the tab strip's `+` and `/resume`'s Ctrl+Enter use:
+     * the session is opened in the new pane instead of being created. A session
+     * already mounted in another pane is focused rather than mounted twice
+     * (spec §4.4).
      *
      * @param {string} paneId
      * @param {'row'|'col'} dir
      * @param {{sessionId?: string}} [options]
      * @returns {Promise<boolean>}
      */
-    async split(paneId, dir, options = {}) {
-      if (disposed || !registered) return false
-      const located = locatePane(paneId)
-      if (located === null) return false
-      const origin = located.pane
-      const workspaceId = located.workspaceId
-      if (dir !== 'row' && dir !== 'col') return false
-
-      let sessionId = options?.sessionId
-      if (sessionId !== undefined) {
-        const owningWorkspace = workspaceOf(sessionId)
-        if (owningWorkspace !== undefined && workspaceId !== null && owningWorkspace !== workspaceId) {
-          // A pane tree only holds sessions of one workspace (spec D3): show the
-          // session in its own workspace instead of mounting it across trees.
-          if (!ensureWorkspace(owningWorkspace)) {
-            emit({ error: `cannot show workspace ${owningWorkspace}` })
-            return false
-          }
-          const holder = locatePaneIn(sessionId)
-          if (holder !== null) focusPaneValue(holder.paneId)
-          else switchWorkspaceValue(owningWorkspace)
-          return false
-        }
-        const holder = locatePaneIn(sessionId)
-        if (holder !== null) {
-          if (holder.paneId !== paneId || holder.workspaceId !== workspaceId) {
-            focusPaneValue(holder.paneId)
-          }
-          return false
-        }
-      } else {
-        const owningWorkspace =
-          workspaceOf(origin.sessionId) ??
-          (workspaceId === null ? undefined : layoutOf(workspaceId).workspaceId) ??
-          undefined
-        if (owningWorkspace === undefined) {
-          emit({ error: `cannot split: pane ${paneId} has no workspace` })
-          return false
-        }
-        try {
-          sessionId = await createSession(owningWorkspace)
-        } catch (error) {
-          emit({ error: messageOf(error) })
-          return false
-        }
-      }
-
-      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-      const next = layoutTree.split(layoutOf(workspaceId), paneId, dir, pane)
-      if (next === layoutOf(workspaceId)) return false
-      return apply(next, workspaceId)
-    },
+    split: splitPane,
     /**
-     * Close one pane. Structurally its sibling takes the parent's place and the
-     * focus moves to the neighbour; interrupting a running session and asking
-     * for confirmation is ticket 09, which wraps this call.
+     * `+` on the tab strip: a new conversation in a new pane beside the focused
+     * one. With no pane open this opens the first pane instead (the empty-state
+     * path), so the button never dead-ends.
      *
-     * @param {string} paneId
+     * @returns {Promise<boolean>}
+     */
+    newTab: newTabValue,
+    /**
+     * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane beside
+     * the focused one, leaving the current pane untouched. The conversation is
+     * never mounted twice — an already-open one just takes the focus.
+     *
+     * @param {string} sessionId
+     * @returns {Promise<boolean>}
+     */
+    openInNewPane: openInNewPaneValue,
+    /**
+     * Ctrl+1..4: focus the Nth tab in `leaves()` order.
+     *
+     * @param {number} index 1-based tab number
      * @returns {boolean}
      */
+    focusTab: focusTabValue,
+    /**
+     * Ask to close one pane. An idle session closes immediately; a running one
+     * only stages `pendingClose` so the view can show the interrupt confirmation
+     * (ticket 09). The actual close happens in `confirmClose`.
+     *
+     * @param {string} paneId
+     * @returns {boolean} whether the pane closed immediately
+     */
     closePane(paneId) {
-      return closePaneValue(paneId)
+      return requestClose(paneId)
     },
     /** Close the pane showing `sessionId` (the conversation fallbacks' exit). */
     closePaneBySession(sessionId) {
       const holder = locatePaneIn(sessionId)
-      return holder === null ? false : closePaneValue(holder.paneId)
+      return holder === null ? false : requestClose(holder.paneId)
+    },
+    /**
+     * Confirm a staged close: interrupt the running turn, then close the pane.
+     * A failure is reported through `closeError` and the pane stays mounted.
+     *
+     * @returns {Promise<boolean>} whether the pane was closed
+     */
+    confirmClose() {
+      return confirmCloseValue()
+    },
+    /** Dismiss the staged close; the session and the layout are unchanged. */
+    cancelClose() {
+      return cancelCloseValue()
     },
     /**
      * Pane-aware `/resume`: swap the focused pane's conversation without
@@ -975,30 +1316,15 @@ function createPaneController(ctx, options = {}) {
      * @param {string} [workspaceId]
      * @returns {Promise<boolean>}
      */
-    async newInFocused(workspaceId) {
-      if (disposed || !registered) return false
-      if (!snapshot.active) return false
-      const targetWorkspace = workspaceId ?? focusedWorkspaceId()
-      if (typeof targetWorkspace !== 'string' || targetWorkspace === '') return false
-      if (!ensureWorkspace(targetWorkspace)) return false
-      if (targetWorkspace !== activeWorkspaceId) {
-        if (!switchWorkspace(targetWorkspace)) return false
-      }
-      let sessionId
-      try {
-        sessionId = await createSession(targetWorkspace)
-      } catch (error) {
-        emit({ error: messageOf(error) })
-        return false
-      }
-      const current = activeLayout()
-      if (current.activePaneId !== null) return replaceFocusedValue(sessionId)
-      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-      return apply(layoutTree.openPane(current, pane), targetWorkspace)
-    },
+    newInFocused: newInFocusedValue,
     /**
-     * Remember a pane's conversation view (ticket 07 drives the toggle; the
-     * state is per pane and travels with the layout).
+     * Switch one pane's conversation view. The remembered choice lives on that
+     * pane only; the tree, the focus and every retained reference are
+     * untouched, and the session itself is not rebuilt (ticket 07).
+     *
+     * A trajectory request while developer tools are disabled is refused rather
+     * than remembered as an unreachable selection; the segment is disabled for
+     * the same reason.
      *
      * @param {string} paneId
      * @param {'chat'|'trajectory'} view
@@ -1008,14 +1334,45 @@ function createPaneController(ctx, options = {}) {
       if (disposed) return false
       const located = locatePane(paneId)
       if (located === null) return false
+      const pane = located.pane
+      if (view !== 'chat' && view !== 'trajectory') return false
+      if (pane.view === view) return true
+      if (view === 'trajectory' && !isTrajectoryAvailable()) return false
+      if (viewSwitch !== undefined) {
+        const result = activateView(pane, view)
+        if (result?.ok !== true) {
+          emit({ error: result?.error ?? 'could not switch the conversation view' })
+          return false
+        }
+      }
       return apply(
         layoutTree.setView(layoutOf(located.workspaceId), paneId, view),
         located.workspaceId,
       )
     },
     /**
-     * Drag a separator: `path` addresses the split (a/b steps from the root) of
-     * the visible workspace.
+     * Re-assert the view a pane remembered, once its conversation binding is
+     * available. Called from the pane body after mount; dsh restores the
+     * per-session preference on its own, but the pane's memory must win.
+     *
+     * @param {string} sessionId
+     * @returns {boolean}
+     */
+    restoreViewFor(sessionId) {
+      if (disposed) return false
+      const holder = locatePaneIn(sessionId)
+      if (holder === null) return false
+      const pane = layoutOf(holder.workspaceId).panes[holder.paneId]
+      if (pane === undefined) return false
+      if (pane.view === 'trajectory' && !isTrajectoryAvailable()) return false
+      return activateView(pane, pane.view).ok === true
+    },
+    /** Whether the trajectory segment is offered (developer-tools gate). */
+    isTrajectoryAvailable,
+    subscribeViewAvailability,
+    /**
+     * Drag a separator: `path` addresses the split (a/b steps from the root).
+     *
      *
      * @param {string[]} path
      * @param {number} ratio
@@ -1031,6 +1388,7 @@ function createPaneController(ctx, options = {}) {
       disposed = true
       unsubscribePanel()
       unsubscribeEntryError()
+      unsubscribeViewAvailability()
       releaseAll()
       try {
         if (panelId() === PANEL_KEY) layout.selectPanel(null)
@@ -1050,6 +1408,9 @@ function createPaneController(ctx, options = {}) {
         root: null,
         panes: {},
         activePaneId: null,
+        pendingClose: null,
+        closeBusy: false,
+        closeError: null,
       })
     },
   }
@@ -1065,5 +1426,6 @@ module.exports = {
   probeConversationContent,
   findCurrentSession,
   derivePanePhase,
+  interruptSession,
   createPaneController,
 }

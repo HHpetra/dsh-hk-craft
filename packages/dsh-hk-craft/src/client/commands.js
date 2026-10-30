@@ -94,6 +94,52 @@ function buildClearCommand({ t, workspaceIdFor, start, panes }) {
 }
 
 /**
+ * Track Ctrl+Enter (or Cmd+Enter) while a `popupSelect` is open.
+ *
+ * dsh's popup shell handles a bare Enter/Tab by calling `popup.select(...)` and
+ * ignores the event's modifiers (`dsh-client-ui-commands/lib/client.js:1913-
+ * 1939`; `onSelect(option, context)` at 1250 carries no event). It also keeps
+ * focus in its own search input, so the plugin cannot wrap the key handler.
+ * This tracker listens in the document capture phase, which runs before the
+ * shell's React handler, and records the chord; `onSelect` consumes the flag
+ * synchronously while the same keydown is still dispatching. A `keyup`
+ * (or the next consumption) clears it, so a missed chord can never turn a
+ * later plain Enter into a new-pane request.
+ *
+ * @param {{addEventListener?: Function, removeEventListener?: Function}|undefined} target usually `document`
+ * @returns {{consume: () => boolean, dispose: () => void}}
+ */
+function createCtrlEnterTracker(target) {
+  let armed = false
+  let disposed = false
+  if (target === undefined || target === null || typeof target.addEventListener !== 'function') {
+    return { consume: () => false, dispose: () => {} }
+  }
+  const onKeyDown = (event) => {
+    if (event?.key !== 'Enter') return
+    if (event.ctrlKey === true || event.metaKey === true) armed = true
+  }
+  const onKeyUp = (event) => {
+    if (event?.key === 'Enter') armed = false
+  }
+  target.addEventListener('keydown', onKeyDown, true)
+  target.addEventListener('keyup', onKeyUp, true)
+  return {
+    consume() {
+      const value = armed
+      armed = false
+      return value
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true
+      target.removeEventListener?.('keydown', onKeyDown, true)
+      target.removeEventListener?.('keyup', onKeyUp, true)
+    },
+  }
+}
+
+/**
  * Build the `/resume` contribution.
  *
  * `searchMode: 'fuzzy-label'` is dsh's fuzzy popup mode; it ranks
@@ -107,9 +153,11 @@ function buildClearCommand({ t, workspaceIdFor, start, panes }) {
  * @param {(sessionId: string) => void} deps.open reveal action
  * @param {() => number} deps.now clock used for the age label
  * @param {object} [deps.panes] pane host face (optional: commands work without panes)
+ * @param {() => boolean} [deps.newPaneRequested] whether the selection was
+ *   Ctrl+Enter (`createCtrlEnterTracker().consume` in production)
  * @returns {object} command contribution
  */
-function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes }) {
+function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes, newPaneRequested }) {
   return {
     name: 'resume',
     label: () => t('command.resume.label'),
@@ -132,10 +180,19 @@ function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes
         })
       },
       onSelect: async (option) => {
-        // Pane-aware `/resume`: with a focused pane the conversation replaces
-        // that pane's content; the tree, the focus and the panel stay put. The
-        // shell-level reveal would otherwise call selectPanel(null).
-        if (focusedPane(panes) !== null) {
+        // Pane-aware `/resume`: with the pane workspace showing, the chosen
+        // conversation either replaces the focused pane (plain Enter) or opens
+        // in a new pane beside it (Ctrl+Enter). The shell-level reveal would
+        // otherwise call selectPanel(null) and dismiss the split layout.
+        const openBeside = newPaneRequested?.() === true
+        if (panePanelActive(panes) && focusedPane(panes) !== null) {
+          if (openBeside && typeof panes?.openInNewPane === 'function') {
+            const attempt = panes.openInNewPane(option.sessionId)
+            if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+              attempt.catch(() => {})
+            }
+            return
+          }
           panes.replaceFocused(option.sessionId)
           return
         }
@@ -171,13 +228,20 @@ function registerCommands(services) {
       listConversations({ sessions: services.sessions, workspaces }, triggerSessionId, { signal }))
   const open = services.openConversation ?? ((sessionId) => openConversation(services.uiWorkspace, sessionId))
   const start = services.startConversation ?? ((workspaceId) => startConversation(services.uiWorkspace, workspaceId))
+  const tracker =
+    services.newPaneRequested === undefined
+      ? createCtrlEnterTracker(globalThis.document)
+      : null
+  const newPaneRequested = services.newPaneRequested ?? (() => tracker.consume())
 
-  return [
+  const disposers = [
     commandUi.register(buildClearCommand({ t, workspaceIdFor, start, panes })),
     commandUi.register(
-      buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes }),
+      buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes, newPaneRequested }),
     ),
   ]
+  if (tracker !== null) disposers.push(() => tracker.dispose())
+  return disposers
 }
 
-module.exports = { buildClearCommand, buildResumeCommand, registerCommands }
+module.exports = { buildClearCommand, buildResumeCommand, createCtrlEnterTracker, registerCommands }

@@ -22,6 +22,7 @@ const { DiagnosticsAction } = require('./diagnostics.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
 const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
+const { createViewSwitch } = require('./dsh-view-switch.js')
 const { createPaneBody, createPaneHost, createPaneToggle } = require('./pane-view.js')
 const { registerCommands } = require('./commands.js')
 
@@ -60,21 +61,24 @@ function apply(ctx) {
     ),
   )
 
-  const controller = createPaneController(ctx)
+  // The View adapter is optional: without `uiConversation` (or the
+  // developer-tools gate) the panes stay chat-only instead of failing to mount.
+  const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
   const PaneHost = createPaneHost(controller)
   const PaneBody = createPaneBody(controller)
   const PaneToggle = createPaneToggle(controller)
 
   /**
-   * The pane face the slash commands see (ticket 05): enough to keep `/resume`
-   * and `/clear` inside the split workspace instead of calling the native
-   * session navigation, which resets the active panel. `split` is deliberately
-   * absent — Ctrl+Enter opening a new pane is ticket 06.
+   * The pane face the slash commands see: enough to keep `/resume` and `/clear`
+   * inside the split workspace instead of calling the native session navigation,
+   * which resets the active panel. `openInNewPane` is the `/resume` Ctrl+Enter
+   * action (ticket 06); the tab strip itself talks to the controller directly.
    */
   const paneCommands = {
     active: () => controller.getSnapshot().active,
     focused: () => controller.focusedPane(),
     replaceFocused: (sessionId) => controller.replaceFocusedSession(sessionId),
+    openInNewPane: (sessionId) => controller.openInNewPane(sessionId),
     newConversation: (workspaceId) => controller.newInFocused(workspaceId),
   }
 

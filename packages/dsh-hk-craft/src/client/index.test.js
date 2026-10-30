@@ -167,6 +167,11 @@ test('zh and en carry the same keys', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
 })
 
+test('the running-pane close confirmation says the conversation is kept in history', () => {
+  assert.equal(zh['pane.close.confirm.title'], '会话将被中断并保留在历史中')
+  assert.match(en['pane.close.confirm.title'], /history/)
+})
+
 test('registers its main key with a session-scoped child slot', () => {
   const ctx = fakeCtx()
   apply(ctx)
