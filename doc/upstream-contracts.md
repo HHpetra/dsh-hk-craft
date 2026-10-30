@@ -316,6 +316,60 @@ custom presets, switch panes, and confirm the badge follows focus; remove the
 
 ---
 
+## Subagent catalog (direct children)
+
+**Provider:** `@deepseek-ai/dsh-api-session-controller` (`sessions.list`
+snapshot, `sessions.refreshProjections`, `sessions.retain`) and
+`@deepseek-ai/dsh-client-ui-session` (`sessionStatus`).
+
+**Semantics:** the raw `useSessions` list snapshot also carries
+`projectionsBySession: Record<sessionId, {state, error?, values}>`. The focused
+conversation's direct children are
+`projectionsBySession[sessionId].values.subagentCatalog`: an array in parent
+catalog event order, **absent** until a projection read produces it (an explicit
+`[]` is a ready empty catalog). Each entry is
+`{ id, createdAt, mode, label? }`, where `mode` is `one-shot`, `continuable`,
+`external` or `unknown`; `continuable` always carries a `label`, the other modes
+may omit it. Activity prefers `sessionStatus.get(id)?.running` and falls back to
+the summary row's `running`; a finished child reads completed only when
+`summary.projectionValues.subagentTiming.lastTurnCompleted === true`. External
+entries describe tasks without a local Session.
+
+`refreshProjections(parentSessionId): Promise<void>` is public, does not start a
+format migration, and reuses an in-flight read (or resolves immediately when the
+catalog is already ready). It reads projections only; it never opens the
+conversation. The native header's dropdown does **not** request its root catalog
+on open — a plugin-side refresh on open is an extra, safe read.
+
+**Why we rely on it:** the strip's subagent seat (ticket 08) shows the focused
+conversation's direct-child total and running count with a flat dropdown of
+direct children, and hides itself when the projection has no usable entries. It
+reads only these fields and never opens a child's history. On open it asks for
+one refresh so newly created children appear promptly; a failure is ignored.
+
+**Open: the public path that keeps the split view.** `sessions.retain(target)`
+calls the manager's `resolveTarget`, which accepts either a session id or a
+`{ parentSessionId, childSessionId, mode }` address. For a bare id it derives the
+address from the parent catalog's `subagentCatalog` entry (`subagentAddress`) and
+installs it on the Session instance, so a pane can retain and mount a direct child
+by id. `external` entries are deliberately excluded from that derivation, which
+is why the seat does not make them navigable. The native header instead passes the
+address to `uiWorkspace.openSession(address)`, which reveals the native
+conversation panel and would dismiss the pane workspace (see
+[`#native-start-session-reveal`](#native-start-session-reveal)); the pane uses the
+controller's `openInNewPane(sessionId)` instead — it focuses an already-open child
+and otherwise tiles a new pane.
+
+**Verified:** the catalog shape, mode union and label requirements, activity
+fallback, `refreshProjections`, and `resolveTarget`/`subagentAddress` were read in
+the 0.2.1-rc.5 installed bundles (`dsh-api-session-controller`,
+`dsh-client-ui-subagent`, `dsh-client-ui-session`). Runtime probe: open a split
+pane whose conversation has children, check the count trigger and the localized
+mode/activity rows, open a child in a new pane, and confirm an external row is
+inert.
+
+---
+
 ## Directory picker
 
 **Provider:** the Electron preload bridge

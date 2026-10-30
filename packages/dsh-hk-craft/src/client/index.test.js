@@ -14,6 +14,7 @@ const {
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,
   SETTINGS_SLOT,
+  catalogRefresher,
 } = require('./index.js')
 const { zh, en } = require('./locale.js')
 const { BUILT_IN_MODE_KEYS } = require('./pane-mode.js')
@@ -342,6 +343,59 @@ test('skips command registration when a command service is missing', () => {
   assert.equal(ctx.calls.registered.length, 4)
 })
 
+test('the strip fills its subagent seat with an optional-service catalog refresher', () => {
+  const refreshed = []
+  const ctx = fakeCtx({
+    services: {
+      ...workspaceServices(),
+      sessions: {
+        list: { getSnapshot: () => ({ byId: {} }) },
+        refreshProjections(sessionId) {
+          refreshed.push(sessionId)
+          return Promise.resolve()
+        },
+      },
+    },
+  })
+  const seatOptions = []
+  const seats = createStripSeats(ctx, {
+    createSeat(options) {
+      seatOptions.push(options)
+      return function Seat() {
+        return null
+      }
+    },
+  })
+
+  assert.deepEqual(Object.keys(seats), ['mode', 'subagents'])
+  assert.equal(typeof seats.mode, 'function')
+  assert.equal(typeof seats.subagents, 'function')
+  assert.equal(seatOptions.length, 1)
+  assert.equal(typeof seatOptions[0].refreshCatalog, 'function')
+
+  seatOptions[0].refreshCatalog('s1')
+  assert.deepEqual(refreshed, ['s1'])
+})
+
+test('the catalog refresher reads sessions through ctx.get and stays quiet without it', () => {
+  const refreshed = []
+  const withSessions = fakeCtx({
+    services: {
+      ...workspaceServices(),
+      sessions: {
+        refreshProjections(sessionId) {
+          refreshed.push(sessionId)
+        },
+      },
+    },
+  })
+  catalogRefresher(withSessions)('s9')
+  assert.deepEqual(refreshed, ['s9'])
+
+  const withoutSessions = fakeCtx({ services: { ...workspaceServices() } })
+  assert.equal(catalogRefresher(withoutSessions)('s9'), undefined)
+})
+
 test('apply is idempotent in shape: no module-level state leaks between loads', () => {
   const first = fakeCtx()
   const second = fakeCtx()
@@ -362,12 +416,11 @@ test('every shipped preset and the badge explanation have copy in both languages
   }
 })
 
-test('the strip seats fill the read-only mode seat without claiming the subagent seat', () => {
+test('the strip seats pair the read-only mode seat with the subagent viewer seat', () => {
   const seats = createStripSeats(fakeCtx())
   assert.equal(typeof seats.mode, 'function')
-  // Ticket 08 owns `subagents`; this ticket must not place an empty stand-in.
-  assert.equal(seats.subagents, undefined)
-  assert.deepEqual(Object.keys(seats), ['mode'])
+  assert.equal(typeof seats.subagents, 'function')
+  assert.deepEqual(Object.keys(seats), ['mode', 'subagents'])
 })
 
 test('the mode roster loader reads the optional remote once per preset id', async () => {

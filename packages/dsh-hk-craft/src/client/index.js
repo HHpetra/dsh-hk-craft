@@ -18,7 +18,9 @@
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
  * and thin React views (`pane-view.js`); the HK Craft settings page
  * (`settings-view.js`) is the transitional home of the diagnostics and the
- * split-view switch (ticket 05).
+ * split-view switch (ticket 05). The strip's native-action seats keep the same
+ * shape: `pane-subagents.js` is the pure projection and
+ * `pane-subagents-view.js` its React seat (ticket 08).
  */
 
 const { dictionaries } = require('./locale.js')
@@ -27,6 +29,7 @@ const { createSectionActions } = require('./dsh-workspaces.js')
 const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
 const { createViewSwitch } = require('./dsh-view-switch.js')
 const { createPaneBody, createPaneHost } = require('./pane-view.js')
+const { createSubagentSeat } = require('./pane-subagents-view.js')
 const { createSettingsSection } = require('./settings-view.js')
 const { modeRosterRows } = require('./pane-mode.js')
 const { createModeSeat } = require('./pane-mode-seat.js')
@@ -98,16 +101,40 @@ function createModeRosterLoader(ctx) {
 }
 
 /**
+ * The subagent seat's on-open projection refresh.
+ *
+ * `refreshProjections(parentSessionId)` is a public `sessions` method (see
+ * `doc/upstream-contracts.md#subagent-catalog-direct-children`), but reading it
+ * through `ctx.get` keeps the seat a pure consumer: a shell that ever ships
+ * without the service leaves the refresh a no-op instead of failing to mount.
+ *
+ * @param {any} ctx Cordis context of the client plugin row.
+ * @returns {(sessionId: string) => unknown}
+ */
+function catalogRefresher(ctx) {
+  return (sessionId) => {
+    if (typeof ctx?.get !== 'function') return undefined
+    return ctx.get('sessions')?.refreshProjections?.(sessionId)
+  }
+}
+
+/**
  * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
  * Ticket 07 fills the read-only mode seat here; ticket 08 fills `subagents` the
  * same way, so neither module has to reach into the strip or the action group.
+ * The `createSeat` option exists for tests: production always builds the real
+ * seat, and the callback wiring stays observable without rendering React.
  *
  * @param {any} ctx Cordis context of the client plugin row
+ * @param {{createSeat?: (options: object) => Function}} [options]
  * @returns {Record<string, Function>} component types by seat name
  */
-function createStripSeats(ctx) {
+function createStripSeats(ctx, options = {}) {
+  const createSeat =
+    typeof options?.createSeat === 'function' ? options.createSeat : createSubagentSeat
   return {
     mode: createModeSeat({ loadRoster: createModeRosterLoader(ctx) }),
+    subagents: createSeat({ refreshCatalog: catalogRefresher(ctx) }),
   }
 }
 
@@ -254,4 +281,5 @@ module.exports = {
   SETTINGS_SLOT,
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,
+  catalogRefresher,
 }
