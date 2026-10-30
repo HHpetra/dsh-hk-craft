@@ -120,6 +120,39 @@ function encodeLayout(layout) {
 }
 
 /**
+ * Drop panes whose session is not in the live catalog, and keep only the first
+ * pane of a session mounted twice (spec §4.4). A `null`/`undefined` catalog
+ * means "not ready yet": unknown-session pruning waits, but the 1:1 duplicate
+ * rule still applies because it never depends on the catalog.
+ *
+ * Pure and idempotent: it returns the same object when nothing changed. Used at
+ * decode time and again by the pane controller when a catalog that was loading
+ * becomes ready (spec §9).
+ *
+ * @param {object} layout normalized layout
+ * @param {Set<string>|null|undefined} knownSessionIds
+ * @returns {object}
+ */
+function pruneToKnownSessions(layout, knownSessionIds) {
+  if (layout === null || typeof layout !== 'object') return layout
+  const known = knownSessionIds instanceof Set ? knownSessionIds : null
+  const seenSessions = new Set()
+  const surviving = {}
+  for (const paneId of layoutTree.leaves(layout.root)) {
+    const pane = layout.panes?.[paneId]
+    if (pane === undefined) continue
+    if (known !== null && !known.has(pane.sessionId)) continue
+    if (seenSessions.has(pane.sessionId)) continue
+    seenSessions.add(pane.sessionId)
+    surviving[paneId] = pane
+  }
+
+  const total = Object.keys(layout.panes ?? {}).length
+  if (Object.keys(surviving).length === total) return layout
+  return layoutTree.normalizeLayout({ ...layout, panes: surviving })
+}
+
+/**
  * Decode one stored payload into a safe layout. Never throws.
  *
  * @param {unknown} raw string from storage (a parsed object is accepted too)
@@ -138,7 +171,7 @@ function decodeLayout(raw, options = {}) {
   const panes = panesFrom(payload.panes)
   if (Object.keys(panes).length === 0) return emptyLayout(workspaceId)
 
-  let layout = layoutTree.normalizeLayout({
+  const layout = layoutTree.normalizeLayout({
     version: LAYOUT_PAYLOAD_VERSION,
     workspaceId,
     root: payload.root ?? null,
@@ -146,22 +179,7 @@ function decodeLayout(raw, options = {}) {
     activePaneId: typeof payload.activePaneId === 'string' ? payload.activePaneId : null,
   })
 
-  const known = options.knownSessionIds instanceof Set ? options.knownSessionIds : null
-  const seenSessions = new Set()
-  const surviving = {}
-  for (const paneId of layoutTree.leaves(layout.root)) {
-    const pane = layout.panes[paneId]
-    if (pane === undefined) continue
-    const knownSession = known === null || known.has(pane.sessionId)
-    if (!knownSession || seenSessions.has(pane.sessionId)) continue
-    seenSessions.add(pane.sessionId)
-    surviving[paneId] = pane
-  }
-
-  if (Object.keys(surviving).length !== Object.keys(layout.panes).length) {
-    layout = layoutTree.normalizeLayout({ ...layout, panes: surviving })
-  }
-  return layout
+  return pruneToKnownSessions(layout, options.knownSessionIds)
 }
 
 /**
@@ -214,6 +232,7 @@ module.exports = {
   emptyLayout,
   encodeLayout,
   decodeLayout,
+  pruneToKnownSessions,
   readLayout,
   writeLayout,
 }

@@ -62,7 +62,7 @@ function createLayout(workspaceId = null) {
 
 /**
  * Leaves in render order: depth-first, left→right for a row split, top→bottom
- * for a column split (spec §4.1 — the same order the tab strip uses).
+ * for a column split (spec §4.1 — the same order the pane strip uses).
  *
  * @param {object|null} root
  * @returns {string[]}
@@ -405,7 +405,7 @@ function replaceSession(layout, paneId, sessionId) {
  * Swap the contents of two panes (spec §4.2 `swap`, ticket 10).
  *
  * A pane's identity is its leaf and its `paneId`; its content is the session
- * plus the remembered view. Dropping one tab on another therefore moves both
+ * plus the remembered view. Dropping one strip entry on another therefore moves both
  * records between the same two leaf positions: the tree, every ratio, the
  * focus and the rendered element keys stay untouched, only what each pane
  * shows changes. Same-pane and unknown-pane requests are no-ops that return

@@ -2,7 +2,8 @@
 
 /**
  * Thin React shell around the pane controller. All dsh assumptions live in
- * `dsh-pane-host.js`; this file only turns controller state into elements.
+ * `dsh-pane-host.js` (and are recorded in `doc/upstream-contracts.md`); this
+ * file only turns controller state into elements.
  *
  * Layout rendering keeps every pane mounted: the pure geometry projection
  * (`layout-geometry.js`) turns the tree into flat, fractional rectangles, and
@@ -10,12 +11,18 @@
  * close therefore changes inline styles only — React never re-parents a pane,
  * so streaming output, scroll position and the composer draft survive.
  *
- * `react` is resolved lazily because unit tests load this module in Node,
- * where the platform module graph does not exist.
+ * Static styles live in `pane-styles.js`, shared helpers in `shared.js`.
+ * `react` is resolved lazily because unit tests load this module in Node, where
+ * the platform module graph does not exist.
  */
 
 const { createTranslator } = require('./diagnostics.js')
-const { CONTENT_FACTORY, PANE_SLOT, derivePanePhase } = require('./dsh-pane-host.js')
+const {
+  CONTENT_FACTORY,
+  PANE_SLOT,
+  UNSCOPED_WORKSPACE,
+  derivePanePhase,
+} = require('./dsh-pane-host.js')
 const { effectiveView, viewSegments } = require('./dsh-view-switch.js')
 const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
 const { ratioFromDrag } = require('./layout-tree.js')
@@ -25,14 +32,50 @@ const {
   shortcutLabel,
   withShortcut,
 } = require('./pane-shortcuts.js')
-const { buildResumeRows } = require('./resume-list.js')
+const { EMPTY_STATE_LIMITS, buildResumeRows } = require('./resume-list.js')
+const { absentHook } = require('./shared.js')
+const { STRIP_STATUS_COLORS } = require('./status-colors.js')
+const { STRIP_STATUS_IDLE, projectStrip } = require('./pane-strip.js')
 const {
-  TAB_STATUS_ERROR,
-  TAB_STATUS_IDLE,
-  TAB_STATUS_RUNNING,
-  TAB_STATUS_WAITING,
-  projectTabs,
-} = require('./tab-strip.js')
+  buttonStyle,
+  paneStyle,
+  workspaceStyle,
+  layoutStyle,
+  hostStyle,
+  hiddenWorkspaceStyle,
+  paneStripStyle,
+  stripViewportStyle,
+  stripItemStyle,
+  stripTitleStyle,
+  stripDotStyle,
+  stripCloseStyle,
+  stripNewStyle,
+  headerStyle,
+  titleStyle,
+  bodyStyle,
+  fallbackStyle,
+  emptyStackStyle,
+  emptyActionStyle,
+  recentHeadingStyle,
+  recentListStyle,
+  recentRowStyle,
+  recentLabelStyle,
+  recentDetailStyle,
+  recentBadgeStyle,
+  hintStyle,
+  segmentedStyle,
+  segmentStyle,
+  segmentActiveStyle,
+  menuTriggerStyle,
+  menuStyle,
+  menuItemStyle,
+  menuShortcutStyle,
+  closeOverlayStyle,
+  closeDialogStyle,
+  closeTitleStyle,
+  closeActionsStyle,
+  closeErrorStyle,
+} = require('./pane-styles.js')
 
 let reactModule = null
 
@@ -40,391 +83,6 @@ let reactModule = null
 function react() {
   if (reactModule === null) reactModule = require('react')
   return reactModule
-}
-
-const buttonStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
-  borderRadius: 6,
-  background: 'transparent',
-  color: 'inherit',
-  cursor: 'pointer',
-  font: 'inherit',
-  fontSize: 12,
-  padding: '2px 8px',
-}
-
-const paneStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  flex: '1 1 auto',
-  minWidth: 0,
-  minHeight: 0,
-  height: '100%',
-  background: 'var(--dsw-alias-bg-base, Canvas)',
-  color: 'var(--dsw-alias-label-primary, CanvasText)',
-}
-
-/** The workspace box: the tab strip on top, the pane area filling the rest. */
-const workspaceStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  flex: '1 1 auto',
-  minWidth: 0,
-  minHeight: 0,
-  height: '100%',
-  width: '100%',
-  overflow: 'hidden',
-  background: 'var(--dsw-alias-bg-base, Canvas)',
-  color: 'var(--dsw-alias-label-primary, CanvasText)',
-}
-
-/** The pane area the fractional rectangles are drawn in. */
-const layoutStyle = {
-  position: 'relative',
-  display: 'block',
-  flex: '1 1 auto',
-  minWidth: 0,
-  minHeight: 0,
-  width: '100%',
-  overflow: 'hidden',
-}
-
-/**
- * The host box every workspace layer lives in. It is positioned so hidden
- * workspaces can be absolutely covered by `display: none` without unmounting.
- */
-const hostStyle = {
-  position: 'relative',
-  display: 'flex',
-  flexDirection: 'column',
-  flex: '1 1 auto',
-  minWidth: 0,
-  minHeight: 0,
-  height: '100%',
-  width: '100%',
-  overflow: 'hidden',
-}
-
-/** A workspace that stays mounted but is not the visible one (spec D5). */
-const hiddenWorkspaceStyle = {
-  position: 'absolute',
-  inset: 0,
-  display: 'none',
-  minWidth: 0,
-  minHeight: 0,
-  overflow: 'hidden',
-}
-
-/** Tab strip height (spec §5: 36px, the Agent10 density). */
-const TAB_STRIP_HEIGHT = 36
-
-const tabStripStyle = {
-  display: 'flex',
-  alignItems: 'stretch',
-  flex: 'none',
-  height: TAB_STRIP_HEIGHT,
-  minHeight: TAB_STRIP_HEIGHT,
-  minWidth: 0,
-  borderBottom: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-  background: 'var(--dsw-alias-bg-base, Canvas)',
-}
-
-/** Only this inner box scrolls; `+` stays pinned at the right. */
-const tabViewportStyle = {
-  display: 'flex',
-  alignItems: 'stretch',
-  flex: '1 1 auto',
-  minWidth: 0,
-  overflowX: 'auto',
-  overflowY: 'hidden',
-  whiteSpace: 'nowrap',
-  scrollbarWidth: 'thin',
-}
-
-const tabStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  flex: '0 0 auto',
-  maxWidth: 200,
-  minWidth: 0,
-  height: '100%',
-  padding: '0 8px',
-  border: 'none',
-  // Always reserved, so focusing a tab never changes its width or the row's
-  // geometry (ticket 10: status/focus must not shift the strip).
-  borderTop: '2px solid transparent',
-  borderRight: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-  background: 'transparent',
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 12,
-  cursor: 'pointer',
-  userSelect: 'none',
-  // Pointer dragging (not HTML5 DnD) needs the browser not to claim the gesture.
-  touchAction: 'none',
-}
-
-/** Titles truncate instead of squeezing their neighbours (spec §5). */
-const tabTitleStyle = {
-  maxWidth: 128,
-  minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-/**
- * A fixed-size dot whose two rings (the tab background and a `currentColor`
- * halo) keep it legible on both the light and the dark palette. Neither ring
- * takes part in layout, and the dot is always rendered — running/waiting/idle
- * changes only its colour, never the row's geometry.
- */
-const tabDotStyle = {
-  flex: 'none',
-  width: 7,
-  height: 7,
-  borderRadius: '50%',
-  boxShadow:
-    '0 0 0 1px var(--dsw-alias-bg-base, Canvas), 0 0 0 2px color-mix(in srgb, currentColor 32%, transparent)',
-}
-
-const tabCloseStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  flex: 'none',
-  width: 18,
-  height: 18,
-  padding: 0,
-  border: 'none',
-  borderRadius: 4,
-  background: 'transparent',
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 13,
-  lineHeight: 1,
-  cursor: 'pointer',
-}
-
-const tabNewStyle = {
-  ...buttonStyle,
-  flex: 'none',
-  border: 'none',
-  borderLeft: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-  borderRadius: 0,
-  padding: '0 10px',
-}
-
-/**
- * Dot colours per tab status. Running and waiting use the shell's state tokens
- * so they follow the active palette; idle green and the error orange have no
- * matching token today and stay explicit mid-tones, which read on both the
- * light and the dark background once the adaptive ring above is applied.
- */
-const TAB_STATUS_COLORS = {
-  [TAB_STATUS_RUNNING]: 'var(--dsw-alias-state-warn-primary, #d9a400)',
-  [TAB_STATUS_WAITING]: 'var(--dsw-alias-state-error-primary, #e5484d)',
-  [TAB_STATUS_ERROR]: '#f76b15',
-  [TAB_STATUS_IDLE]: '#30a46c',
-}
-
-const headerStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  flex: 'none',
-  minHeight: 36,
-  padding: '0 10px',
-  borderBottom: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-  fontSize: 12,
-}
-
-const titleStyle = {
-  flex: '1 1 auto',
-  minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  fontWeight: 600,
-}
-
-const bodyStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  flex: '1 1 auto',
-  minHeight: 0,
-  minWidth: 0,
-  position: 'relative',
-}
-
-const fallbackStyle = {
-  margin: 'auto',
-  maxWidth: 560,
-  padding: 24,
-  textAlign: 'center',
-  fontSize: 13,
-  lineHeight: 1.6,
-  opacity: 0.9,
-}
-
-/** How many recent conversations the empty state offers. */
-const EMPTY_RECENT_LIMIT = 5
-
-/** The empty state's hero plus its recent list, centred in the workspace box. */
-const emptyStackStyle = {
-  margin: 'auto',
-  width: '100%',
-  maxWidth: 520,
-  padding: 24,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'stretch',
-  gap: 10,
-  textAlign: 'center',
-  fontSize: 13,
-  lineHeight: 1.6,
-  boxSizing: 'border-box',
-}
-
-const emptyActionStyle = { ...buttonStyle, alignSelf: 'center' }
-
-const recentHeadingStyle = {
-  marginTop: 6,
-  fontSize: 11,
-  fontWeight: 600,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
-  opacity: 0.6,
-  textAlign: 'left',
-}
-
-const recentListStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
-
-const recentRowStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  width: '100%',
-  boxSizing: 'border-box',
-  border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',
-  borderRadius: 6,
-  background: 'color-mix(in srgb, currentColor 4%, transparent)',
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 12,
-  lineHeight: '20px',
-  cursor: 'pointer',
-  padding: '4px 8px',
-  textAlign: 'left',
-}
-
-const recentLabelStyle = {
-  flex: '1 1 auto',
-  minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-const recentDetailStyle = { flex: 'none', opacity: 0.6, fontSize: 11 }
-
-const recentBadgeStyle = {
-  flex: 'none',
-  fontSize: 10,
-  lineHeight: '16px',
-  padding: '0 5px',
-  borderRadius: 999,
-  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
-  opacity: 0.8,
-}
-
-const hintStyle = {
-  marginTop: 6,
-  fontSize: 11,
-  lineHeight: 1.5,
-  opacity: 0.62,
-  textAlign: 'center',
-}
-
-/** The 对话 | 轨迹 control is a segmented switch, not a tab strip (spec §6). */
-const segmentedStyle = {
-  display: 'inline-flex',
-  alignItems: 'stretch',
-  flex: 'none',
-  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
-  borderRadius: 6,
-  overflow: 'hidden',
-}
-
-const segmentStyle = {
-  border: 'none',
-  borderRadius: 0,
-  background: 'transparent',
-  color: 'inherit',
-  cursor: 'pointer',
-  font: 'inherit',
-  fontSize: 11,
-  lineHeight: '18px',
-  padding: '1px 7px',
-}
-
-const segmentActiveStyle = {
-  background: 'color-mix(in srgb, currentColor 16%, transparent)',
-  fontWeight: 600,
-}
-
-const segmentDisabledStyle = { opacity: 0.45, cursor: 'not-allowed' }
-
-const closeOverlayStyle = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 2147483000,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 16,
-  background: 'rgba(0, 0, 0, 0.35)',
-}
-
-const closeDialogStyle = {
-  width: 440,
-  maxWidth: 'calc(100vw - 32px)',
-  padding: '18px 20px',
-  borderRadius: 12,
-  border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-  background: 'Canvas',
-  color: 'CanvasText',
-  boxShadow: '0 16px 40px rgba(0, 0, 0, 0.24)',
-  fontSize: 13,
-  lineHeight: 1.6,
-}
-
-const closeTitleStyle = {
-  fontSize: 12,
-  opacity: 0.7,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  marginBottom: 6,
-}
-
-const closeActionsStyle = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: 8,
-  marginTop: 16,
-}
-
-const closeErrorStyle = {
-  marginTop: 10,
-  padding: '6px 8px',
-  borderRadius: 6,
-  background: 'color-mix(in srgb, tomato 16%, transparent)',
-  wordBreak: 'break-word',
 }
 
 /** Subscribe a component to the controller's frozen snapshot. */
@@ -493,6 +151,10 @@ function runAttempt(attempt) {
  * Shell modal layers own the keyboard while they are open — the shell's own
  * shortcut service blocks background commands the same way.
  *
+ * `Mod+N` is not in this table: it is identical to `/clear` (spec D8) and is
+ * bound by `commands.js` while the pane panel is active, so it also works when
+ * the document focus is inside the conversation composer.
+ *
  * @param {{ controller: any, workspaceId: string|null }} props
  * @returns {null}
  */
@@ -507,7 +169,7 @@ function PaneShortcuts({ controller, workspaceId }) {
 
       if (action.kind === 'focus') {
         event.preventDefault()
-        controller.focusTab(action.index)
+        controller.focusPaneAt(action.index)
         return
       }
       if (action.kind === 'new') {
@@ -528,6 +190,9 @@ function PaneShortcuts({ controller, workspaceId }) {
   }, [controller, workspaceId])
   return null
 }
+
+/** How many recent conversations the empty state offers. */
+const EMPTY_RECENT_LIMIT = 5
 
 /**
  * The empty state: the workspace has no panes at all (ticket 10).
@@ -559,7 +224,7 @@ function PaneEmptyState({ controller, workspaceId, visible, t }) {
         const projected = buildResumeRows(rows, {
           now: Date.now(),
           t: tRef.current,
-          limits: { title: 48, prompt: 32, label: 96 },
+          limits: EMPTY_STATE_LIMITS,
         })
         setRecent(projected.slice(0, EMPTY_RECENT_LIMIT))
       })
@@ -635,13 +300,14 @@ function PaneEmptyState({ controller, workspaceId, visible, t }) {
 /**
  * The pane's own `对话 | 轨迹` segmented switch (ticket 07, spec D1 + §6).
  *
- * dsh's native tab row lives in `conversation.session.header`, which is a child
- * slot of the `main.conversation` root — the pane renders only the
- * `conversation.content` factory, so that header (and its `role="tablist"`) is
- * never mounted here. This control replaces it per pane.
+ * dsh's native View switcher lives in `conversation.session.header`, which is a
+ * child slot of the `main.conversation` root — the pane renders only the
+ * `conversation.content` factory, so that header is never mounted here. This
+ * control replaces it per pane.
  *
- * The trajectory segment is disabled with a tooltip while developer tools are
- * off, mirroring dsh's own filter instead of silently doing nothing.
+ * When developer tools are off, dsh does not offer the trajectory View at all.
+ * The segment is therefore absent rather than disabled, and the whole control
+ * disappears while fewer than two views are available (native dsh's rule).
  *
  * @param {{ controller: any, pane: object, t: (key: string) => string }} props
  */
@@ -653,6 +319,8 @@ function PaneViewSwitch({ controller, pane, t }) {
     controller.isTrajectoryAvailable,
     controller.isTrajectoryAvailable,
   )
+  const segments = viewSegments(trajectoryAvailable)
+  if (segments.length < 2) return null
   const selected = effectiveView(pane.view, trajectoryAvailable)
   const labels = {
     chat: t('pane.view.chat'),
@@ -666,7 +334,7 @@ function PaneViewSwitch({ controller, pane, t }) {
       'data-hkcraft-view-switch': pane.view,
       style: segmentedStyle,
     },
-    viewSegments(trajectoryAvailable).map((segment) =>
+    segments.map((segment) =>
       h(
         'button',
         {
@@ -674,17 +342,12 @@ function PaneViewSwitch({ controller, pane, t }) {
           type: 'button',
           role: 'radio',
           'aria-checked': segment.id === selected,
-          disabled: segment.disabled,
-          title: segment.disabled ? t('pane.view.trajectoryDisabled') : t('pane.view.title'),
+          title: t('pane.view.title'),
           style: {
             ...segmentStyle,
             ...(segment.id === selected ? segmentActiveStyle : {}),
-            ...(segment.disabled ? segmentDisabledStyle : {}),
           },
-          onClick: () => {
-            if (segment.disabled) return
-            controller.setView(pane.paneId, segment.id)
-          },
+          onClick: () => controller.setView(pane.paneId, segment.id),
         },
         labels[segment.id] ?? segment.id,
       ),
@@ -693,11 +356,12 @@ function PaneViewSwitch({ controller, pane, t }) {
 }
 
 /**
- * One pane: header actions plus the session-scoped child slot.
+ * One pane: `标题 + [对话|轨迹] + ⋯` (spec D1).
  *
- * The element type is module-level and the key is the pane id, so the pane is
- * never remounted by a layout change. Only a session replacement resets the
- * conversation subtree (the boundary below is keyed by session id).
+ * Split-right, split-down and close live inside the `⋯` menu, not as a row of
+ * glyph buttons. The element type is module-level and the key is the pane id,
+ * so the pane is never remounted by a layout change. Only a session replacement
+ * resets the conversation subtree (the boundary below is keyed by session id).
  *
  * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string }} props
  */
@@ -709,6 +373,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     typeof kit.useSessions === 'function'
       ? kit.useSessions((snapshot) => snapshot.byId[pane.sessionId]?.title)
       : undefined
+  const [menuOpen, setMenuOpen] = React.useState(false)
 
   const close = () => controller.closePane(pane.paneId)
   const focus = () => {
@@ -730,8 +395,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     // A visible focus ring is the only reliable "this pane receives input"
     // signal in a split view (issue 05; Agent10's flat strip lost it). The
     // shell's theme presenter writes `color-scheme` plus its palette tokens on
-    // the document, so this pair resolves on both the light and the dark theme
-    // (the fallbacks cover a shell without those tokens).
+    // the document, so this pair resolves on both the light and the dark theme.
     outline: focused
       ? '2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, Highlight))'
       : '2px solid transparent',
@@ -745,6 +409,51 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
   const splitDownHint = withShortcut(t('pane.splitDown'), shortcutLabel('split-down'))
   const closeHint = withShortcut(t('pane.close'), shortcutLabel('close-pane'))
 
+  const runAndClose = (action) => {
+    setMenuOpen(false)
+    action()
+  }
+
+  const menuItem = (key, label, hint, action) =>
+    h(
+      'button',
+      {
+        key,
+        type: 'button',
+        role: 'menuitem',
+        title: hint,
+        style: menuItemStyle,
+        onClick: () => runAndClose(action),
+      },
+      h('span', null, label),
+      h('span', { style: menuShortcutStyle }, hint === label ? '' : hint.replace(`${label} `, '')),
+    )
+
+  const menu = menuOpen
+    ? h(
+        'div',
+        {
+          role: 'menu',
+          'aria-label': t('pane.more'),
+          'data-hkcraft-pane-menu': '',
+          style: menuStyle,
+          onKeyDown: (event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              setMenuOpen(false)
+            }
+          },
+        },
+        menuItem('split-right', t('pane.splitRight'), splitRightHint, () => {
+          runAttempt(controller.split(pane.paneId, 'row'))
+        }),
+        menuItem('split-down', t('pane.splitDown'), splitDownHint, () => {
+          runAttempt(controller.split(pane.paneId, 'col'))
+        }),
+        menuItem('close', t('pane.close'), closeHint, close),
+      )
+    : null
+
   const header = h(
     'div',
     { style: headerStyle },
@@ -754,39 +463,17 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
       'button',
       {
         type: 'button',
-        style: buttonStyle,
-        title: splitRightHint,
-        'aria-label': splitRightHint,
-        onClick: () => {
-          runAttempt(controller.split(pane.paneId, 'row'))
-        },
+        style: menuTriggerStyle,
+        title: t('pane.more'),
+        'aria-label': t('pane.more'),
+        'aria-haspopup': 'menu',
+        'aria-expanded': menuOpen ? 'true' : 'false',
+        'data-hkcraft-pane-more': pane.paneId,
+        onClick: () => setMenuOpen((value) => !value),
       },
-      '⫽',
+      '⋯',
     ),
-    h(
-      'button',
-      {
-        type: 'button',
-        style: buttonStyle,
-        title: splitDownHint,
-        'aria-label': splitDownHint,
-        onClick: () => {
-          runAttempt(controller.split(pane.paneId, 'col'))
-        },
-      },
-      '⫙',
-    ),
-    h(
-      'button',
-      {
-        type: 'button',
-        style: buttonStyle,
-        title: closeHint,
-        'aria-label': closeHint,
-        onClick: close,
-      },
-      '×',
-    ),
+    menu,
   )
 
   let body
@@ -843,7 +530,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
  * start, so the clamp uses real pixels (`ratioFromDrag`) rather than the
  * fraction alone: a pane can never be dragged below the minimum width/height.
  *
- * @param {{ controller: any, separator: object, t: (key: string) => string }} props
+ * @param {{ controller: any, separator: object }} props
  */
 function PaneSeparator({ controller, separator }) {
   const React = react()
@@ -944,52 +631,50 @@ function PaneSeparator({ controller, separator }) {
   )
 }
 
-/** Stable stand-in so a missing hook never changes the hook call count. */
-function absentHook() {
-  return undefined
-}
-
 /** Drags shorter than this stay clicks (spec §5's 6px threshold). */
-const TAB_DRAG_THRESHOLD_PX = 6
+const STRIP_DRAG_THRESHOLD_PX = 6
 
 /** @param {any} target event target @returns {boolean} */
-function insideTabClose(target) {
-  return typeof target?.closest === 'function' && target.closest('[data-hkcraft-tab-close]') !== null
+function insideStripClose(target) {
+  return typeof target?.closest === 'function' && target.closest('[data-hkcraft-strip-close]') !== null
 }
 
 /**
- * The pane whose tab is under the pointer, or null. Pointer capture keeps the
- * move events on the source tab, so the drop target has to be hit-tested.
+ * The pane whose strip entry is under the pointer, or null. Pointer capture
+ * keeps the move events on the source entry, so the drop target has to be
+ * hit-tested.
  *
  * @param {number} clientX
  * @param {number} clientY
  * @returns {string|null}
  */
-function tabPaneIdAt(clientX, clientY) {
+function stripPaneIdAt(clientX, clientY) {
   if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null
   const element = document.elementFromPoint(clientX, clientY)
-  const tab = typeof element?.closest === 'function' ? element.closest('[data-hkcraft-tab]') : null
-  const paneId = tab?.getAttribute?.('data-hkcraft-tab')
+  const entry = typeof element?.closest === 'function' ? element.closest('[data-hkcraft-strip-item]') : null
+  const paneId = entry?.getAttribute?.('data-hkcraft-strip-item')
   return typeof paneId === 'string' && paneId !== '' ? paneId : null
 }
 
 /**
- * The tab strip: the current workspace's open conversations, in `leaves()`
+ * The pane strip: the current workspace's open conversations, in `leaves()`
  * order (ticket 06, spec §5).
  *
- * Every tab is a pane — clicking it focuses that pane, its × closes the pane
+ * Every entry is a pane — clicking it focuses that pane, its × closes the pane
  * (after a confirmation when the session is live), and `+` creates a new
  * conversation in a new pane beside the focused one. Status dots come from the
- * live session status map; nothing here reorders tabs by status.
+ * live session status map; nothing here reorders entries by status.
  *
  * The title and status read the shell's root standard hooks (`useSessions`,
  * `useSessionStatus`); ui-session provides them as `sessions` and
- * `sessionStatus` (dsh-client-ui-session/lib/client.js:1104-1113), which is the
- * same pair the shipped sidebar consumes.
+ * `sessionStatus`, which is the same pair the shipped sidebar consumes.
+ *
+ * The ARIA roles stay `tablist`/`tab` because the strip is a list of selectable
+ * views of the same main region; the domain vocabulary is not "tab".
  *
  * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string }} props
  */
-function TabStrip({ controller, state, kit, t }) {
+function PaneStrip({ controller, state, kit, t }) {
   const React = react()
   const h = React.createElement
   const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
@@ -1004,20 +689,20 @@ function TabStrip({ controller, state, kit, t }) {
   /** A drag's pointerup is followed by a click; that click must not re-focus. */
   const suppressClick = React.useRef(false)
 
-  const tabs = projectTabs(state, sessions, statuses, t('session.untitled'))
+  const entries = projectStrip(state, sessions, statuses, t('session.untitled'))
 
-  const closeTab = (tab) => {
+  const closeEntry = (entry) => {
     // Closing a pane is `controller.closePane`: idle panes close immediately,
     // a running one stages `pendingClose`, which the shared `PaneCloseConfirm`
     // dialog (ticket 09) interrupts and closes after confirmation. The strip
     // does not own a second confirmation UI.
-    controller.closePane(tab.paneId)
+    controller.closePane(entry.paneId)
   }
 
-  const createTab = () => {
+  const createEntry = () => {
     if (creating) return
     setCreating(true)
-    Promise.resolve(controller.newTab())
+    Promise.resolve(controller.newPane())
       .catch(() => {})
       .then(() => setCreating(false))
   }
@@ -1031,11 +716,11 @@ function TabStrip({ controller, state, kit, t }) {
    * Start a pointer drag. The close button keeps its own click; a drag must
    * never steal it.
    */
-  const onTabPointerDown = (tab) => (event) => {
+  const onEntryPointerDown = (entry) => (event) => {
     if (event.button !== undefined && event.button !== 0) return
-    if (insideTabClose(event.target)) return
+    if (insideStripClose(event.target)) return
     dragRef.current = {
-      sourcePaneId: tab.paneId,
+      sourcePaneId: entry.paneId,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
@@ -1044,16 +729,16 @@ function TabStrip({ controller, state, kit, t }) {
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
 
-  const onTabPointerMove = (event) => {
+  const onEntryPointerMove = (event) => {
     const current = dragRef.current
     if (current === null) return
     if (!current.active) {
       const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY)
-      if (distance < TAB_DRAG_THRESHOLD_PX) return
+      if (distance < STRIP_DRAG_THRESHOLD_PX) return
       current.active = true
       setDrag({ sourcePaneId: current.sourcePaneId, targetPaneId: null })
     }
-    const over = tabPaneIdAt(event.clientX, event.clientY)
+    const over = stripPaneIdAt(event.clientX, event.clientY)
     const targetPaneId = over === null || over === current.sourcePaneId ? null : over
     if (targetPaneId !== current.targetPaneId) {
       current.targetPaneId = targetPaneId
@@ -1062,14 +747,14 @@ function TabStrip({ controller, state, kit, t }) {
     event.preventDefault()
   }
 
-  const onTabPointerUp = (event) => {
+  const onEntryPointerUp = (event) => {
     const current = dragRef.current
     if (current === null) return
     clearDrag()
     event.currentTarget.releasePointerCapture?.(event.pointerId)
     if (!current.active) return
-    // Dropping anywhere but another tab is a complete no-op: no swap, no focus
-    // change, no layout write. The following click is swallowed once.
+    // Dropping anywhere but another strip entry is a complete no-op: no swap,
+    // no focus change, no layout write. The following click is swallowed once.
     suppressClick.current = true
     if (current.targetPaneId !== null) {
       controller.swapPanes(current.sourcePaneId, current.targetPaneId)
@@ -1081,51 +766,51 @@ function TabStrip({ controller, state, kit, t }) {
     }
   }
 
-  const onTabPointerCancel = (event) => {
+  const onEntryPointerCancel = (event) => {
     clearDrag()
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
 
-  const focusTab = (tab) => {
+  const focusEntry = (entry) => {
     if (suppressClick.current) {
       suppressClick.current = false
       return
     }
-    controller.focusPane(tab.paneId)
+    controller.focusPane(entry.paneId)
   }
 
   const hint = paneShortcutHint(t)
 
-  const tabElements = tabs.map((tab) => {
-    const statusLabel = t(`tab.status.${tab.status}`)
-    const label = tab.shortcut === undefined ? tab.title : `${tab.title} (${tab.shortcut})`
-    const source = drag !== null && drag.sourcePaneId === tab.paneId
-    const target = drag !== null && drag.targetPaneId === tab.paneId
+  const entryElements = entries.map((entry) => {
+    const statusLabel = t(`strip.status.${entry.status}`)
+    const label = entry.shortcut === undefined ? entry.title : `${entry.title} (${entry.shortcut})`
+    const source = drag !== null && drag.sourcePaneId === entry.paneId
+    const target = drag !== null && drag.targetPaneId === entry.paneId
     return h(
       'div',
       {
-        key: tab.paneId,
+        key: entry.paneId,
         role: 'tab',
         tabIndex: 0,
-        'aria-selected': tab.focused ? 'true' : 'false',
+        'aria-selected': entry.focused ? 'true' : 'false',
         'aria-label': `${label} — ${statusLabel}`,
         title: `${label} — ${statusLabel}`,
-        'data-hkcraft-tab': tab.paneId,
-        'data-hkcraft-tab-active': tab.focused ? 'true' : 'false',
-        'data-hkcraft-tab-drop-target': target ? 'true' : 'false',
+        'data-hkcraft-strip-item': entry.paneId,
+        'data-hkcraft-strip-active': entry.focused ? 'true' : 'false',
+        'data-hkcraft-strip-drop-target': target ? 'true' : 'false',
         style: {
-          ...tabStyle,
+          ...stripItemStyle,
           opacity: source ? 0.55 : 1,
-          // Both a highlighted tab and a drop target use the shell's business
+          // Both a highlighted entry and a drop target use the shell's business
           // accent token, which the theme presenter rewrites per palette.
-          borderTopColor: tab.focused
+          borderTopColor: entry.focused
             ? 'var(--dsw-alias-state-business-primary, Highlight)'
             : 'transparent',
           background: target
             ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight) 18%, transparent)'
-            : tab.focused
+            : entry.focused
               ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
-              : hovered === tab.paneId
+              : hovered === entry.paneId
                 ? 'color-mix(in srgb, currentColor 6%, transparent)'
                 : 'transparent',
           outline: target
@@ -1134,45 +819,48 @@ function TabStrip({ controller, state, kit, t }) {
           outlineOffset: target ? '-3px' : 0,
           cursor: drag === null ? 'pointer' : 'grabbing',
         },
-        onClick: () => focusTab(tab),
+        onClick: () => focusEntry(entry),
         onKeyDown: (event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()
-          focusTab(tab)
+          focusEntry(entry)
         },
-        onPointerDown: onTabPointerDown(tab),
-        onPointerMove: onTabPointerMove,
-        onPointerUp: onTabPointerUp,
-        onPointerCancel: onTabPointerCancel,
-        onMouseEnter: () => setHovered(tab.paneId),
-        onMouseLeave: () => setHovered((current) => (current === tab.paneId ? null : current)),
+        onPointerDown: onEntryPointerDown(entry),
+        onPointerMove: onEntryPointerMove,
+        onPointerUp: onEntryPointerUp,
+        onPointerCancel: onEntryPointerCancel,
+        onMouseEnter: () => setHovered(entry.paneId),
+        onMouseLeave: () => setHovered((current) => (current === entry.paneId ? null : current)),
       },
       h('span', {
         'aria-hidden': 'true',
-        'data-hkcraft-tab-status': tab.status,
-        style: { ...tabDotStyle, background: TAB_STATUS_COLORS[tab.status] ?? TAB_STATUS_COLORS[TAB_STATUS_IDLE] },
+        'data-hkcraft-strip-status': entry.status,
+        style: {
+          ...stripDotStyle,
+          background: STRIP_STATUS_COLORS[entry.status] ?? STRIP_STATUS_COLORS[STRIP_STATUS_IDLE],
+        },
       }),
-      h('span', { style: tabTitleStyle }, tab.title),
+      h('span', { style: stripTitleStyle }, entry.title),
       h(
         'button',
         {
           type: 'button',
-          title: t('tab.close'),
-          'aria-label': t('tab.close'),
-          'data-hkcraft-tab-close': tab.paneId,
+          title: t('strip.close'),
+          'aria-label': t('strip.close'),
+          'data-hkcraft-strip-close': entry.paneId,
           style: {
-            ...tabCloseStyle,
+            ...stripCloseStyle,
             // `visibility` (not `display`) keeps the space reserved, so hovering
-            // a tab can never resize it or shift its neighbours.
-            visibility: hovered === tab.paneId ? 'visible' : 'hidden',
+            // an entry can never resize it or shift its neighbours.
+            visibility: hovered === entry.paneId ? 'visible' : 'hidden',
             background:
-              hovered === tab.paneId
+              hovered === entry.paneId
                 ? 'color-mix(in srgb, currentColor 16%, transparent)'
                 : 'transparent',
           },
           onClick: (event) => {
             event.stopPropagation()
-            closeTab(tab)
+            closeEntry(entry)
           },
           onKeyDown: (event) => event.stopPropagation(),
         },
@@ -1185,24 +873,24 @@ function TabStrip({ controller, state, kit, t }) {
     'div',
     {
       role: 'tablist',
-      'aria-label': t('tab.aria'),
-      'data-hkcraft-tabstrip': '',
+      'aria-label': t('strip.aria'),
+      'data-hkcraft-pane-strip': '',
       // The full key table lives here and in the empty state, built from the
       // same labels the listener accepts.
       title: hint,
-      style: tabStripStyle,
+      style: paneStripStyle,
     },
-    h('div', { style: tabViewportStyle }, tabElements),
+    h('div', { style: stripViewportStyle }, entryElements),
     h(
       'button',
       {
         type: 'button',
-        title: withShortcut(t('tab.new'), shortcutLabel('new-conversation')),
-        'aria-label': withShortcut(t('tab.new'), shortcutLabel('new-conversation')),
-        'data-hkcraft-tab-new': '',
+        title: withShortcut(t('strip.new'), shortcutLabel('new-conversation')),
+        'aria-label': withShortcut(t('strip.new'), shortcutLabel('new-conversation')),
+        'data-hkcraft-strip-new': '',
         disabled: creating,
-        style: { ...tabNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
-        onClick: createTab,
+        style: { ...stripNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
+        onClick: createEntry,
       },
       '＋',
     ),
@@ -1318,10 +1006,10 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
     'div',
     attributes,
     shortcuts,
-    // Only the visible workspace owns a tab strip: hidden strips would render a
+    // Only the visible workspace owns a strip: hidden strips would render a
     // second row over an invisible tree. The pane bodies below stay mounted
     // regardless, which is what D5 actually protects.
-    visible ? h(TabStrip, { controller, state: layout, kit, t }) : null,
+    visible ? h(PaneStrip, { controller, state: layout, kit, t }) : null,
     h(
       'div',
       { style: layoutStyle, 'data-hkcraft-layout': '' },
@@ -1409,7 +1097,7 @@ function createPaneHost(controller) {
         { style: hostStyle, 'data-hkcraft-layout-host': '' },
         workspaceGroups(state).map((group) =>
           h(PaneWorkspace, {
-            key: group.workspaceId ?? '\u0000unscoped',
+            key: group.workspaceId ?? UNSCOPED_WORKSPACE,
             controller,
             workspaceId: group.workspaceId,
             layout: group.layout,
@@ -1448,7 +1136,7 @@ function createPaneBody(controller) {
     React.useEffect(() => {
       if (sessionId === undefined || !sessionReady) return
       // The pane's own memory wins over dsh's per-session View preference.
-      // `activate` is the same call the native tab row makes, so this swaps the
+      // `activate` is the same call the native switcher makes, so this swaps the
       // resident view instead of rebuilding the session.
       controller.restoreViewFor(sessionId)
     }, [sessionId, sessionReady])
@@ -1547,7 +1235,7 @@ module.exports = {
   workspaceGroups,
   PaneViewSwitch,
   PaneCloseConfirm,
-  TabStrip,
+  PaneStrip,
   createPaneHost,
   createPaneBody,
   createPaneToggle,

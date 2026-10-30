@@ -10,7 +10,7 @@
  * - the pane header, the `+` button and the empty state build their tooltips
  *   and hints from `shortcutLabel` / `paneShortcutHint`, so a hint can never
  *   advertise a chord the listener does not accept;
- * - `tab-strip.js` renders the per-tab `Ctrl+N` hint through
+ * - `pane-strip.js` renders the per-entry `Ctrl+N` hint through
  *   `focusShortcutLabel`.
  *
  * Chords were checked against dsh's own catalog before being chosen
@@ -22,11 +22,16 @@
  * plus the bare `Enter` / `Shift+Enter` / `Mod+Enter` / `/` / `@` / `Esc Esc`
  * input actions. The pane chords below avoid every one of them.
  *
+ * `Mod+N` is the one deliberate exception: spec D8 makes it identical to
+ * `/clear`, so `commands.js` takes that chord over while the pane panel is
+ * active (a document capture listener registered before the shell handler).
+ * Outside the pane workspace it keeps dsh's native meaning, "new session".
+ *
  * Physical `code` values are matched first (layout independent); `key` is only
  * a fallback for synthetic events that omit `code`.
  */
 
-/** How many tabs (1-based) the focus chords address. */
+/** How many open conversations (1-based) the focus chords address. */
 const FOCUS_LIMIT = 4
 
 /** The prefix every hint uses; `primary` is Control on the supported platforms. */
@@ -74,7 +79,7 @@ const SHORTCUT_LABELS = Object.freeze(
   Object.fromEntries(PANE_SHORTCUTS.map((shortcut) => [shortcut.id, shortcut.label])),
 )
 
-/** @param {number} index 1-based tab number @returns {string} */
+/** @param {number} index 1-based strip position @returns {string} */
 function focusShortcutLabel(index) {
   return `${PRIMARY}+${index}`
 }
@@ -112,12 +117,12 @@ function paneShortcutHint(t) {
     `${t('pane.splitRight')} ${shortcutLabel('split-right')}`,
     `${t('pane.splitDown')} ${shortcutLabel('split-down')}`,
     `${t('pane.close')} ${shortcutLabel('close-pane')}`,
-    `${t('tab.new')} ${shortcutLabel('new-conversation')}`,
+    `${t('strip.new')} ${shortcutLabel('new-conversation')}`,
   ].join(' · ')
 }
 
 /**
- * The 1-based tab a key event addresses, or null.
+ * The 1-based strip position a key event addresses, or null.
  *
  * Primary (Ctrl, or Cmd on macOS) plus a bare digit 1–4; no Alt/Shift, no
  * already-handled event, no auto-repeat. Kept separate from the DOM listener so
@@ -126,7 +131,7 @@ function paneShortcutHint(t) {
  * @param {{key?: string, code?: string, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean, repeat?: boolean, defaultPrevented?: boolean}|null|undefined} event
  * @returns {number|null}
  */
-function tabShortcutIndex(event) {
+function focusShortcutIndex(event) {
   if (event === null || event === undefined || typeof event !== 'object') return null
   if (event.defaultPrevented === true || event.repeat === true) return null
   if (event.ctrlKey !== true && event.metaKey !== true) return null
@@ -163,7 +168,7 @@ function matchesAction(shortcut, event) {
  * @returns {{kind: 'focus', index: number}|{kind: 'split', dir: 'row'|'col'}|{kind: 'close'}|{kind: 'new'}|null}
  */
 function paneShortcutAction(event) {
-  const index = tabShortcutIndex(event)
+  const index = focusShortcutIndex(event)
   if (index !== null) return { kind: 'focus', index }
   if (event === null || event === undefined || typeof event !== 'object') return null
   for (const shortcut of PANE_SHORTCUTS) {
@@ -180,6 +185,6 @@ module.exports = {
   shortcutLabel,
   withShortcut,
   paneShortcutHint,
-  tabShortcutIndex,
+  focusShortcutIndex,
   paneShortcutAction,
 }

@@ -25,9 +25,11 @@
 - 已核实：popupSelect 的 `fuzzy-label` 只匹配 `option.label`（`dsh-client-ui-commands/lib/client.js:1026-1036`）。
   为满足"标题与首条提问都能模糊匹配"，列表把首条提问摘要并进 label（`标题 · 提问`），`detail` 放相对活动时间，
   `badge` 放"运行中"。没有用 `substring` 模式，因为 spec D9 指定 `fuzzy-label`。
-- 已核实：`/clear` = `uiWorkspace.startSession(workspaceId)`（复用该工作区已有空白会话，否则新建）；
-  `/resume` 选中 = `uiWorkspace.openSession(sessionId)`（`dsh-client-ui-workspace/lib/client.js:1471-1528, 1652-1675`）。
-  两者都会 `selectPanel(null)`；**04/06 接窗格后必须换成窗格内的切换动作**，否则会退出窗格面板。
+- 已核实：**原生** `/clear` 语义是 `uiWorkspace.startSession(workspaceId)`（复用该工作区已有空白会话，
+  否则新建）；`/resume` 选中是 `uiWorkspace.openSession(sessionId)`。但**窗格面板显示时**，shipped
+  路径改走 `sessions.create({ workspaceId })`（`dsh-pane-host.js:newInFocused`）：它**总是新建**会话，
+  从不复用空白会话，也不 `selectPanel(null)`。这是有意的：原生 `startSession` 会 reveal 会话并退出窗格
+  面板。两者都记录在 `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`。
 - 首条提问没有线上投影，只能打开会话事件窗口读取（`sessions.using` + `loadOlder`），所以仅对缺标题的非空会话做，
   最多 6 个、每个最多回翻 4 页；失败/超限降级为占位名，不影响其余行。
 - 已跑（并入 `feat/pane-workspace` 后）：esbuild 产出 `lib/client.js` 33.9 kB；`node --test --test-isolation=none` 104 项通过；

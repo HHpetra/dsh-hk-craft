@@ -36,10 +36,14 @@ dsh 的端口、`DSH_HOME`、会话存储与登录态都不归本项目管理。
 | 面 | 位置 | 职责 |
 | :--- | :--- | :--- |
 | host | `packages/dsh-hk-craft/src/index.js` | 宿主服务、工具、路由、会话粘合；经 Cordis `ctx` 使用 dsh 公开能力 |
-| client | `packages/dsh-hk-craft/src/client/`（预留） | 浏览器面板 / 设置页；构建为 `lib/client.js`，经 `dsh.client` 声明 |
+| client | `packages/dsh-hk-craft/src/client/` | 浏览器面板 / 设置页；构建为 `lib/client.js`，经 `dsh.client` 声明 |
 | config | `packages/dsh-hk-craft/cordis.patch.yml` | 只插入一条 `dsh-hk-craft` 行；不复制上游配置 |
 
 host 与 client 同属一个包、同一版本，避免半套升级。客户端入口 id 必须与 patch 行 `name` 完全一致。
+
+client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvider`、会话保留、
+`conversation.content`、视图切换、命令面板、工作区目录等）逐条记录在
+[`upstream-contracts.md`](upstream-contracts.md)，代码注释指向那里而不是临时目录或上游行号。
 
 ## 4. 为什么不设 `apps/`
 

@@ -15,14 +15,9 @@
 
 const { createTranslator, react } = require('./diagnostics.js')
 const { sectionModel } = require('./dsh-workspaces.js')
+const { absentHook, messageOf } = require('./shared.js')
+const { LIGHT_COLORS } = require('./status-colors.js')
 const { displayWorkspaceName } = require('./workspace-status.js')
-
-/** Status-light fills; theme-neutral so both shells read the same three states. */
-const LIGHT_COLORS = {
-  red: '#e5484d',
-  yellow: '#d9a400',
-  green: '#30a46c',
-}
 
 /** Neutral fallback for an unexpected light value, so a bad row never renders blank. */
 const LIGHT_FALLBACK = LIGHT_COLORS.green
@@ -138,20 +133,6 @@ const errorStyle = {
   wordBreak: 'break-word',
 }
 
-/** Stable stand-in so a missing hook never changes the hook call count. */
-function absentHook() {
-  return undefined
-}
-
-/**
- * @param {unknown} reason thrown value from the add flow
- * @returns {string}
- */
-function reasonMessage(reason) {
-  if (reason instanceof Error && reason.message !== '') return reason.message
-  return String(reason)
-}
-
 /**
  * @param {{
  *   wide?: boolean,
@@ -192,7 +173,7 @@ function WorkspaceSection(props) {
     Promise.resolve()
       .then(() => props?.addWorkspace?.())
       .catch((reason) => {
-        setError(reasonMessage(reason))
+        setError(messageOf(reason))
       })
       .then(() => {
         setBusy(false)
@@ -274,4 +255,4 @@ function WorkspaceSection(props) {
   )
 }
 
-module.exports = { WorkspaceSection, LIGHT_COLORS }
+module.exports = { WorkspaceSection }

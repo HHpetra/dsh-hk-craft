@@ -3,7 +3,12 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { registerCommands, createCtrlEnterTracker } = require('./commands.js')
+const {
+  registerCommands,
+  createCtrlEnterTracker,
+  createNewConversationBinding,
+  isModN,
+} = require('./commands.js')
 
 /** @param {object} table */
 function fakeT(table) {
@@ -15,6 +20,7 @@ function fakeT(table) {
     'command.resume.search.placeholder': 'Search titles and first prompts',
     'command.resume.search.empty': 'No past conversations in this workspace',
     'command.resume.search.noResults': 'No matching conversations',
+    'command.resume.inPane': 'In pane {n}',
     'session.untitled': 'Untitled conversation',
     'badge.running': 'running',
     'time.justNow': 'just now',
@@ -192,12 +198,13 @@ test('registerCommands never talks to the model', () => {
 // ---------------------------------------------------------------------------
 
 /** A stand-in for the pane host face the commands call. */
-function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' } } = {}) {
-  const calls = { replaced: [], newConversation: [], openedInNewPane: [] }
+function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' }, paneIndexOf } = {}) {
+  const calls = { replaced: [], newConversation: [], openedInNewPane: [], focused: [] }
   return {
     calls,
     active: () => active,
     focused: () => focused,
+    paneIndexFor: paneIndexOf ?? (() => null),
     replaceFocused: (sessionId) => {
       calls.replaced.push(sessionId)
       return true
@@ -256,6 +263,106 @@ test('/resume uses the native reveal when the pane workspace is showing but empt
 
   assert.deepEqual(panes.calls.replaced, [])
   assert.deepEqual(h.calls.opened, ['s2'])
+})
+
+test('/resume marks conversations already open in a pane with their position', async () => {
+  const panes = fakePanes({ paneIndexOf: (sessionId) => (sessionId === 's2' ? 2 : null) })
+  const rows = [
+    {
+      sessionId: 's2',
+      workspaceId: 'w1',
+      title: 'Open already',
+      firstPrompt: '',
+      updatedAt: NOW - 60_000,
+      running: true,
+      blank: false,
+      archived: false,
+    },
+  ]
+  const h = harness({ panes, rows })
+  const options = await command(h, 'resume').ui.options({ sessionId: 's1' }, undefined)
+
+  assert.equal(options[0].badge, 'running · In pane 2')
+})
+
+test('/resume does not claim a pane position outside the pane workspace', async () => {
+  const panes = fakePanes({ active: false, paneIndexOf: () => 2 })
+  const h = harness({
+    panes,
+    rows: [
+      {
+        sessionId: 's2',
+        workspaceId: 'w1',
+        title: 'Open already',
+        firstPrompt: '',
+        updatedAt: 1,
+        running: false,
+        blank: false,
+        archived: false,
+      },
+    ],
+  })
+  const options = await command(h, 'resume').ui.options({ sessionId: 's1' }, undefined)
+  assert.equal('badge' in options[0], false)
+})
+
+test('/resume selecting an already-open conversation focuses its pane', async () => {
+  const panes = fakePanes()
+  const h = harness({ panes })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  // `replaceFocused` is the host's "focus the holder, otherwise replace" seam;
+  // the controller tests cover the focus-don't-remount half.
+  assert.deepEqual(panes.calls.replaced, ['s2'])
+  assert.deepEqual(panes.calls.openedInNewPane, [])
+})
+
+// ---------------------------------------------------------------------------
+// Mod+N: identical to /clear while the pane workspace is active (spec D8)
+// ---------------------------------------------------------------------------
+
+test('Mod+N opens a new conversation in the focused pane while the pane workspace is active', () => {
+  assert.equal(isModN({ key: 'n', ctrlKey: true }), true)
+  assert.equal(isModN({ code: 'KeyN', ctrlKey: true }), true)
+  assert.equal(isModN({ key: 'N', metaKey: true }), true)
+  assert.equal(isModN({ key: 'n', ctrlKey: true, shiftKey: true }), false)
+  assert.equal(isModN({ key: 'n', ctrlKey: true, altKey: true }), false)
+  assert.equal(isModN({ key: 'n' }), false)
+  assert.equal(isModN({ key: 'j', ctrlKey: true }), false)
+
+  const target = fakeEventTarget()
+  const panes = fakePanes()
+  const binding = createNewConversationBinding(target, panes)
+
+  target.dispatch('keydown', { key: 'n', ctrlKey: true, preventDefault() {}, stopPropagation() {} })
+
+  assert.deepEqual(panes.calls.newConversation.length, 1)
+  binding.dispose()
+})
+
+test('Mod+N outside the pane workspace keeps dsh\'s native meaning', () => {
+  const target = fakeEventTarget()
+  const panes = fakePanes({ active: false })
+  const binding = createNewConversationBinding(target, panes)
+
+  target.dispatch('keydown', { key: 'n', ctrlKey: true, preventDefault() {}, stopPropagation() {} })
+
+  assert.deepEqual(panes.calls.newConversation, [])
+  binding.dispose()
+})
+
+test('registerCommands binds Mod+N only when a pane host exists', () => {
+  const target = fakeEventTarget()
+  const panes = fakePanes()
+  const h = harness({ panes, keyTarget: target })
+  // /clear + /resume + Ctrl+Enter tracker + Mod+N binding.
+  assert.equal(h.disposers.length, 4)
+
+  target.dispatch('keydown', { key: 'n', ctrlKey: true, preventDefault() {}, stopPropagation() {} })
+  assert.equal(panes.calls.newConversation.length, 1)
+
+  for (const dispose of h.disposers) dispose()
+  assert.equal(target.listeners.size, 0)
 })
 
 // ---------------------------------------------------------------------------

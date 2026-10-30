@@ -72,7 +72,8 @@ function apply(ctx) {
    * The pane face the slash commands see: enough to keep `/resume` and `/clear`
    * inside the split workspace instead of calling the native session navigation,
    * which resets the active panel. `openInNewPane` is the `/resume` Ctrl+Enter
-   * action (ticket 06); the tab strip itself talks to the controller directly.
+   * action (ticket 06); `paneIndexFor` feeds the D10 "已在窗格 N" badge. The
+   * pane strip itself talks to the controller directly.
    */
   const paneCommands = {
     active: () => controller.getSnapshot().active,
@@ -80,6 +81,7 @@ function apply(ctx) {
     replaceFocused: (sessionId) => controller.replaceFocusedSession(sessionId),
     openInNewPane: (sessionId) => controller.openInNewPane(sessionId),
     newConversation: (workspaceId) => controller.newInFocused(workspaceId),
+    paneIndexFor: (sessionId) => controller.paneIndexOf(sessionId),
   }
 
   ctx.slots.inject('sidebar.footer.action', () =>

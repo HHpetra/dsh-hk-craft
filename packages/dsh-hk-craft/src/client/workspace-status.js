@@ -10,9 +10,14 @@
  *
  * Light precedence (ticket 02, spec §7): red > yellow > green.
  *   red    a session in this workspace is waiting for the user (approval,
- *          question, plan review) or failed
+ *          question, plan review)
  *   yellow a session is running
  *   green  no active session (idle, or the workspace is empty)
+ *
+ * There is no error light. dsh exposes no "this turn failed" bit in the client
+ * status map or the session summary, and reading a failure would mean opening
+ * every session's history — which the sidebar must not do. See
+ * `doc/upstream-contracts.md#session-summary-fields` and spec §7.
  */
 
 /** @typedef {'green' | 'yellow' | 'red'} WorkspaceLight */
@@ -27,7 +32,7 @@ const LIGHT_RED = 'red'
  * Red short-circuits: the first red-worthy member wins regardless of position,
  * so a workspace with a queued question never hides behind a green sibling.
  *
- * @param {ReadonlyArray<{ running?: boolean, waiting?: boolean, errored?: boolean } | null | undefined> | unknown} signals
+ * @param {ReadonlyArray<{ running?: boolean, waiting?: boolean } | null | undefined> | unknown} signals
  * @returns {WorkspaceLight}
  */
 function workspaceLight(signals) {
@@ -35,7 +40,7 @@ function workspaceLight(signals) {
   let running = false
   for (const signal of signals) {
     if (signal === null || signal === undefined || typeof signal !== 'object') continue
-    if (signal.errored === true || signal.waiting === true) return LIGHT_RED
+    if (signal.waiting === true) return LIGHT_RED
     if (signal.running === true) running = true
   }
   return running ? LIGHT_YELLOW : LIGHT_GREEN
@@ -50,16 +55,13 @@ function workspaceLight(signals) {
  *
  * @param {{ running?: boolean } | undefined} summary session list row
  * @param {{ running?: boolean, pendingInteraction?: { kind?: string } | null } | undefined} status unified UI status
- * @returns {{ running: boolean, waiting: boolean, errored: boolean }}
+ * @returns {{ running: boolean, waiting: boolean }}
  */
 function sessionSignal(summary, status) {
   const pending = status?.pendingInteraction
   return {
     running: status?.running === true || summary?.running === true,
     waiting: pending !== undefined && pending !== null,
-    // dsh's client status projection has no failure bit today (see
-    // `dsh-workspaces.js`); the field is here so wiring one in is a one-line change.
-    errored: false,
   }
 }
 
@@ -79,7 +81,10 @@ function readStatus(statuses, sessionId) {
 
 /**
  * The session the shell currently shows in the main view — dsh derives it from
- * the single `mainView` retention (see `dsh-workspaces.js`).
+ * the single `mainView` retention (see
+ * `doc/upstream-contracts.md#retention-sources-and-the-single-mainview-derivation`).
+ *
+ * This is the one implementation of that scan; the pane host consumes it too.
  *
  * @param {{ byId?: Record<string, { id?: string, retainedBy?: { mainView?: number } }> } | undefined} sessions
  * @returns {string | undefined}
@@ -152,6 +157,7 @@ module.exports = {
   workspaceLight,
   sessionSignal,
   readStatus,
+  mainSessionId,
   projectWorkspaceSection,
   displayWorkspaceName,
 }

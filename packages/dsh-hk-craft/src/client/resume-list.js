@@ -4,11 +4,12 @@
  * Pure list construction for `/resume`.
  *
  * The dsh popup shell owns rendering, keyboard handling, and the local search
- * filter; this module owns everything that decides *what the list contains*:
- * workspace / blank / archived filtering, newest-activity-first ordering, the
- * title → first-prompt → placeholder fallback, truncation, and the fuzzy text
- * a query is matched against. Keeping it free of dsh objects is what makes the
- * behaviour testable in Node.
+ * filter (fuzzy-label, which ranks `option.label` only). This module owns
+ * everything that decides *what the list contains*: workspace / blank / archived
+ * filtering, newest-activity-first ordering, the title → first-prompt →
+ * placeholder fallback, truncation, and the badges that describe an entry
+ * ("running", "already in pane N"). Keeping it free of dsh objects is what makes
+ * the behaviour testable in Node.
  */
 
 /** Default character budgets (counted in Unicode code points). */
@@ -16,6 +17,17 @@ const LIMITS = Object.freeze({
   title: 80,
   prompt: 48,
   label: 140,
+})
+
+/**
+ * Tighter budgets for the pane empty state, whose column is roughly half the
+ * width of the command popup. Kept next to `LIMITS` so the two presets are
+ * named in one place instead of being inlined in the view.
+ */
+const EMPTY_STATE_LIMITS = Object.freeze({
+  title: 48,
+  prompt: 32,
+  label: 96,
 })
 
 /**
@@ -45,43 +57,6 @@ function truncateText(value, maxChars) {
   const chars = Array.from(text)
   if (chars.length <= budget) return text
   return `${chars.slice(0, budget - 1).join('')}…`
-}
-
-/**
- * Split a query into whitespace-delimited tokens.
- *
- * @param {unknown} query raw search text
- * @returns {string[]} lowercased tokens
- */
-function queryTokens(query) {
-  if (typeof query !== 'string') return []
-  return query.trim().toLowerCase().split(/\s+/u).filter((token) => token !== '')
-}
-
-/**
- * Whether every query token is an ordered, case-insensitive subsequence of
- * `text`. This is the same matching family as dsh's `/` menu fuzzy ranking
- * (subsequence, not substring), extended to all whitespace-delimited tokens so
- * "login 500" matches "fix login 500 error".
- *
- * @param {unknown} query shell search text
- * @param {unknown} text candidate text
- * @returns {boolean}
- */
-function isFuzzyMatch(query, text) {
-  const tokens = queryTokens(query)
-  if (tokens.length === 0) return true
-  if (typeof text !== 'string' || text === '') return false
-  const haystack = Array.from(text.toLowerCase())
-  return tokens.every((token) => {
-    let cursor = 0
-    for (const char of token) {
-      const found = haystack.indexOf(char, cursor)
-      if (found === -1) return false
-      cursor = found + 1
-    }
-    return true
-  })
 }
 
 /**
@@ -119,30 +94,46 @@ function compareConversations(left, right) {
 }
 
 /**
+ * The badges for one entry, joined into the single string the popup accepts.
+ *
+ * @param {boolean} running
+ * @param {number|null|undefined} paneIndex 1-based strip position, when open
+ * @param {(key: string, params?: Record<string, unknown>) => string} t translator
+ * @returns {string|undefined}
+ */
+function entryBadge(running, paneIndex, t) {
+  const badges = []
+  if (running) badges.push(t('badge.running'))
+  if (Number.isInteger(paneIndex) && paneIndex > 0) {
+    badges.push(t('command.resume.inPane', { n: paneIndex }))
+  }
+  return badges.length === 0 ? undefined : badges.join(' · ')
+}
+
+/**
  * Build the `/resume` option rows from raw conversation data.
  *
  * Filtering (workspace, blank, archived), ordering, the title → first prompt →
- * placeholder fallback, truncation, and the query filter all live here so the
- * behaviour is testable without the popup shell.
+ * placeholder fallback, truncation and badges all live here so the behaviour is
+ * testable without the popup shell.
  *
  * The label is the searchable text: dsh's `fuzzy-label` popup mode ranks
- * `option.label` only (verified in `dsh-client-ui-commands`,
- * `lib/client.js:1026-1036`), so when a conversation has both a durable title
- * and a first prompt the prompt excerpt is folded into the label. `detail`
- * carries the activity age. `badge` marks a running conversation without
- * affecting the order.
+ * `option.label` only, so when a conversation has both a durable title and a
+ * first prompt the prompt excerpt is folded into the label. `detail` carries the
+ * activity age and is display-only. `badge` marks a running conversation and/or
+ * one already open in a pane (spec D10) without affecting the order.
  *
  * @param {object[]} conversations raw rows from the sessions adapter
  * @param {object} options
  * @param {string} [options.workspaceId] only list this workspace when present
  * @param {number} [options.now] reference time for the age label
  * @param {(key: string, params?: Record<string, unknown>) => string} options.t translator
- * @param {unknown} [options.query] local search text (shell filters too)
+ * @param {(sessionId: string) => number|null} [options.paneIndexOf] strip position of an open conversation
  * @param {typeof LIMITS} [options.limits] character budgets
  * @returns {{id: string, sessionId: string, label: string, detail?: string, badge?: string}[]}
  */
 function buildResumeRows(conversations, options = {}) {
-  const { workspaceId, now = Date.now(), t, query = '', limits = LIMITS } = options
+  const { workspaceId, now = Date.now(), t, paneIndexOf, limits = LIMITS } = options
   if (!Array.isArray(conversations)) return []
 
   const ordered = []
@@ -177,13 +168,14 @@ function buildResumeRows(conversations, options = {}) {
     }
     label = truncateText(label, limits.label)
     const detail = formatRelativeTime(entry.updatedAt, now, t)
-    if (query !== '' && !isFuzzyMatch(query, label) && !isFuzzyMatch(query, detail)) continue
+    const paneIndex = typeof paneIndexOf === 'function' ? paneIndexOf(entry.sessionId) : null
+    const badge = entryBadge(entry.running, paneIndex, t)
     rows.push({
       id: entry.sessionId,
       sessionId: entry.sessionId,
       label,
       ...(detail === '' ? {} : { detail }),
-      ...(entry.running ? { badge: t('badge.running') } : {}),
+      ...(badge === undefined ? {} : { badge }),
     })
   }
   return rows
@@ -191,9 +183,9 @@ function buildResumeRows(conversations, options = {}) {
 
 module.exports = {
   LIMITS,
+  EMPTY_STATE_LIMITS,
   normalizeText,
   truncateText,
-  isFuzzyMatch,
   formatRelativeTime,
   buildResumeRows,
 }

@@ -132,17 +132,13 @@ test('subscribing availability without a developer-tools face is a safe no-op', 
   unsubscribe()
 })
 
-test('a disabled trajectory segment reads as chat, using the same availability rule', () => {
+test('the trajectory segment is absent, not disabled, while developer tools are off', () => {
   assert.equal(effectiveView(TRAJECTORY_VIEW, true), TRAJECTORY_VIEW)
   assert.equal(effectiveView(TRAJECTORY_VIEW, false), CHAT_VIEW)
   assert.equal(effectiveView(CHAT_VIEW, false), CHAT_VIEW)
 
-  assert.deepEqual(viewSegments(true), [
-    { id: CHAT_VIEW, disabled: false },
-    { id: TRAJECTORY_VIEW, disabled: false },
-  ])
-  assert.deepEqual(viewSegments(false), [
-    { id: CHAT_VIEW, disabled: false },
-    { id: TRAJECTORY_VIEW, disabled: true },
-  ])
+  assert.deepEqual(viewSegments(true), [{ id: CHAT_VIEW }, { id: TRAJECTORY_VIEW }])
+  // dsh does not offer the View at all while the gate is false, so the pane
+  // must not render a disabled copy of it.
+  assert.deepEqual(viewSegments(false), [{ id: CHAT_VIEW }])
 })

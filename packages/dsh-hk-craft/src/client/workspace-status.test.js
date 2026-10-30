@@ -18,6 +18,7 @@ const {
   LIGHT_RED,
   workspaceLight,
   sessionSignal,
+  mainSessionId,
   projectWorkspaceSection,
   displayWorkspaceName,
 } = require('./workspace-status.js')
@@ -29,53 +30,49 @@ test('a workspace with no sessions at all is green', () => {
 })
 
 test('a workspace whose sessions are all idle is green', () => {
-  assert.equal(workspaceLight([{ running: false, waiting: false, errored: false }]), LIGHT_GREEN)
+  assert.equal(workspaceLight([{ running: false, waiting: false }]), LIGHT_GREEN)
 })
 
 test('a workspace with one running session is yellow', () => {
   assert.equal(
     workspaceLight([
-      { running: false, waiting: false, errored: false },
-      { running: true, waiting: false, errored: false },
+      { running: false, waiting: false },
+      { running: true, waiting: false },
     ]),
     LIGHT_YELLOW,
   )
 })
 
 test('a workspace with a session waiting for the user is red', () => {
-  assert.equal(workspaceLight([{ running: true, waiting: true, errored: false }]), LIGHT_RED)
-})
-
-test('a workspace with an errored session is red', () => {
-  assert.equal(workspaceLight([{ running: false, waiting: false, errored: true }]), LIGHT_RED)
+  assert.equal(workspaceLight([{ running: true, waiting: true }]), LIGHT_RED)
 })
 
 /* ── workspaceLight: precedence red > yellow > green ──────────────────────── */
 
 test('red outranks yellow: waiting beats running, in any order', () => {
-  const running = { running: true, waiting: false, errored: false }
-  const waiting = { running: true, waiting: true, errored: false }
+  const running = { running: true, waiting: false }
+  const waiting = { running: true, waiting: true }
   assert.equal(workspaceLight([running, waiting]), LIGHT_RED)
   assert.equal(workspaceLight([waiting, running]), LIGHT_RED)
 })
 
 test('red outranks green wherever it sits in the list', () => {
-  const idle = { running: false, waiting: false, errored: false }
-  const errored = { running: false, waiting: false, errored: true }
-  assert.equal(workspaceLight([idle, idle, errored, idle]), LIGHT_RED)
+  const idle = { running: false, waiting: false }
+  const waiting = { running: false, waiting: true }
+  assert.equal(workspaceLight([idle, idle, waiting, idle]), LIGHT_RED)
 })
 
 test('yellow outranks green wherever it sits in the list', () => {
-  const idle = { running: false, waiting: false, errored: false }
-  const running = { running: true, waiting: false, errored: false }
+  const idle = { running: false, waiting: false }
+  const running = { running: true, waiting: false }
   assert.equal(workspaceLight([idle, running, idle]), LIGHT_YELLOW)
 })
 
-test('several red causes still read red', () => {
+test('several waiting causes still read red', () => {
   assert.equal(
     workspaceLight([
-      { running: true, waiting: true, errored: false },
-      { running: false, waiting: false, errored: true },
+      { running: true, waiting: true },
+      { running: false, waiting: true },
     ]),
     LIGHT_RED,
   )
@@ -99,12 +96,10 @@ test('a session status marks a session running, and the list row is the fallback
   assert.deepEqual(sessionSignal({ running: true }, undefined), {
     running: true,
     waiting: false,
-    errored: false,
   })
   assert.deepEqual(sessionSignal({ running: false }, { running: true }), {
     running: true,
     waiting: false,
-    errored: false,
   })
 })
 
@@ -119,8 +114,9 @@ test('a null or absent pending interaction is not waiting', () => {
   assert.equal(sessionSignal({}, { pendingInteraction: undefined }).waiting, false)
 })
 
-test('the signal carries no error bit until dsh exposes one', () => {
-  assert.equal(sessionSignal({ running: false }, { running: false }).errored, false)
+test('the signal carries no error bit: dsh exposes none', () => {
+  const signal = sessionSignal({ running: false }, { running: false })
+  assert.deepEqual(Object.keys(signal).sort(), ['running', 'waiting'])
 })
 
 /* ── projectWorkspaceSection: dsh-shaped snapshots into rows ──────────────── */
@@ -256,6 +252,21 @@ test('an unready session list leaves every workspace green, not broken', () => {
     rows.map((row) => row.light),
     [LIGHT_GREEN, LIGHT_GREEN, LIGHT_GREEN],
   )
+})
+
+/* ── mainSessionId: the one mainView scan ─────────────────────────────────── */
+
+test('the derived current session is the one retained under mainView', () => {
+  const sessions = {
+    byId: {
+      idle: { id: 'idle', retainedBy: {} },
+      current: { id: 'current', retainedBy: { mainView: 1 } },
+      background: { id: 'background', retainedBy: { sidebarView: 1 } },
+    },
+  }
+  assert.equal(mainSessionId(sessions), 'current')
+  assert.equal(mainSessionId({ byId: {} }), undefined)
+  assert.equal(mainSessionId(undefined), undefined)
 })
 
 /* ── displayWorkspaceName: dsh's default-title convention ─────────────────── */
