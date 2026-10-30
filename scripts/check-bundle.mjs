@@ -85,11 +85,29 @@ if (typeof rootExport === 'string') {
 const client = bundle.dsh?.client
 if (client !== undefined) {
   check(typeof client.platform === 'string', 'dsh.client declares platform')
+  check(client.platform === 'web', 'dsh.client targets the web platform')
   check(Array.isArray(client.inject), 'dsh.client declares inject list')
   check(typeof bundle.exports?.['./client'] === 'string', 'dsh.client bundle exports "./client"')
   const clientExport = bundle.exports?.['./client']
   if (typeof clientExport === 'string') {
     check(existsSync(resolve(bundleDir, clientExport)), `client bundle exists: ${clientExport}`)
+    const entrySource = join(bundleDir, 'src', 'client', 'index.js')
+    check(existsSync(entrySource), 'client entry source exists')
+    if (existsSync(resolve(bundleDir, clientExport))) {
+      const built = read(resolve(bundleDir, clientExport))
+      check(built.includes('window.__ModuleLoader__.load('), 'client bundle boots through the shell module loader')
+      check(
+        built.includes(`id: ${JSON.stringify(bundle.name)}`),
+        'client bundle id equals the bundle patch row name',
+      )
+      // Every bare require in the built bundle must be declared, or the shell cannot resolve it.
+      const bare = new Set()
+      for (const match of built.matchAll(/require\(\s*(['"])([^.'"][^'"]*)\1\s*\)/g)) bare.add(match[2])
+      const undeclared = [...bare].filter((specifier) => !(client.inject ?? []).includes(specifier))
+      check(undeclared.length === 0, `client bundle requires only declared platform modules: ${undeclared.join(', ')}`)
+    } else {
+      check(false, 'client bundle not built — run `pnpm build` before installing')
+    }
   }
 }
 

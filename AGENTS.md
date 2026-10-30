@@ -86,10 +86,12 @@
 
 ```bash
 pnpm install          # 仅仓库根
-pnpm check            # 校验 manifest / patch / 入口一致性
-pnpm build            # 构建各包（当前无 client，等价于空操作）
+pnpm build            # 用 esbuild 产出 packages/dsh-hk-craft/lib/client.js（不入库）
+pnpm check            # 校验 manifest / patch / 入口 / 已构建的客户端 bundle 一致性
 pnpm test             # 包内单元测试
 ```
+
+`check` 会校验 `lib/client.js`（loader 调用、id 与 patch 行一致、平台模块声明齐全），所以**先 `build` 再 `check`**。
 
 **安装 `desktop`（唯一支持的路径）**：
 

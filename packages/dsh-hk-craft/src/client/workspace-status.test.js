@@ -1,0 +1,285 @@
+'use strict'
+
+/**
+ * The workspace status light is the one piece of sidebar behavior that has to be
+ * *right*: three states, a hard precedence (red > yellow > green) and no
+ * knowledge of React or of dsh's record shapes at the call site.
+ *
+ * These tests fix the function's contract: it consumes plain signals, so a wrong
+ * assumption about dsh lives in `dsh-workspaces.js` (and its test), never here.
+ */
+
+const test = require('node:test')
+const assert = require('node:assert/strict')
+
+const {
+  LIGHT_GREEN,
+  LIGHT_YELLOW,
+  LIGHT_RED,
+  workspaceLight,
+  sessionSignal,
+  mainSessionId,
+  projectWorkspaceSection,
+  displayWorkspaceName,
+} = require('./workspace-status.js')
+
+/* ── workspaceLight: the three states ─────────────────────────────────────── */
+
+test('a workspace with no sessions at all is green', () => {
+  assert.equal(workspaceLight([]), LIGHT_GREEN)
+})
+
+test('a workspace whose sessions are all idle is green', () => {
+  assert.equal(workspaceLight([{ running: false, waiting: false }]), LIGHT_GREEN)
+})
+
+test('a workspace with one running session is yellow', () => {
+  assert.equal(
+    workspaceLight([
+      { running: false, waiting: false },
+      { running: true, waiting: false },
+    ]),
+    LIGHT_YELLOW,
+  )
+})
+
+test('a workspace with a session waiting for the user is red', () => {
+  assert.equal(workspaceLight([{ running: true, waiting: true }]), LIGHT_RED)
+})
+
+/* ── workspaceLight: precedence red > yellow > green ──────────────────────── */
+
+test('red outranks yellow: waiting beats running, in any order', () => {
+  const running = { running: true, waiting: false }
+  const waiting = { running: true, waiting: true }
+  assert.equal(workspaceLight([running, waiting]), LIGHT_RED)
+  assert.equal(workspaceLight([waiting, running]), LIGHT_RED)
+})
+
+test('red outranks green wherever it sits in the list', () => {
+  const idle = { running: false, waiting: false }
+  const waiting = { running: false, waiting: true }
+  assert.equal(workspaceLight([idle, idle, waiting, idle]), LIGHT_RED)
+})
+
+test('yellow outranks green wherever it sits in the list', () => {
+  const idle = { running: false, waiting: false }
+  const running = { running: true, waiting: false }
+  assert.equal(workspaceLight([idle, running, idle]), LIGHT_YELLOW)
+})
+
+test('several waiting causes still read red', () => {
+  assert.equal(
+    workspaceLight([
+      { running: true, waiting: true },
+      { running: false, waiting: true },
+    ]),
+    LIGHT_RED,
+  )
+})
+
+/* ── workspaceLight: defensive input ──────────────────────────────────────── */
+
+test('a missing or malformed signal list is green, never a crash', () => {
+  assert.equal(workspaceLight(undefined), LIGHT_GREEN)
+  assert.equal(workspaceLight(null), LIGHT_GREEN)
+  assert.equal(workspaceLight('nope'), LIGHT_GREEN)
+})
+
+test('null entries and absent flags count as "nothing happened"', () => {
+  assert.equal(workspaceLight([null, undefined, {}]), LIGHT_GREEN)
+})
+
+/* ── sessionSignal: dsh records in, plain signals out ─────────────────────── */
+
+test('a session status marks a session running, and the list row is the fallback', () => {
+  assert.deepEqual(sessionSignal({ running: true }, undefined), {
+    running: true,
+    waiting: false,
+  })
+  assert.deepEqual(sessionSignal({ running: false }, { running: true }), {
+    running: true,
+    waiting: false,
+  })
+})
+
+test('any pending interaction means "waiting for you", whatever its kind', () => {
+  for (const kind of ['approval', 'question', 'plan-review', 'something-new']) {
+    assert.equal(sessionSignal({}, { pendingInteraction: { kind } }).waiting, true, kind)
+  }
+})
+
+test('a null or absent pending interaction is not waiting', () => {
+  assert.equal(sessionSignal({}, { pendingInteraction: null }).waiting, false)
+  assert.equal(sessionSignal({}, { pendingInteraction: undefined }).waiting, false)
+})
+
+test('the signal carries no error bit: dsh exposes none', () => {
+  const signal = sessionSignal({ running: false }, { running: false })
+  assert.deepEqual(Object.keys(signal).sort(), ['running', 'waiting'])
+})
+
+/* ── projectWorkspaceSection: dsh-shaped snapshots into rows ──────────────── */
+
+const workspaces = {
+  phase: 'ready',
+  items: [
+    { workspaceId: 'w1', title: 'Project A', path: 'C:\\a', sessionIds: ['s1', 's2'] },
+    { workspaceId: 'w2', title: 'default-workspace', path: 'C:\\b', sessionIds: [] },
+    { workspaceId: 'w3', title: 'Project C', path: 'C:\\c', sessionIds: ['s3'] },
+  ],
+  archivedSessionIds: ['s9'],
+}
+
+const sessionList = {
+  phase: 'ready',
+  ids: ['s1', 's2', 's3', 's9'],
+  byId: {
+    s1: { id: 's1', running: true, retainedBy: {} },
+    s2: { id: 's2', running: false, retainedBy: { mainView: 1 } },
+    s3: { id: 's3', running: false, retainedBy: {} },
+    s9: { id: 's9', running: true, retainedBy: {} },
+  },
+}
+
+const statuses = new Map([
+  ['s1', { running: true, pendingInteraction: undefined, completionUnread: false }],
+  ['s2', { running: false, pendingInteraction: { kind: 'question' }, completionUnread: false }],
+])
+
+test('each workspace becomes one row with its id and stored title', () => {
+  const rows = projectWorkspaceSection(workspaces, sessionList, statuses)
+  assert.deepEqual(
+    rows.map((row) => [row.workspaceId, row.title]),
+    [
+      ['w1', 'Project A'],
+      ['w2', 'default-workspace'],
+      ['w3', 'Project C'],
+    ],
+  )
+})
+
+test('rows keep the host order and do not invent workspaces', () => {
+  const rows = projectWorkspaceSection(workspaces, sessionList, statuses)
+  assert.equal(rows.length, workspaces.items.length)
+})
+
+test('the light aggregates the workspace members only', () => {
+  const rows = projectWorkspaceSection(workspaces, sessionList, statuses)
+  // w1: s1 running + s2 waiting → red; w2: empty → green; w3: idle → green.
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_RED, LIGHT_GREEN, LIGHT_GREEN],
+  )
+})
+
+test('the workspace holding the main-view session is the current one', () => {
+  const rows = projectWorkspaceSection(workspaces, sessionList, statuses)
+  assert.deepEqual(
+    rows.map((row) => row.current),
+    [true, false, false],
+  )
+})
+
+test('a workspace with no members is green even while another is red', () => {
+  const rows = projectWorkspaceSection(
+    workspaces,
+    { phase: 'ready', ids: ['s1'], byId: { s1: { id: 's1', running: false, retainedBy: {} } } },
+    new Map([['s1', { running: true, pendingInteraction: { kind: 'approval' } }]]),
+  )
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_RED, LIGHT_GREEN, LIGHT_GREEN],
+  )
+})
+
+test('sessions outside every workspace never light a row', () => {
+  const rows = projectWorkspaceSection(
+    { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: [] }] },
+    { phase: 'ready', ids: ['stray'], byId: { stray: { id: 'stray', running: true, retainedBy: {} } } },
+    new Map([['stray', { running: true, pendingInteraction: { kind: 'question' } }]]),
+  )
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_GREEN],
+  )
+})
+
+test('archived members are ignored: they cannot keep a workspace red', () => {
+  const rows = projectWorkspaceSection(
+    {
+      phase: 'ready',
+      items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['s9'] }],
+      archivedSessionIds: ['s9'],
+    },
+    { phase: 'ready', ids: ['s9'], byId: { s9: { id: 's9', running: true, retainedBy: {} } } },
+    new Map([['s9', { running: true, pendingInteraction: { kind: 'approval' } }]]),
+  )
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_GREEN],
+  )
+})
+
+test('a listed session the session list no longer knows is skipped', () => {
+  const rows = projectWorkspaceSection(
+    { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['gone', 's1'] }] },
+    { phase: 'ready', ids: ['s1'], byId: { s1: { id: 's1', running: true, retainedBy: {} } } },
+    new Map(),
+  )
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_YELLOW],
+  )
+})
+
+test('statuses may arrive as a plain record or be absent entirely', () => {
+  const record = { s1: { running: true, pendingInteraction: undefined } }
+  // s2's real question is not in this record, so only s1's run is left.
+  assert.equal(projectWorkspaceSection(workspaces, sessionList, record)[0].light, LIGHT_YELLOW)
+  // Without any statuses the list rows' own `running` bit is the fallback.
+  assert.equal(projectWorkspaceSection(workspaces, sessionList, undefined)[0].light, LIGHT_YELLOW)
+})
+
+test('an unready workspace snapshot projects to no rows', () => {
+  assert.deepEqual(projectWorkspaceSection({ phase: 'pending' }, sessionList, statuses), [])
+  assert.deepEqual(projectWorkspaceSection(undefined, sessionList, statuses), [])
+})
+
+test('an unready session list leaves every workspace green, not broken', () => {
+  const rows = projectWorkspaceSection(workspaces, { phase: 'pending', ids: [], byId: {} }, statuses)
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_GREEN, LIGHT_GREEN, LIGHT_GREEN],
+  )
+})
+
+/* ── mainSessionId: the one mainView scan ─────────────────────────────────── */
+
+test('the derived current session is the one retained under mainView', () => {
+  const sessions = {
+    byId: {
+      idle: { id: 'idle', retainedBy: {} },
+      current: { id: 'current', retainedBy: { mainView: 1 } },
+      background: { id: 'background', retainedBy: { sidebarView: 1 } },
+    },
+  }
+  assert.equal(mainSessionId(sessions), 'current')
+  assert.equal(mainSessionId({ byId: {} }), undefined)
+  assert.equal(mainSessionId(undefined), undefined)
+})
+
+/* ── displayWorkspaceName: dsh's default-title convention ─────────────────── */
+
+test("the automatic 'default-workspace' title reads as the localized default", () => {
+  assert.equal(displayWorkspaceName('default-workspace', 'Default Workspace'), 'Default Workspace')
+})
+
+test('a user title is shown verbatim', () => {
+  assert.equal(displayWorkspaceName('Project A', 'Default Workspace'), 'Project A')
+})
+
+test('a missing title falls back to the localized default', () => {
+  assert.equal(displayWorkspaceName('', 'Default Workspace'), 'Default Workspace')
+  assert.equal(displayWorkspaceName(undefined, 'Default Workspace'), 'Default Workspace')
+})
