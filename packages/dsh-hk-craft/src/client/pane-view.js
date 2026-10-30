@@ -1252,28 +1252,6 @@ function createPaneBody(controller) {
   }
 }
 
-/** Footer action: the visible native ↔ plugin pane toggle. */
-function createPaneToggle(controller) {
-  return function PaneToggle(props) {
-    const React = react()
-    const h = React.createElement
-    const t = createTranslator(props)
-    const state = usePaneSnapshot(React, controller)
-    const label = state.active ? t('toggle.native') : t('toggle.pane')
-    return h(
-      'button',
-      {
-        type: 'button',
-        title: state.error ?? t('toggle.title'),
-        style: buttonStyle,
-        'aria-pressed': state.active,
-        onClick: () => (state.active ? controller.deactivate() : controller.activate()),
-      },
-      label,
-    )
-  }
-}
-
 module.exports = {
   PANE_CONTENT_OCCURRENCE,
   PaneFrame,
@@ -1289,7 +1267,6 @@ module.exports = {
   createPaneConversationViews,
   createPaneHost,
   createPaneBody,
-  createPaneToggle,
   usePaneSnapshot,
   errorBoundaryClass,
 }
