@@ -163,6 +163,7 @@ function apply(ctx) {
             openWorkspace: actions.openWorkspace,
             addWorkspace: actions.addWorkspace,
             panes: workspacePanes,
+            reorderWorkspace: actions.reorderWorkspace,
           }),
         },
         WorkspaceSection,

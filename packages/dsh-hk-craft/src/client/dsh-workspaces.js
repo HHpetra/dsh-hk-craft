@@ -159,6 +159,25 @@ function createSectionActions(ctx, options = {}) {
     openWorkspace,
 
     /**
+     * Persist a new workspace display order by moving `workspaceId` before
+     * `beforeWorkspaceId`; omitting the anchor appends to the end.
+     *
+     * The host is the order's only source of truth: the `workspaces` client
+     * model installs the optimistic order itself, reconciles it with the
+     * returned complete order, and on failure restores the committed order
+     * before rejecting (`doc/upstream-contracts.md#workspace-display-order`).
+     * This adapter therefore writes nothing locally and lets the rejection
+     * reach the component, which only reports it.
+     *
+     * @param {string} workspaceId the dragged workspace
+     * @param {string} [beforeWorkspaceId] anchor; omitted appends
+     * @returns {Promise<void>}
+     */
+    async reorderWorkspace(workspaceId, beforeWorkspaceId) {
+      await ctx.get('workspaces').insertBefore(workspaceId, beforeWorkspaceId)
+    },
+
+    /**
      * Add a workspace through dsh's own picking and creation path, then select
      * it. Resolves without doing anything when the user cancels the picker;
      * rejects with the shell's error otherwise, so the component can report it.

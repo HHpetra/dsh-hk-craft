@@ -287,15 +287,21 @@ test('shadows the sidebar workspace section at a lower priority than the shipped
   assert.equal(typeof component, 'function')
 })
 
-test('the workspace entry injects the callbacks and the pane enablement face', () => {
+test('the workspace entry injects the callbacks, the reorder callback and the pane enablement face', () => {
   const ctx = fakeCtx()
   apply(ctx)
   const { options } = entryNamed(ctx, 'sidebar.workspaces')
   assert.equal(typeof options.inject, 'function')
   const injected = options.inject()
-  assert.deepEqual(Object.keys(injected).sort(), ['addWorkspace', 'openWorkspace', 'panes'])
+  assert.deepEqual(Object.keys(injected).sort(), [
+    'addWorkspace',
+    'openWorkspace',
+    'panes',
+    'reorderWorkspace',
+  ])
   assert.equal(typeof injected.openWorkspace, 'function')
   assert.equal(typeof injected.addWorkspace, 'function')
+  assert.equal(typeof injected.reorderWorkspace, 'function')
 
   // The row light reads enablement and follows the controller snapshot; nothing
   // dsh-shaped leaks through this face.
