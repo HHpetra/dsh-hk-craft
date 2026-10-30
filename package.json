@@ -18,5 +18,8 @@
     "check": "node scripts/check-bundle.mjs",
     "build": "pnpm -r --if-present --filter \"./packages/**\" build",
     "test": "pnpm -r --if-present --filter \"./packages/**\" test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

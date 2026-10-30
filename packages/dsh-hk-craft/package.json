@@ -34,5 +34,8 @@
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "test": "node --test --test-isolation=none"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

@@ -6,7 +6,7 @@
 | Node.js | `^22.19.0 \|\| >=24.0.0` | 系统 / nvm | 见根 `engines`；本机验证版本 24.18.1 |
 | pnpm | `12.5.1` | `packageManager` | 拒绝 npm/yarn |
 | dsh profile | `desktop` | 用户 `$DSH_HOME/profiles/desktop` | 默认安装目标；不新建产品 profile |
-| esbuild | 待定（随 client 构建引入） | 包 devDependency | 产出 `lib/client.js` |
+| esbuild | `0.28.2` | 包 devDependency | 产出 `lib/client.js`；仅构建期使用，运行期零依赖 |
 
 当前 `engines.dsh` 为 `>=0.2.0-rc.2 <0.3.0`。SemVer 不会自动接纳更高补丁位的预发布版（例如 `0.2.1-rc.1`）；dsh 升到新的预发布列车时，必须按下面的步骤显式更新范围。
 

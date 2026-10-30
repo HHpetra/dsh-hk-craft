@@ -6,11 +6,10 @@
 
 | 约束 | 后果 |
 | :--- | :--- |
-| **无网络**（registry 不可达） | 不要 `pnpm add` / `npm install` / `npx`。仓库零运行时依赖。 |
-| **无子进程**（`execFileSync` 等管道 stdio → `EPERM`） | 不要调用外部可执行文件，不要写 spawn 脚本。 |
-| **没有 esbuild / 任何打包器** | `lib/client.js` 由仓库自带的 `scripts/build-client.mjs` 链接生成。 |
-| **Node 里没有 react** | 客户端模块**禁止在加载期 `require('react')`**，必须惰性取（见 §3）。 |
-| 沙箱可写范围 = 仓库目录 | 产物、临时文件都写在仓库内。 |
+| `lib/client.js` 由 **esbuild** 生成 | 跑 `node packages\dsh-hk-craft\scripts\build-client.mjs`；不要手改产物（已 gitignore） |
+| 平台模块必须声明在 `dsh.client.inject` | 构建期会校验裸 `require`；未声明的直接失败 |
+| **Node 里没有 react** | 纯逻辑模块禁止 `require('react')`；组件写 JSX，但**不要给组件写需要渲染的单测** |
+| 网络与子进程可用 | 但仍**不要新增依赖**；除 esbuild 外本项目零运行时依赖 |
 
 ## 2. 命令
 
@@ -24,17 +23,11 @@ node scripts\check-bundle.mjs
 
 ## 3. 客户端模块约定
 
-- `src/client/**` 是 **CommonJS**（`src/client/package.json` 里 `"type":"commonjs"`）。
-- 平台模块（react 等）只能惰性取：
-
-```js
-let reactModule = null
-function react() { if (reactModule === null) reactModule = require('react'); return reactModule }
-```
-
-- 用 `React.createElement`（别名 `h`），**不要写 JSX/TS**——链接器不转译源码。
-- 只允许 `require('./相对路径.js')` 与已声明的平台模块；新增平台模块要同步进
-  `packages/dsh-hk-craft/package.json` 的 `dsh.client.inject`，否则 build 直接失败。
+- `src/client/**` 里的文件由 esbuild 打包（`format: cjs`），可以写 **JSX**（`.js` 已配置 jsx loader）；
+  也可以继续用 `React.createElement`（票 02–04 的既有代码就是这样，不必返工）。
+- `import React from 'react'` / `require('react')` 都只在构建后被壳解析；**单测不要导入组件模块**
+  （Node 里没有 react）。纯逻辑放在不依赖 react 的模块里。
+- 新出现的平台模块要同步进 `packages/dsh-hk-craft/package.json` 的 `dsh.client.inject`。
 - 不要把 dsh 的 API 假设散落在组件里：**每个能力集中到一个适配层模块**（例如 `dsh-sessions.js`、
   `dsh-slots.js`），组件只吃纯数据。假设错了只改一处。
 
