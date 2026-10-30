@@ -6,7 +6,7 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 
 ## 状态
 
-**初始化 / 设计阶段。** 仓库已具备可安装、可卸载的 bundle 骨架；插件的具体能力、客户端 UI 与数据通道尚未确定（见 [`ai-docs/spec/00-scope.md`](ai-docs/spec/00-scope.md)）。在能力确定前，骨架只装载一个无副作用的 host 行，不改变 dsh 行为。
+**初始化 / 设计阶段。** 仓库已具备可安装、可卸载的 bundle 骨架；插件的具体能力、客户端 UI 与数据通道尚未确定（见 [`.scratch/inception/spec.md`](.scratch/inception/spec.md)）。在能力确定前，骨架只装载一个无副作用的 host 行，不改变 dsh 行为。
 
 ## 依赖
 
@@ -50,7 +50,9 @@ pnpm build               # 构建（当前无 client，等价于空操作）
 | `packages/dsh-hk-craft/` | 唯一可安装 bundle：manifest、`cordis.patch.yml`、host 入口、后续 client UI |
 | `doc/` | 架构与关键原理（长期） |
 | `ai-docs/ADR/` | 架构决策记录（长期） |
-| `ai-docs/spec/` | 当前开发记录（短期） |
+| `.scratch/` | 当前开发记录：按 feature 组织的 spec 与 issue（短期） |
+| `GLOSSARY.md` | 领域语言（术语表，长期） |
+| `docs/agents/` | 工程类 skill 的消费规则：issue 跟踪器、triage 标签、域文档 |
 | `ai-docs/invest/` | 技术调研与可行性 |
 | `scripts/` | 结构校验与冒烟 |
 | `tests/` | 跨包冒烟与 fixtures |
@@ -64,7 +66,7 @@ pnpm build               # 构建（当前无 client，等价于空操作）
 - [`ai-docs/ADR/decisions.md`](ai-docs/ADR/decisions.md) — 架构决策记录
 - [`AGENTS.md`](AGENTS.md) — 协作者与编码 Agent 的约定
 - [`START.md`](START.md) — 新项目启动与分轮设计流程
-- [`CONTEXT.md`](CONTEXT.md) — 领域语言
+- [`GLOSSARY.md`](GLOSSARY.md) — 领域语言
 
 ## 许可
 

@@ -6,7 +6,7 @@
 - **不提供**启动器、Electron/Tauri 外壳、产品专属 `DSH_HOME`、独立端口或第二套聊天界面。
 - **不 fork** `@deepseek-ai/dsh*`；只通过 bundle 的 `cordis.patch.yml` 贡献插件行。
 
-本包当前是**可安装骨架**：host 行已连通，插件能力与客户端 UI 尚未实现（见仓库 `ai-docs/spec/00-scope.md`）。
+本包当前是**可安装骨架**：host 行已连通，插件能力与客户端 UI 尚未实现（见仓库 `.scratch/inception/spec.md`）。
 
 ## 安装
 

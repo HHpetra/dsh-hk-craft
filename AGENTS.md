@@ -30,7 +30,9 @@
 | `packages/dsh-hk-craft/` | **唯一可安装 bundle**：manifest、patch、host 入口、后续 client UI 与构建脚本 | 长期 |
 | `doc/` | 面向用户与 Agent 的**架构与关键原理**介绍 | **长期保留**；只写架构与原理，不写实现细节与过程性 spec |
 | `ai-docs/ADR/` | **架构决策记录（ADR）**：长期真源，只记关键决定 | **长期保留**；前期可合并为单文件，条目变多后按主题拆分 |
-| `ai-docs/spec/` | 当前开发用的 **spec 与开发记录** | **短期**；需**经常清理**，不做长期归档 |
+| `.scratch/` | 按 feature 组织的 **spec、issue 与开发记录**（本地 markdown issue 跟踪器） | **短期**；需**经常清理**，不做长期归档 |
+| `GLOSSARY.md` | 根目录：**领域语言**（术语与要避免的同义词） | 长期保留；术语收敛时更新 |
+| `docs/agents/` | 供工程类 skill 读取的消费规则：issue 跟踪器、triage 标签、域文档 | 长期保留 |
 | `ai-docs/invest/` | 可行性研究与技术调研文档 | 调研阶段产物；结论沉淀进 ADR / `doc/` 后可不再当日常真源 |
 | `scripts/` | 结构校验、冒烟、开发工具；保持薄 | 长期 |
 | `tests/` | 跨包冒烟与集成测试；`tests/fixtures/` 放样例数据 | 长期 |
@@ -45,10 +47,14 @@
 - **何时写**：只在对后续开发路线有重大影响时记录；实现细节、局部重构不记。
 - **与旧记录冲突时只增不改**：追加新条目并写明取代关系；旧条目不重写。
 
-### 3.2 Spec 与开发记录（短期）
+### 3.2 Spec、Issue 与开发记录（短期，`.scratch/`）
 
-- 路径：`ai-docs/spec/`，只服务当前开发，功能合入或阶段结束后清理。
-- Agent 不应把过期 spec 当作现行规范；以 ADR、`doc/` 与代码为准。
+- 路径：`.scratch/<feature-slug>/`，只服务当前开发，功能合入或阶段结束后清理。
+- spec 为 `.scratch/<feature-slug>/spec.md`。
+- 实现型 issue 一文件一票：`.scratch/<feature-slug>/issues/<NN>-<slug>.md`，从 `01` 编号；**不写**单个合并的 tickets 文件。
+- triage 状态写在该 issue 文件靠上的 `Status:` 行，取值见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
+- 评论与对话历史追加到文件末尾的 `## Comments` 小节下。
+- Agent 不应把过期 spec 当作现行规范；以 ADR、`doc/`、`GLOSSARY.md` 与代码为准。
 
 ### 3.3 `doc/`（架构导读）
 
@@ -121,11 +127,12 @@ pnpm test             # 包内单元测试
 
 ## 7. Agent 协作指引
 
-1. **文档落点**：关键决定 → `ai-docs/ADR/`；当前开发 → `ai-docs/spec/`（并记得清理）；架构导读 → `doc/`；调研 → `ai-docs/invest/`。
-2. **真源优先级**：长期行为以 **ADR + `doc/` + 代码** 为准；过期 spec 不作数。
+1. **文档落点**：关键决定 → `ai-docs/ADR/`；当前开发 → `.scratch/`（并记得清理）；架构导读 → `doc/`；调研 → `ai-docs/invest/`；领域术语 → `GLOSSARY.md`。
+2. **真源优先级**：长期行为以 **ADR + `doc/` + `GLOSSARY.md` + 代码** 为准；过期 spec 不作数。
 3. **不做长期 spec 库**：不要把完整产品 spec 堆进仓库长期保存。
-4. **能力未定不写死**：插件功能仍待用户描述；新增设计先在 `ai-docs/spec/00-scope.md` 收敛，再升 ADR 或 `doc/`。
+4. **能力未定不写死**：插件功能仍待用户描述；新增设计先在 `.scratch/<feature-slug>/spec.md` 收敛，再升 ADR 或 `doc/`。
 5. **代码检索**：优先使用当前环境可用的语义检索工具（Semble / Graft）；不可用时退回 `grep`，并在回复中说明原因。不要一上来全局关键词扫仓。
+6. **文档消费规则**：issue 跟踪器、triage 标签与域文档的读取方式见 `docs/agents/`，工程类 skill 以那三份文件为准。
 
 ---
 
@@ -141,6 +148,22 @@ pnpm test             # 包内单元测试
 
 ---
 
-## 9. 许可
+## 9. Agent skills
+
+### Issue tracker
+
+本仓库用本地 markdown 跟踪器：spec 与 issue 都在 `.scratch/<feature-slug>/` 下。见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
+
+### Triage labels
+
+五个规范 triage 角色，标签字符串与角色名相同。见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
+
+### Domain docs
+
+single-context：根目录 `GLOSSARY.md` + `ai-docs/ADR/`。见 [`docs/agents/domain.md`](docs/agents/domain.md)。
+
+---
+
+## 10. 许可
 
 MIT. Copyright (c) 2026 HHpetra.
