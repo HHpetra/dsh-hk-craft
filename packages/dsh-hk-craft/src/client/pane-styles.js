@@ -233,7 +233,10 @@ const headerStyle = {
 }
 
 const titleStyle = {
-  flex: '1 1 auto',
+  // The title keeps its content width so the mode, subagent and view controls
+  // sit immediately to its right. It shrinks (and truncates) before them; the
+  // close button's `marginLeft: auto` owns the far right edge.
+  flex: '0 1 auto',
   minWidth: 0,
   overflow: 'hidden',
   textOverflow: 'ellipsis',

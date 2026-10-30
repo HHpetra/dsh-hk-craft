@@ -244,10 +244,16 @@ test('the pane header offers a view toggle and a close button when no seats are 
     })
 
     const header = frame.props.children[0]
+    assert.equal(
+      header.props.children[0].props.style.flex,
+      '0 1 auto',
+      'the title keeps its content width so the controls sit next to it',
+    )
     const actions = header.props.children.filter(Boolean).slice(1)
     assert.equal(actions.length, 2, 'the header must not keep a split/more button row')
     assert.equal(actions[0].type, PaneViewToggle)
     assert.equal(actions[1].props['data-hkcraft-pane-close'], 'p1')
+    assert.equal(actions[1].props.style.marginLeft, 'auto', 'the close button owns the far right edge')
     assert.equal(actions[1].props['aria-label'], 'pane.close')
     assert.equal(actions[1].props.title, 'pane.close (Ctrl+Shift+X)')
 

@@ -461,7 +461,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
       'button',
       {
         type: 'button',
-        style: headerActionStyle,
+        style: { ...headerActionStyle, marginLeft: 'auto' },
         title: closeHint,
         'aria-label': t('pane.close'),
         'data-hkcraft-pane-close': pane.paneId,
