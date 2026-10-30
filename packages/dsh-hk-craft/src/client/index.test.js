@@ -3,12 +3,36 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { NS, inject, apply, WORKSPACE_SLOT_PRIORITY } = require('./index.js')
+const { NS, inject, COMMAND_SERVICES, apply, WORKSPACE_SLOT_PRIORITY } = require('./index.js')
 const { zh, en } = require('./locale.js')
 
-/** Minimal stand-in for the Cordis client context. */
-function fakeCtx() {
-  const calls = { effect: [], locale: [], injected: [], registered: [], injections: [] }
+/** @returns {object} one fake workspace snapshot store */
+function workspaceService(items = []) {
+  return {
+    list: {
+      getSnapshot: () => ({ items, archivedSessionIds: [], pinnedSessionIds: [], phase: 'ready' }),
+    },
+  }
+}
+
+/** Services the sidebar workspace section needs, so its slot always registers. */
+function workspaceServices() {
+  return {
+    uiWorkspace: { openSession() {}, startSession() {}, pickDirectory: async () => null },
+    workspaces: workspaceService([{ workspaceId: 'w1', sessionIds: ['s1'] }]),
+  }
+}
+
+/**
+ * Minimal stand-in for the Cordis client context.
+ *
+ * `inject(names, callback)` mirrors the real contract: the callback only runs
+ * once every named service exists.
+ *
+ * @param {{services?: Record<string, unknown>}} [options]
+ */
+function fakeCtx({ services = workspaceServices() } = {}) {
+  const calls = { effect: [], locale: [], injected: [], registered: [], injections: [], services: [] }
   const ctx = {
     calls,
     effect(fn, label) {
@@ -16,10 +40,26 @@ function fakeCtx() {
       const dispose = fn()
       return typeof dispose === 'function' ? dispose : () => {}
     },
+    get(name) {
+      calls.services.push(name)
+      return services[name]
+    },
+    inject(names, callback) {
+      if (!names.every((name) => services[name] !== undefined)) return () => {}
+      calls.injections.push(names)
+      callback(ctx)
+      return () => {}
+    },
     locale: {
       register(namespace, dictionaries) {
         calls.locale.push({ namespace, dictionaries })
         return () => {}
+      },
+      bind(namespace) {
+        return (key) => {
+          const table = namespace === NS ? dictionaries.zh : {}
+          return table[key] ?? key
+        }
       },
     },
     slots: {
@@ -33,27 +73,38 @@ function fakeCtx() {
         return () => {}
       },
     },
-    inject(services, callback) {
-      calls.injections.push(services)
-      callback(ctx)
-      return () => {}
-    },
-    get() {
-      return undefined
-    },
   }
   return ctx
 }
 
-/** @returns {{ options: any, component: any }} */
+/** @returns {{options: any, component: any}} */
 function entryNamed(ctx, name) {
   const entry = ctx.calls.registered.find((candidate) => candidate.options.name === name)
   assert.ok(entry !== undefined, `no registration for slot ${name}`)
   return entry
 }
 
+/** @returns {Record<string, unknown>} a full set of command services plus its stub */
+function commandServices() {
+  const commands = []
+  return {
+    services: {
+      ...workspaceServices(),
+      commandUi: {
+        register(spec) {
+          commands.push(spec)
+          return () => {}
+        },
+      },
+      sessions: { list: { getSnapshot: () => ({ items: [], byId: {}, phase: 'ready' }) } },
+    },
+    commands,
+  }
+}
+
 test('declares the services it uses', () => {
   assert.deepEqual(inject, ['slots', 'locale'])
+  assert.deepEqual(COMMAND_SERVICES, ['commandUi', 'sessions', 'workspaces', 'uiWorkspace'])
 })
 
 test('registers both locales under the plugin namespace', () => {
@@ -120,6 +171,25 @@ test('the workspace entry declares no child slots and no store', () => {
   const { options } = entryNamed(ctx, 'sidebar.workspaces')
   assert.equal(options.children, undefined)
   assert.equal(options.store, undefined)
+})
+
+test('registers /clear and /resume once the command services exist', () => {
+  const { services, commands } = commandServices()
+  const ctx = fakeCtx({ services })
+  apply(ctx)
+  assert.deepEqual(
+    commands.map((spec) => spec.name),
+    ['clear', 'resume'],
+  )
+  assert.deepEqual(commands.map((spec) => spec.ui.kind), ['action', 'popupSelect'])
+  assert.equal(commands[1].ui.searchMode, 'fuzzy-label')
+})
+
+test('skips command registration when a command service is missing', () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+  assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
+  assert.equal(ctx.calls.registered.length, 2)
 })
 
 test('apply is idempotent in shape: no module-level state leaks between loads', () => {

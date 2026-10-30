@@ -8,15 +8,17 @@
  * loader must equal the bundle patch row name (`dsh-hk-craft`).
  *
  * Everything here goes through public plugin services only: `slots`, `locale`,
- * and — for the sidebar workspace section — `uiWorkspace` and `workspaces`,
- * which are awaited through `ctx.inject` so the footer action keeps working even
- * when the workspace plugin is absent.
+ * `uiWorkspace` and `workspaces` for the sidebar workspace section, and
+ * `commandUi`, `sessions`, `workspaces` and `uiWorkspace` for the slash
+ * commands. Both capabilities attach through `ctx.inject`, so the footer action
+ * keeps working even when a service is absent.
  */
 
 const { dictionaries } = require('./locale.js')
 const { DiagnosticsAction } = require('./diagnostics.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
+const { registerCommands } = require('./commands.js')
 
 const NS = 'dsh-hk-craft'
 
@@ -32,6 +34,9 @@ const WORKSPACE_SLOT_PRIORITY = -100
 
 /** Cordis services this plugin needs before `apply` runs. */
 const inject = ['slots', 'locale']
+
+/** Services the two slash commands need before they can register. */
+const COMMAND_SERVICES = ['commandUi', 'sessions', 'workspaces', 'uiWorkspace']
 
 /**
  * @param {any} ctx Cordis context of the client plugin row.
@@ -70,6 +75,22 @@ function apply(ctx) {
       ),
     )
   })
+
+  const t = ctx.locale.bind(NS)
+  ctx.inject(COMMAND_SERVICES, (scope) => {
+    scope.effect(() => {
+      const disposers = registerCommands({
+        commandUi: scope.get('commandUi'),
+        sessions: scope.get('sessions'),
+        workspaces: scope.get('workspaces'),
+        uiWorkspace: scope.get('uiWorkspace'),
+        t,
+      })
+      return () => {
+        for (const dispose of disposers) dispose()
+      }
+    }, 'dsh-hk-craft: slash commands')
+  })
 }
 
-module.exports = { NS, inject, apply, WORKSPACE_SLOT_PRIORITY }
+module.exports = { NS, inject, COMMAND_SERVICES, apply, WORKSPACE_SLOT_PRIORITY }
