@@ -1,0 +1,372 @@
+'use strict'
+
+const test = require('node:test')
+const assert = require('node:assert/strict')
+
+const {
+  LAYOUT_VERSION,
+  createLayout,
+  openPane,
+  split,
+  close,
+  leaves,
+  findLeafPath,
+  focus,
+  resize,
+  clampRatio,
+  minRatioFor,
+  ratioFromDrag,
+  normalizeLayout,
+  replaceSession,
+  setView,
+  paneOfSession,
+} = require('./layout-tree.js')
+
+/** @param {string} paneId @param {string} sessionId */
+function pane(paneId, sessionId) {
+  return { paneId, sessionId, view: 'chat' }
+}
+
+const P1 = pane('p1', 's1')
+const P2 = pane('p2', 's2')
+const P3 = pane('p3', 's3')
+
+/** One workspace layout with a single pane already open. */
+function single() {
+  return openPane(createLayout('w1'), P1)
+}
+
+test('a new layout is empty and versioned', () => {
+  assert.deepEqual(createLayout('w1'), {
+    version: LAYOUT_VERSION,
+    workspaceId: 'w1',
+    root: null,
+    panes: {},
+    activePaneId: null,
+  })
+  assert.equal(LAYOUT_VERSION, 1)
+})
+
+test('opening a pane in an empty layout makes it the whole tree and the focus', () => {
+  const layout = single()
+
+  assert.deepEqual(layout.root, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(layout.panes, { p1: P1 })
+  assert.equal(layout.activePaneId, 'p1')
+  assert.deepEqual(leaves(layout.root), ['p1'])
+})
+
+test('opening a second pane in a non-empty layout is refused, not appended blindly', () => {
+  const layout = single()
+  assert.equal(openPane(layout, P2), layout)
+})
+
+test('splitting a leaf right puts the new pane beside it and focuses the new pane', () => {
+  const layout = split(single(), 'p1', 'row', P2)
+
+  assert.deepEqual(layout.root, {
+    kind: 'split',
+    dir: 'row',
+    ratio: 0.5,
+    a: { kind: 'leaf', paneId: 'p1' },
+    b: { kind: 'leaf', paneId: 'p2' },
+  })
+  assert.deepEqual(leaves(layout.root), ['p1', 'p2'])
+  assert.equal(layout.activePaneId, 'p2')
+  assert.deepEqual(Object.keys(layout.panes).sort(), ['p1', 'p2'])
+})
+
+test('splitting down uses a column split', () => {
+  const layout = split(single(), 'p1', 'col', P2)
+  assert.equal(layout.root.dir, 'col')
+  assert.equal(layout.root.ratio, 0.5)
+  assert.deepEqual(leaves(layout.root), ['p1', 'p2'])
+})
+
+test('splitting a nested leaf only rewrites that leaf', () => {
+  const two = split(single(), 'p1', 'row', P2)
+  const three = split(two, 'p1', 'col', P3)
+
+  assert.deepEqual(leaves(three.root), ['p1', 'p3', 'p2'])
+  assert.deepEqual(three.root, {
+    kind: 'split',
+    dir: 'row',
+    ratio: 0.5,
+    a: {
+      kind: 'split',
+      dir: 'col',
+      ratio: 0.5,
+      a: { kind: 'leaf', paneId: 'p1' },
+      b: { kind: 'leaf', paneId: 'p3' },
+    },
+    b: { kind: 'leaf', paneId: 'p2' },
+  })
+})
+
+test('splitting an unknown pane or with an unknown direction changes nothing', () => {
+  const layout = single()
+  assert.equal(split(layout, 'missing', 'row', P2), layout)
+  assert.equal(split(layout, 'p1', 'diagonal', P2), layout)
+  assert.equal(split(layout, 'p1', 'row', P1), layout)
+})
+
+test('leaf paths address each node by a/b steps, in render order', () => {
+  const layout = split(split(single(), 'p1', 'row', P2), 'p1', 'col', P3)
+
+  assert.deepEqual(findLeafPath(layout.root, 'p1'), ['a', 'a'])
+  assert.deepEqual(findLeafPath(layout.root, 'p3'), ['a', 'b'])
+  assert.deepEqual(findLeafPath(layout.root, 'p2'), ['b'])
+  assert.equal(findLeafPath(layout.root, 'missing'), null)
+})
+
+test('focusing an existing pane moves the focus; an unknown pane is ignored', () => {
+  const layout = split(single(), 'p1', 'row', P2)
+  const focused = focus(layout, 'p1')
+
+  assert.equal(focused.activePaneId, 'p1')
+  assert.equal(focus(focused, 'p1'), focused)
+  assert.equal(focus(focused, 'missing'), focused)
+})
+
+test('closing the only pane empties the layout', () => {
+  const layout = close(single(), 'p1')
+
+  assert.deepEqual(layout, {
+    version: 1,
+    workspaceId: 'w1',
+    root: null,
+    panes: {},
+    activePaneId: null,
+  })
+})
+
+test('closing the right pane promotes its sibling into the parent slot', () => {
+  const two = split(single(), 'p1', 'row', P2)
+  const after = close(two, 'p2')
+
+  assert.deepEqual(after.root, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(after.panes, { p1: P1 })
+  assert.equal(after.activePaneId, 'p1')
+})
+
+test('closing the left pane promotes its sibling too', () => {
+  const two = split(single(), 'p1', 'row', P2)
+  const after = close(two, 'p1')
+
+  assert.deepEqual(after.root, { kind: 'leaf', paneId: 'p2' })
+  assert.deepEqual(after.panes, { p2: P2 })
+  assert.equal(after.activePaneId, 'p2')
+})
+
+test('closing a nested pane collapses only the split that held it', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p1', 'col', P3)
+  const after = close(three, 'p3')
+
+  assert.deepEqual(leaves(after.root), ['p1', 'p2'])
+  assert.deepEqual(after.root, {
+    kind: 'split',
+    dir: 'row',
+    ratio: 0.5,
+    a: { kind: 'leaf', paneId: 'p1' },
+    b: { kind: 'leaf', paneId: 'p2' },
+  })
+  assert.deepEqual(Object.keys(after.panes).sort(), ['p1', 'p2'])
+})
+
+test('a whole sibling subtree promotes when its neighbour closes', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p1', 'col', P3)
+  const after = close(three, 'p2')
+
+  assert.deepEqual(leaves(after.root), ['p1', 'p3'])
+  assert.deepEqual(after.root, {
+    kind: 'split',
+    dir: 'col',
+    ratio: 0.5,
+    a: { kind: 'leaf', paneId: 'p1' },
+    b: { kind: 'leaf', paneId: 'p3' },
+  })
+})
+
+test('closing a focused left pane focuses the sibling leaf that takes its place', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p1', 'col', P3)
+  const after = close(three, 'p1')
+
+  // row(col(p1, p3), p2) → row(p3, p2): p3 takes the slot p1 held.
+  assert.deepEqual(leaves(after.root), ['p3', 'p2'])
+  assert.equal(after.activePaneId, 'p3')
+})
+
+test('closing a focused right pane focuses the adjacent leaf of the promoted sibling', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p2', 'col', P3)
+  // row(p1, col(p2, p3)) — p3 is the bottom of the right column.
+  const after = close(three, 'p3')
+
+  assert.deepEqual(leaves(after.root), ['p1', 'p2'])
+  assert.equal(after.activePaneId, 'p2')
+})
+
+test('closing an unfocused pane keeps the current focus', () => {
+  const two = split(single(), 'p1', 'row', P2)
+  const focused = focus(two, 'p1')
+  const after = close(focused, 'p2')
+
+  assert.equal(after.activePaneId, 'p1')
+})
+
+test('closing an unknown pane changes nothing', () => {
+  const layout = single()
+  assert.equal(close(layout, 'missing'), layout)
+})
+
+test('ratios are clamped into the usable band, with degenerate input neutralised', () => {
+  assert.equal(clampRatio(0.5), 0.5)
+  assert.equal(clampRatio(0), 0.1)
+  assert.equal(clampRatio(1), 0.9)
+  assert.equal(clampRatio(-4), 0.1)
+  assert.equal(clampRatio(Number.NaN), 0.5)
+  assert.equal(clampRatio(Number.POSITIVE_INFINITY), 0.5)
+  assert.equal(clampRatio("0.3"), 0.5)
+  assert.equal(clampRatio(undefined), 0.5)
+  assert.equal(clampRatio(0.05, { min: 0.02, max: 0.98 }), 0.05)
+})
+
+test('the pixel minimum widens the ratio band on a small split', () => {
+  assert.equal(minRatioFor(1000), 0.12)
+  assert.equal(minRatioFor(400), 0.3)
+  assert.equal(minRatioFor(100), 0.5)
+  assert.equal(minRatioFor(0), 0.1)
+  assert.equal(minRatioFor(Number.NaN), 0.1)
+  assert.equal(minRatioFor(1000, 50), 0.1)
+})
+
+test('a separator drag converts pointer delta into a clamped ratio', () => {
+  assert.equal(ratioFromDrag({ startRatio: 0.5, deltaPx: 100, sizePx: 1000 }), 0.6)
+  assert.equal(ratioFromDrag({ startRatio: 0.5, deltaPx: -200, sizePx: 1000 }), 0.3)
+  // 400px split, 120px minimum: the band is [0.3, 0.7].
+  assert.equal(ratioFromDrag({ startRatio: 0.5, deltaPx: -999, sizePx: 400 }), 0.3)
+  assert.equal(ratioFromDrag({ startRatio: 0.5, deltaPx: 999, sizePx: 400 }), 0.7)
+  assert.equal(ratioFromDrag({ startRatio: 0.5, deltaPx: 50, sizePx: 0 }), 0.5)
+})
+
+test('resizing a split stores the clamped ratio on that node only', () => {
+  const two = split(single(), 'p1', 'row', P2)
+  assert.equal(two.root.ratio, 0.5)
+
+  const wide = resize(two, [], 0.75)
+  assert.equal(wide.root.ratio, 0.75)
+  assert.equal(resize(two, [], 0.99).root.ratio, 0.9)
+  assert.equal(resize(two, [], 0.001).root.ratio, 0.1)
+  assert.equal(resize(two, [], "wide"), two)
+})
+
+test('resizing a nested split addresses it by its a/b path and leaves the parent alone', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p1', 'col', P3)
+  const after = resize(three, ["a"], 0.7)
+
+  assert.equal(after.root.ratio, 0.5)
+  assert.equal(after.root.a.ratio, 0.7)
+  assert.equal(resize(three, ["b"], 0.7), three)
+  assert.equal(resize(three, ["a", "a"], 0.7), three)
+  assert.equal(resize(three, ["nope"], 0.7), three)
+})
+
+test('replacing a session keeps the pane identity, the tree and the view', () => {
+  const two = split(single(), "p1", "row", P2)
+  const viewed = setView(two, "p2", "trajectory")
+  const after = replaceSession(viewed, "p1", "s9")
+
+  assert.deepEqual(after.root, viewed.root)
+  assert.deepEqual(after.panes.p1, { paneId: "p1", sessionId: "s9", view: "chat" })
+  assert.equal(after.panes.p2.view, "trajectory")
+  assert.equal(after.activePaneId, "p2")
+  assert.equal(replaceSession(after, "p1", "s9"), after)
+  assert.equal(replaceSession(after, "missing", "s9"), after)
+})
+
+test('setting a view only touches that pane', () => {
+  const two = split(single(), "p1", "row", P2)
+  const after = setView(two, "p1", "trajectory")
+
+  assert.equal(after.panes.p1.view, "trajectory")
+  assert.equal(after.panes.p2.view, "chat")
+  assert.equal(setView(two, "p1", "bogus"), two)
+  assert.equal(setView(two, "missing", "chat"), two)
+})
+
+test('a session maps back to the pane that holds it', () => {
+  const two = split(single(), "p1", "row", P2)
+  assert.equal(paneOfSession(two, "s2"), "p2")
+  assert.equal(paneOfSession(two, "s9"), undefined)
+})
+
+test('splitting and closing the new pane is a structural round-trip', () => {
+  const original = resize(split(single(), "p1", "row", P2), [], 0.65)
+  const splitAgain = split(original, "p2", "col", P3)
+  const restored = close(splitAgain, "p3")
+
+  assert.deepEqual(restored.root, original.root)
+  assert.deepEqual(restored.panes, original.panes)
+  assert.equal(restored.activePaneId, "p2")
+})
+
+test('a stored layout survives JSON and normalisation unchanged', () => {
+  const layout = resize(split(split(single(), "p1", "row", P2), "p1", "col", P3), ["a"], 0.4)
+  const decoded = normalizeLayout(JSON.parse(JSON.stringify(layout)))
+
+  assert.deepEqual(decoded, layout)
+})
+
+test('normalisation prunes leaves whose pane is gone and repairs the focus', () => {
+  const three = split(split(single(), "p1", "row", P2), "p1", "col", P3)
+  const panes = { p1: three.panes.p1, p2: three.panes.p2 }
+  const pruned = normalizeLayout({ ...three, panes, activePaneId: "p3" })
+
+  assert.deepEqual(leaves(pruned.root), ["p1", "p2"])
+  assert.deepEqual(Object.keys(pruned.panes).sort(), ["p1", "p2"])
+  assert.equal(pruned.activePaneId, "p1")
+})
+
+test('normalisation collapses orphan pane records and out-of-band ratios', () => {
+  const layout = {
+    version: 7,
+    workspaceId: "w1",
+    root: { kind: "split", dir: "row", ratio: 42, a: { kind: "leaf", paneId: "p1" }, b: { kind: "leaf", paneId: "ghost" } },
+    panes: { p1: { paneId: "p1", sessionId: "s1", view: "chat" }, stray: { paneId: "stray", sessionId: "s8" } },
+    activePaneId: "stray",
+  }
+  const normalized = normalizeLayout(layout)
+
+  assert.deepEqual(normalized.root, { kind: "leaf", paneId: "p1" })
+  assert.deepEqual(Object.keys(normalized.panes), ["p1"])
+  assert.equal(normalized.root.ratio, undefined)
+  assert.equal(normalized.activePaneId, "p1")
+  assert.equal(normalized.version, 1)
+})
+
+test('normalisation turns an empty or corrupt layout into the empty state', () => {
+  assert.deepEqual(normalizeLayout(null), {
+    version: 1,
+    workspaceId: null,
+    root: null,
+    panes: {},
+    activePaneId: null,
+  })
+  const empty = normalizeLayout({ root: null, panes: { orphan: { paneId: "orphan", sessionId: "s" } }, activePaneId: "orphan" })
+  assert.equal(empty.root, null)
+  assert.deepEqual(empty.panes, {})
+  assert.equal(empty.activePaneId, null)
+})
+
+test('transitions never mutate their input', () => {
+  const original = split(single(), "p1", "row", P2)
+  const snapshot = JSON.parse(JSON.stringify(original))
+
+  split(original, "p2", "col", P3)
+  close(original, "p2")
+  resize(original, [], 0.8)
+  replaceSession(original, "p1", "s9")
+  setView(original, "p1", "trajectory")
+  focus(original, "p1")
+
+  assert.deepEqual(original, snapshot)
+})

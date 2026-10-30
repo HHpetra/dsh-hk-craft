@@ -4,12 +4,20 @@
  * Thin React shell around the pane controller. All dsh assumptions live in
  * `dsh-pane-host.js`; this file only turns controller state into elements.
  *
+ * Layout rendering keeps every pane mounted: the pure geometry projection
+ * (`layout-geometry.js`) turns the tree into flat, fractional rectangles, and
+ * each pane is an absolutely positioned sibling keyed by `paneId`. A split or a
+ * close therefore changes inline styles only — React never re-parents a pane,
+ * so streaming output, scroll position and the composer draft survive.
+ *
  * `react` is resolved lazily because unit tests load this module in Node,
  * where the platform module graph does not exist.
  */
 
 const { createTranslator } = require('./diagnostics.js')
 const { CONTENT_FACTORY, PANE_SLOT, derivePanePhase } = require('./dsh-pane-host.js')
+const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
+const { ratioFromDrag } = require('./layout-tree.js')
 
 let reactModule = null
 
@@ -44,10 +52,22 @@ const paneStyle = {
   color: 'var(--dsw-alias-label-primary, CanvasText)',
 }
 
+/** The workspace box every pane rect is a fraction of. */
+const layoutStyle = {
+  position: 'relative',
+  display: 'block',
+  flex: '1 1 auto',
+  minWidth: 0,
+  minHeight: 0,
+  height: '100%',
+  width: '100%',
+  overflow: 'hidden',
+}
+
 const headerStyle = {
   display: 'flex',
   alignItems: 'center',
-  gap: 8,
+  gap: 6,
   flex: 'none',
   minHeight: 36,
   padding: '0 10px',
@@ -120,8 +140,8 @@ function errorBoundaryClass() {
   return boundaryClass
 }
 
-/** @param {{ t: (key: string) => string, text: string, detail?: string, onBack: () => void }} props */
-function PaneFallback({ t, text, detail, onBack }) {
+/** @param {{ t: (key: string) => string, text: string, detail?: string, label: string, onBack: () => void }} props */
+function PaneFallback({ t, text, detail, label, onBack }) {
   const React = react()
   const h = React.createElement
   return h(
@@ -129,11 +149,266 @@ function PaneFallback({ t, text, detail, onBack }) {
     { style: fallbackStyle, role: 'status' },
     h('div', { style: { fontWeight: 600, marginBottom: 6 } }, text),
     detail === undefined ? null : h('div', { style: { opacity: 0.75, marginBottom: 12 } }, detail),
+    h('button', { type: 'button', style: buttonStyle, onClick: onBack }, label ?? t('pane.back')),
+  )
+}
+
+/**
+ * The empty state: the workspace has no panes at all. It offers the one action
+ * that can create a first pane (`/clear`'s host-side path, `newInFocused`).
+ *
+ * @param {{ t: (key: string) => string, onNew: () => void }} props
+ */
+function PaneEmptyState({ t, onNew }) {
+  const React = react()
+  const h = React.createElement
+  return h(
+    'div',
+    { style: paneStyle, 'data-hkcraft-empty': '' },
+    h(
+      'div',
+      { style: fallbackStyle, role: 'status' },
+      h('div', { style: { fontWeight: 600, marginBottom: 6 } }, t('pane.empty.workspace.title')),
+      h('div', { style: { opacity: 0.75, marginBottom: 12 } }, t('pane.empty.workspace.body')),
+      h('button', { type: 'button', style: buttonStyle, onClick: onNew }, t('pane.empty.new')),
+    ),
+  )
+}
+
+/**
+ * One pane: header actions plus the session-scoped child slot.
+ *
+ * The element type is module-level and the key is the pane id, so the pane is
+ * never remounted by a layout change. Only a session replacement resets the
+ * conversation subtree (the boundary below is keyed by session id).
+ *
+ * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string }} props
+ */
+function PaneFrame({ controller, pane, rect, focused, kit, t }) {
+  const React = react()
+  const h = React.createElement
+  const reference = controller.paneReference(pane.paneId)
+  const title =
+    typeof kit.useSessions === 'function'
+      ? kit.useSessions((snapshot) => snapshot.byId[pane.sessionId]?.title)
+      : undefined
+
+  const close = () => controller.closePane(pane.paneId)
+  const focus = () => {
+    if (!focused) controller.focusPane(pane.paneId)
+  }
+
+  const frameStyle = {
+    position: 'absolute',
+    left: `${rect.x * 100}%`,
+    top: `${rect.y * 100}%`,
+    width: `${rect.width * 100}%`,
+    height: `${rect.height * 100}%`,
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    minHeight: 0,
+    overflow: 'hidden',
+    boxSizing: 'border-box',
+    // A visible focus ring is the only reliable "this pane receives input"
+    // signal in a split view (issue 05; Agent10's flat strip lost it).
+    outline: focused
+      ? '2px solid var(--dsw-alias-border-accent, Highlight)'
+      : '2px solid transparent',
+    outlineOffset: '-2px',
+    zIndex: focused ? 1 : 0,
+    background: 'var(--dsw-alias-bg-base, Canvas)',
+    color: 'var(--dsw-alias-label-primary, CanvasText)',
+  }
+
+  const header = h(
+    'div',
+    { style: headerStyle },
+    h('span', { style: titleStyle }, title ?? t('pane.title')),
     h(
       'button',
-      { type: 'button', style: buttonStyle, onClick: onBack },
-      t('pane.back'),
+      {
+        type: 'button',
+        style: buttonStyle,
+        title: t('pane.splitRight'),
+        'aria-label': t('pane.splitRight'),
+        onClick: () => {
+          controller.split(pane.paneId, 'row')
+        },
+      },
+      '⫽',
     ),
+    h(
+      'button',
+      {
+        type: 'button',
+        style: buttonStyle,
+        title: t('pane.splitDown'),
+        'aria-label': t('pane.splitDown'),
+        onClick: () => {
+          controller.split(pane.paneId, 'col')
+        },
+      },
+      '⫙',
+    ),
+    h(
+      'button',
+      {
+        type: 'button',
+        style: buttonStyle,
+        title: t('pane.close'),
+        'aria-label': t('pane.close'),
+        onClick: close,
+      },
+      '×',
+    ),
+  )
+
+  let body
+  if (reference === undefined) {
+    body = h(PaneFallback, {
+      t,
+      text: t('pane.empty.title'),
+      detail: t('pane.empty.body'),
+      label: t('pane.close'),
+      onBack: close,
+    })
+  } else if (typeof kit.SessionProvider !== 'function' || typeof kit.renderSlot !== 'function') {
+    body = h(PaneFallback, {
+      t,
+      text: t('pane.fallback.title'),
+      detail: t('pane.fallback.error'),
+      label: t('pane.close'),
+      onBack: close,
+    })
+  } else {
+    const boundary = errorBoundaryClass()
+    body = h(
+      boundary,
+      {
+        key: pane.sessionId,
+        fallback: (error) =>
+          h(PaneFallback, {
+            t,
+            text: t('pane.fallback.title'),
+            detail: `${t('pane.fallback.error')} (${error instanceof Error ? error.message : String(error)})`,
+            label: t('pane.close'),
+            onBack: close,
+          }),
+      },
+      h(kit.SessionProvider, { session: reference }, kit.renderSlot(PANE_SLOT, {})),
+    )
+  }
+
+  return h(
+    'div',
+    {
+      style: frameStyle,
+      'data-hkcraft-pane': pane.paneId,
+      'data-hkcraft-pane-active': focused ? 'true' : 'false',
+      onPointerDownCapture: focus,
+    },
+    header,
+    h('div', { style: bodyStyle }, body),
+  )
+}
+
+/**
+ * One draggable separator. Its own size is read from the layout box at drag
+ * start, so the clamp uses real pixels (`ratioFromDrag`) rather than the
+ * fraction alone: a pane can never be dragged below the minimum width/height.
+ *
+ * @param {{ controller: any, separator: object, t: (key: string) => string }} props
+ */
+function PaneSeparator({ controller, separator }) {
+  const React = react()
+  const h = React.createElement
+  const drag = React.useRef(null)
+  const row = separator.dir === 'row'
+
+  const hitStyle = row
+    ? {
+        position: 'absolute',
+        left: `${separator.x * 100}%`,
+        top: `${separator.y * 100}%`,
+        height: `${separator.height * 100}%`,
+        width: SEPARATOR_HIT_PX,
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'stretch',
+        justifyContent: 'center',
+        cursor: 'col-resize',
+        touchAction: 'none',
+        zIndex: 2,
+      }
+    : {
+        position: 'absolute',
+        left: `${separator.x * 100}%`,
+        top: `${separator.y * 100}%`,
+        width: `${separator.width * 100}%`,
+        height: SEPARATOR_HIT_PX,
+        transform: 'translateY(-50%)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        justifyContent: 'center',
+        cursor: 'row-resize',
+        touchAction: 'none',
+        zIndex: 2,
+      }
+
+  const lineStyle = row
+    ? { width: SEPARATOR_LINE_PX, background: 'color-mix(in srgb, currentColor 22%, transparent)' }
+    : { height: SEPARATOR_LINE_PX, width: '100%', background: 'color-mix(in srgb, currentColor 22%, transparent)' }
+
+  const onPointerDown = (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    const box = event.currentTarget.parentElement?.getBoundingClientRect?.()
+    if (box === undefined) return
+    drag.current = {
+      // The split's own size, not the workspace: a nested split is smaller than
+      // the box, and the pixel minimum must be clamped against it.
+      size: (row ? box.width : box.height) * (separator.extent ?? 1),
+      start: row ? event.clientX : event.clientY,
+      ratio: separator.ratio,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+  }
+
+  const onPointerMove = (event) => {
+    const state = drag.current
+    if (state === null) return
+    const current = row ? event.clientX : event.clientY
+    controller.resize(
+      separator.path,
+      ratioFromDrag({
+        startRatio: state.ratio,
+        deltaPx: current - state.start,
+        sizePx: state.size,
+      }),
+    )
+    event.preventDefault()
+  }
+
+  const endDrag = (event) => {
+    drag.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
+  return h(
+    'div',
+    {
+      role: 'separator',
+      'aria-orientation': row ? 'vertical' : 'horizontal',
+      'data-hkcraft-separator': separator.path.length === 0 ? 'root' : separator.path.join('/'),
+      style: hitStyle,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: endDrag,
+      onPointerCancel: endDrag,
+    },
+    h('div', { style: lineStyle }),
   )
 }
 
@@ -148,12 +423,6 @@ function createPaneHost(controller) {
     const h = React.createElement
     const t = createTranslator(props)
     const state = usePaneSnapshot(React, controller)
-    const sessionTitle =
-      typeof props.useSessions === 'function'
-        ? props.useSessions((snapshot) =>
-            state.sessionId === null ? undefined : snapshot.byId[state.sessionId]?.title,
-          )
-        : undefined
 
     React.useEffect(() => {
       // Probe at mount, after the shell has finished loading sibling plugins.
@@ -162,73 +431,41 @@ function createPaneHost(controller) {
 
     if (!state.active) return null
 
-    const back = () => controller.deactivate()
-    if (state.sessionId === null) {
-      return h(
-        'div',
-        { style: paneStyle },
-        h(PaneFallback, {
-          t,
-          text: t('pane.empty.title'),
-          detail: t('pane.empty.body'),
-          onBack: back,
-        }),
-      )
+    if (state.root === null) {
+      return h(PaneEmptyState, {
+        t,
+        onNew: () => {
+          const attempt = controller.newInFocused()
+          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+            attempt.catch(() => {})
+          }
+        },
+      })
     }
 
-    const reference = controller.currentReference()
-    if (reference === undefined) {
-      return h(
-        'div',
-        { style: paneStyle },
-        h(PaneFallback, { t, text: t('pane.empty.title'), detail: t('pane.empty.body'), onBack: back }),
-      )
-    }
-
-    if (typeof props.SessionProvider !== 'function' || typeof props.renderSlot !== 'function') {
-      return h(
-        'div',
-        { style: paneStyle },
-        h(PaneFallback, {
-          t,
-          text: t('pane.fallback.title'),
-          detail: t('pane.fallback.error'),
-          onBack: back,
-        }),
-      )
-    }
-
-    const boundary = errorBoundaryClass()
+    const geometry = computeLayout(state.root)
     return h(
-      boundary,
-      {
-        key: state.sessionId,
-        fallback: (error) =>
-          h(
-            'div',
-            { style: paneStyle },
-            h(PaneFallback, {
-              t,
-              text: t('pane.fallback.title'),
-              detail: `${t('pane.fallback.error')} (${error instanceof Error ? error.message : String(error)})`,
-              onBack: back,
-            }),
-          ),
-      },
-      h(
-        'div',
-        { style: paneStyle, 'data-hkcraft-pane': state.sessionId },
-        h(
-          'div',
-          { style: headerStyle },
-          h('span', { style: titleStyle }, sessionTitle ?? t('pane.title')),
-          h('button', { type: 'button', style: buttonStyle, title: t('pane.back'), onClick: back }, t('pane.back')),
-        ),
-        h(
-          'div',
-          { style: bodyStyle },
-          h(props.SessionProvider, { session: reference }, props.renderSlot(PANE_SLOT, {})),
-        ),
+      'div',
+      { style: layoutStyle, 'data-hkcraft-layout': '' },
+      geometry.panes.map((paneRect) => {
+        const pane = state.panes[paneRect.paneId]
+        if (pane === undefined) return null
+        return h(PaneFrame, {
+          key: paneRect.paneId,
+          controller,
+          pane,
+          rect: paneRect,
+          focused: paneRect.paneId === state.activePaneId,
+          kit: props,
+          t,
+        })
+      }),
+      geometry.separators.map((separator) =>
+        h(PaneSeparator, {
+          key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
+          controller,
+          separator,
+        }),
       ),
     )
   }
@@ -255,17 +492,18 @@ function createPaneBody(controller) {
         : undefined
     const { phase, hero } = derivePanePhase({ sessionId, session, summaryBlank })
     const boundary = errorBoundaryClass()
-    const back = () => controller.deactivate()
+    const close = () => controller.closePaneBySession(sessionId)
 
-    const backToNative = () =>
-      h('button', { type: 'button', style: buttonStyle, onClick: back }, t('pane.back'))
+    const closeButton = () =>
+      h('button', { type: 'button', style: buttonStyle, onClick: close }, t('pane.close'))
 
     const missing = () =>
       h(PaneFallback, {
         t,
         text: t('pane.fallback.title'),
         detail: `${t('pane.fallback.missing')} (${state.probe.message ?? CONTENT_FACTORY})`,
-        onBack: back,
+        label: t('pane.close'),
+        onBack: close,
       })
 
     // A missing Factory is left to the FactoryOutlet fallback: the outlet
@@ -281,7 +519,7 @@ function createPaneBody(controller) {
           { style: { opacity: 0.75, marginBottom: 12 } },
           `${t('pane.fallback.error')} (${state.probe.message ?? CONTENT_FACTORY})`,
         ),
-        backToNative(),
+        closeButton(),
       )
     }
 
@@ -291,7 +529,7 @@ function createPaneBody(controller) {
         { style: fallbackStyle },
         h('div', { style: { fontWeight: 600, marginBottom: 6 } }, t('pane.fallback.title')),
         h('div', { style: { opacity: 0.75, marginBottom: 12 } }, t('pane.fallback.error')),
-        backToNative(),
+        closeButton(),
       )
     }
 
@@ -304,7 +542,8 @@ function createPaneBody(controller) {
             t,
             text: t('pane.fallback.title'),
             detail: `${t('pane.fallback.error')} (${error instanceof Error ? error.message : String(error)})`,
-            onBack: back,
+            label: t('pane.close'),
+            onBack: close,
           }),
       },
       props.renderFactorySlot(
@@ -339,6 +578,9 @@ function createPaneToggle(controller) {
 }
 
 module.exports = {
+  PaneFrame,
+  PaneSeparator,
+  PaneEmptyState,
   createPaneHost,
   createPaneBody,
   createPaneToggle,
