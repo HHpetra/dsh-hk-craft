@@ -8,6 +8,10 @@
  * `dsh-workspaces.js` and renders them; nothing here knows what a dsh workspace
  * record looks like, so an upstream shape change never reaches this file.
  *
+ * A row is a container holding the primary select button (light + name) and a
+ * sibling inline action slot, which ticket 01 reserves empty for the delete
+ * entry and the drag gesture to come.
+ *
  * Written with `React.createElement` and a lazy `require('react')` for the same
  * reason as `diagnostics.js`: the repository links client modules itself and the
  * unit tests run in Node, where the platform module graph does not exist.
@@ -40,16 +44,34 @@ const listStyle = {
   paddingBottom: 2,
 }
 
+/**
+ * The row container: one hover/current highlight and one pointer target for the
+ * drag handle later (ticket 04), without being the control itself. Keeping the
+ * action slot a sibling rather than a child of the select button is what lets a
+ * future delete entry stay a real button (no nested buttons).
+ */
 const rowStyle = {
   display: 'flex',
   alignItems: 'center',
-  gap: 8,
   width: '100%',
   minWidth: 0,
   height: 30,
+  borderRadius: 'var(--dsw-radius-md, 6px)',
+  background: 'transparent',
+  userSelect: 'none',
+}
+
+/** The primary select control: the whole row except the inline action slot. */
+const selectStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flex: '1 1 auto',
+  minWidth: 0,
+  height: '100%',
   padding: '0 8px',
   border: 'none',
-  borderRadius: 'var(--dsw-radius-md, 6px)',
+  borderRadius: 'inherit',
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary, inherit)',
   font: 'inherit',
@@ -59,12 +81,41 @@ const rowStyle = {
   userSelect: 'none',
 }
 
+/**
+ * The reserved inline action slot. Empty in ticket 01; ticket 03 fills it with
+ * the delete entry. The attribute is the stable marker later pointer gestures
+ * use to ignore presses that belong to a row action.
+ */
+const actionSlotStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  flex: 'none',
+}
+
 const dotStyle = {
   flex: 'none',
   width: 8,
   height: 8,
   borderRadius: '50%',
   boxShadow: '0 0 0 1px color-mix(in srgb, CanvasText 12%, transparent)',
+}
+
+/**
+ * The add row keeps the select row's geometry but is a real button itself, so
+ * it restores the chrome the row container no longer needs (ticket 01).
+ */
+const addRowStyle = {
+  ...rowStyle,
+  // The row container no longer owns the light-to-name gap; the add row is a
+  // real button, so it restores the 8px gap it had before ticket 01.
+  gap: 8,
+  padding: '0 8px',
+  border: 'none',
+  color: 'var(--dsw-alias-label-secondary, inherit)',
+  font: 'inherit',
+  fontSize: 13,
+  textAlign: 'left',
+  cursor: 'pointer',
 }
 
 /** The add row keeps the light's 8px column so names stay on one axis. */
@@ -190,8 +241,7 @@ function WorkspaceSection(props) {
       'aria-label': t('workspace.add'),
       style: wide
         ? {
-            ...rowStyle,
-            color: 'var(--dsw-alias-label-secondary, inherit)',
+            ...addRowStyle,
             cursor: busy ? 'default' : 'pointer',
             opacity: busy ? 0.55 : 1,
           }
@@ -208,27 +258,41 @@ function WorkspaceSection(props) {
     const lightLabel = t(`workspace.light.${row.light}`)
     const highlighted = row.current || hovered === row.workspaceId
     return h(
-      'button',
+      'div',
       {
-        type: 'button',
         key: row.workspaceId,
-        'aria-current': row.current ? 'true' : undefined,
-        'aria-label': `${name} — ${lightLabel}`,
-        title: `${name} — ${lightLabel}`,
-        onClick: () => props?.openWorkspace?.(row.workspaceId),
+        'data-hkcraft-workspace-row': row.workspaceId,
         onMouseEnter: () => setHovered(row.workspaceId),
         onMouseLeave: () => setHovered(null),
         style: {
           ...rowStyle,
-          background: highlighted ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))' : 'transparent',
-          fontWeight: row.current ? 600 : 400,
+          background: highlighted
+            ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
+            : 'transparent',
         },
       },
-      h('span', {
-        'aria-hidden': 'true',
-        style: { ...dotStyle, background: LIGHT_COLORS[row.light] ?? LIGHT_FALLBACK },
-      }),
-      h('span', { style: nameStyle }, name),
+      h(
+        'button',
+        {
+          type: 'button',
+          'aria-current': row.current ? 'true' : undefined,
+          'aria-label': `${name} — ${lightLabel}`,
+          title: `${name} — ${lightLabel}`,
+          onClick: () => props?.openWorkspace?.(row.workspaceId),
+          style: {
+            ...selectStyle,
+            fontWeight: row.current ? 600 : 400,
+          },
+        },
+        h('span', {
+          'aria-hidden': 'true',
+          style: { ...dotStyle, background: LIGHT_COLORS[row.light] ?? LIGHT_FALLBACK },
+        }),
+        h('span', { style: nameStyle }, name),
+      ),
+      // Empty until ticket 03 fills it; the marker is the stable handle for
+      // row gestures that must not start on a row action.
+      h('span', { 'data-hkcraft-workspace-action': '', style: actionSlotStyle }),
     )
   })
 
