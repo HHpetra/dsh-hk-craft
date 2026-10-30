@@ -124,10 +124,13 @@ function apply(ctx) {
   // The workspace section replaces a slot declared by ui-workspace and drives its
   // public service, so both services must exist before the entry is registered.
   // In pane mode the click switches the visible workspace tree instead of
-  // letting a native reveal dismiss the pane workspace (ticket 08).
+  // letting a native reveal dismiss the pane workspace (ticket 08). Deleting a
+  // workspace removes its registration publicly, then lets the pane controller
+  // drop the local layout (ticket 03).
   const workspacePanes = {
     active: () => controller.getSnapshot().active,
     switchWorkspace: (workspaceId) => controller.switchWorkspace(workspaceId),
+    forgetWorkspace: (workspaceId, options) => controller.forgetWorkspace(workspaceId, options),
   }
   ctx.inject(['uiWorkspace', 'workspaces'], (scoped) => {
     const actions = createSectionActions(scoped, { panes: workspacePanes })
@@ -141,6 +144,7 @@ function apply(ctx) {
           inject: () => ({
             openWorkspace: actions.openWorkspace,
             addWorkspace: actions.addWorkspace,
+            deleteWorkspace: actions.deleteWorkspace,
           }),
         },
         WorkspaceSection,

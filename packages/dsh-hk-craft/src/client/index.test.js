@@ -9,9 +9,14 @@ const { CONTENT_FACTORY, PANEL_KEY, PANE_SLOT } = require('./dsh-pane-host.js')
 
 /** @returns {object} one fake workspace snapshot store */
 function workspaceService(items = []) {
+  const deletes = []
   return {
+    deletes,
     list: {
       getSnapshot: () => ({ items, archivedSessionIds: [], pinnedSessionIds: [], phase: 'ready' }),
+    },
+    async delete(workspaceId) {
+      deletes.push(workspaceId)
     },
   }
 }
@@ -49,6 +54,7 @@ function fakeCtx({ services = workspaceServices() } = {}) {
   const ctx = {
     calls,
     panel,
+    services,
     effect(fn, label) {
       calls.effect.push(label)
       const dispose = fn()
@@ -245,15 +251,27 @@ test('shadows the sidebar workspace section at a lower priority than the shipped
   assert.equal(typeof component, 'function')
 })
 
-test('the workspace entry injects only the two callbacks the component consumes', () => {
+test('the workspace entry injects only the callbacks the component consumes', () => {
   const ctx = fakeCtx()
   apply(ctx)
   const { options } = entryNamed(ctx, 'sidebar.workspaces')
   assert.equal(typeof options.inject, 'function')
   const injected = options.inject()
-  assert.deepEqual(Object.keys(injected).sort(), ['addWorkspace', 'openWorkspace'])
+  assert.deepEqual(Object.keys(injected).sort(), ['addWorkspace', 'deleteWorkspace', 'openWorkspace'])
   assert.equal(typeof injected.openWorkspace, 'function')
   assert.equal(typeof injected.addWorkspace, 'function')
+  assert.equal(typeof injected.deleteWorkspace, 'function')
+})
+
+test('the workspaces entry deletes through the public service and the pane controller', async () => {
+  const services = workspaceServices()
+  const ctx = fakeCtx({ services })
+  apply(ctx)
+  const { options } = entryNamed(ctx, 'sidebar.workspaces')
+
+  await options.inject().deleteWorkspace('w1')
+
+  assert.deepEqual(services.workspaces.deletes, ['w1'])
 })
 
 test('the workspace entry declares no child slots and no store', () => {

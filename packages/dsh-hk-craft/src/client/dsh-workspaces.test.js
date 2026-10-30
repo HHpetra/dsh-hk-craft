@@ -9,7 +9,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { sectionModel, createSectionActions } = require('./dsh-workspaces.js')
+const { sectionModel, createSectionActions, workspaceRunningCount } = require('./dsh-workspaces.js')
 
 /**
  * A client context with the two services the section touches.
@@ -17,7 +17,8 @@ const { sectionModel, createSectionActions } = require('./dsh-workspaces.js')
  * @param {{ create?: (input: any) => Promise<any>, pickDirectory?: () => Promise<string> }} [options]
  */
 function fakeCtx(options = {}) {
-  const calls = { startSession: [], create: [], pickDirectory: 0 }
+  const calls = { startSession: [], create: [], pickDirectory: 0, delete: [] }
+  const items = [...(options.workspaces ?? [])]
   const uiWorkspace = {
     startSession(workspaceId, opts) {
       calls.startSession.push([workspaceId, opts])
@@ -32,6 +33,17 @@ function fakeCtx(options = {}) {
       calls.create.push(input)
       if (options.createError !== undefined) throw options.createError
       return { workspaceId: options.createdId ?? 'w-new', path: input.path, title: 'New' }
+    },
+    async delete(workspaceId) {
+      calls.delete.push(workspaceId)
+      if (options.deleteError !== undefined) throw options.deleteError
+      // Mirror the host: a successful delete drops the row immediately, so a
+      // caller that still needs the old position must have captured it first.
+      const index = items.findIndex((item) => item.workspaceId === workspaceId)
+      if (index !== -1) items.splice(index, 1)
+    },
+    list: {
+      getSnapshot: () => ({ phase: 'ready', items, archivedSessionIds: [] }),
     },
   }
   return {
@@ -135,8 +147,8 @@ test('without the bridge the public workspace picker is used', async () => {
 // ---------------------------------------------------------------------------
 
 /** The pane face the section talks to in pane mode. */
-function fakePanes({ active = true, switched = true } = {}) {
-  const calls = { switchWorkspace: [] }
+function fakePanes({ active = true, switched = true, forgotten = true } = {}) {
+  const calls = { switchWorkspace: [], forgetWorkspace: [] }
   return {
     calls,
     panes: {
@@ -144,6 +156,10 @@ function fakePanes({ active = true, switched = true } = {}) {
       switchWorkspace(workspaceId) {
         calls.switchWorkspace.push(workspaceId)
         return switched
+      },
+      forgetWorkspace(workspaceId, options) {
+        calls.forgetWorkspace.push([workspaceId, options])
+        return forgotten
       },
     },
   }
@@ -190,4 +206,86 @@ test('a workspace added in pane mode is selected without a native reveal', async
   assert.deepEqual(calls.create, [{ path: 'C:\\projects\\new' }])
   assert.deepEqual(paneCalls.switchWorkspace, ['w-new'])
   assert.deepEqual(calls.startSession, [])
+})
+
+// ---------------------------------------------------------------------------
+// Deleting a workspace (ticket 03): the public service first, then the local
+// pane bookkeeping. The host order is captured before the delete because the
+// catalog drops the row immediately.
+// ---------------------------------------------------------------------------
+
+test('a delete calls workspaces.delete, then forgets the workspace with the host order captured beforehand', async () => {
+  const hostOrder = [{ workspaceId: 'w1' }, { workspaceId: 'w2' }, { workspaceId: 'w3' }]
+  const { ctx, calls } = fakeCtx({ workspaces: hostOrder })
+  const { panes, calls: paneCalls } = fakePanes()
+  const actions = createSectionActions(ctx, { panes })
+
+  await actions.deleteWorkspace('w2')
+
+  assert.deepEqual(calls.delete, ['w2'])
+  assert.deepEqual(paneCalls.forgetWorkspace, [['w2', { order: ['w1', 'w2', 'w3'] }]])
+})
+
+test('a failed public delete rejects and never touches the pane layout', async () => {
+  const failure = new Error('workspace delete failed: workspace/not-found')
+  const { ctx, calls } = fakeCtx({ deleteError: failure, workspaces: [{ workspaceId: 'w1' }] })
+  const { panes, calls: paneCalls } = fakePanes()
+
+  await assert.rejects(createSectionActions(ctx, { panes }).deleteWorkspace('w1'), failure)
+  assert.deepEqual(calls.delete, ['w1'])
+  assert.deepEqual(paneCalls.forgetWorkspace, [])
+})
+
+test('a delete outside pane mode removes the registration with no pane controller', async () => {
+  const { ctx, calls } = fakeCtx({ workspaces: [{ workspaceId: 'w1' }] })
+
+  await createSectionActions(ctx).deleteWorkspace('w1')
+
+  assert.deepEqual(calls.delete, ['w1'])
+})
+
+test('a shell without workspaces.delete reports a clear error instead of half-deleting', async () => {
+  const ctx = {
+    get(name) {
+      return name === 'workspaces' ? { list: { getSnapshot: () => ({ items: [] }) } } : undefined
+    },
+  }
+  await assert.rejects(
+    createSectionActions(ctx).deleteWorkspace('w1'),
+    /workspaces\.delete is not available/,
+  )
+})
+
+test('deleting with no workspace id is refused before any service call', async () => {
+  const { ctx, calls } = fakeCtx()
+
+  await assert.rejects(createSectionActions(ctx).deleteWorkspace(''), /workspace id is required/)
+  assert.deepEqual(calls.delete, [])
+})
+
+test('the running-session count is what the delete warning promises', () => {
+  const workspaces = {
+    phase: 'ready',
+    items: [{ workspaceId: 'w1', sessionIds: ['s1', 's2', 's3', 'archived', 'gone'] }],
+    archivedSessionIds: ['archived'],
+  }
+  const sessions = {
+    phase: 'ready',
+    byId: {
+      s1: { id: 's1', running: true },
+      s2: { id: 's2', running: false },
+      s3: { id: 's3', running: false },
+    },
+  }
+  // s1 runs per its summary, s2 runs per the unified status, s3 only waits for
+  // the user (waiting is not running), and archived / vanished members are out.
+  const statuses = new Map([
+    ['s2', { running: true }],
+    ['s3', { running: false, pendingInteraction: { kind: 'approval' } }],
+  ])
+
+  assert.equal(workspaceRunningCount(workspaces, sessions, statuses, 'w1'), 2)
+  assert.equal(workspaceRunningCount(workspaces, sessions, statuses, 'unknown'), 0)
+  assert.equal(workspaceRunningCount({ phase: 'loading' }, sessions, statuses, 'w1'), 0)
+  assert.equal(workspaceRunningCount(workspaces, { phase: 'loading' }, statuses, 'w1'), 0)
 })

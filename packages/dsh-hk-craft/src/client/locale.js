@@ -55,6 +55,16 @@ const zh = {
   'workspace.add': '添加工作区',
   'workspace.addFailed': '无法添加工作区',
   'workspace.defaultName': '默认工作区',
+  'workspace.delete': '删除工作区',
+  'workspace.delete.title': '删除工作区「{name}」',
+  'workspace.delete.body':
+    '只移除工作区登记；目录和会话不会被删除。这些会话仍保留在 dsh 的会话数据里，原生侧栏会把它们归入“未分组”，本插件的精简侧栏不显示未分组。',
+  'workspace.delete.running':
+    '该工作区有 {n} 个会话正在运行；删除不会停止它们，它们会继续在后台运行。',
+  'workspace.delete.cancel': '取消',
+  'workspace.delete.action': '删除工作区',
+  'workspace.delete.busy': '正在删除…',
+  'workspace.delete.error': '删除失败',
   'workspace.light.red': '有会话在等你',
   'workspace.light.yellow': '有会话运行中',
   'workspace.light.green': '无活动会话',
@@ -121,6 +131,16 @@ const en = {
   'workspace.add': 'Add workspace',
   'workspace.addFailed': 'Could not add workspace',
   'workspace.defaultName': 'Default Workspace',
+  'workspace.delete': 'Delete workspace',
+  'workspace.delete.title': 'Delete workspace “{name}”',
+  'workspace.delete.body':
+    'This only removes the workspace registration; the directory and its conversations are not deleted. The conversations stay in dsh’s session data — the native sidebar groups them under “Ungrouped”, which this slim sidebar does not show.',
+  'workspace.delete.running':
+    'Running conversations in this workspace: {n}. Deleting the workspace will not stop them; they keep running in the background.',
+  'workspace.delete.cancel': 'Cancel',
+  'workspace.delete.action': 'Delete workspace',
+  'workspace.delete.busy': 'Deleting…',
+  'workspace.delete.error': 'Could not delete the workspace',
   'workspace.light.red': 'A session is waiting for you',
   'workspace.light.yellow': 'A session is running',
   'workspace.light.green': 'No active session',

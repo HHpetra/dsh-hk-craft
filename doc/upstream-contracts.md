@@ -356,6 +356,46 @@ the pane is dropped.
 
 ---
 
+## Deleting a workspace
+
+**Provider:** `@deepseek-ai/dsh-api-workspace-controller` (`workspaces`).
+
+**Semantics:** `workspaces.delete(workspaceId)` removes **only the workspace
+registration**. It does not delete the directory and does not delete the
+conversations: those sessions stay in dsh's session data, and the native sidebar
+groups them under “Ungrouped”. It also does not interrupt a conversation that is
+running — deleting the registration is not closing the session. The call
+rejects with the shell's error when the host refuses the delete, and the local
+state must then be left untouched.
+
+A successful delete drops the row from `workspaces.list` immediately. A client
+that still needs the deleted row's old position — for example to hand the view
+to the next (or previous) workspace in Host order — must capture that order
+*before* awaiting the call.
+
+The plugin's own per-workspace layout key (`dsh.hkcraft.layout.v1.<workspaceId>`,
+`layout-store.js`) is invisible to the host. After a successful delete the
+plugin removes that key itself (`layout-store.js:removeLayout`), because the
+“enabled” inference treats an existing key as evidence that the workspace was
+opened in a split view; leaving it behind would resurrect a ghost workspace
+after the next restart. Deleting a workspace that was never opened in split
+view is still a meaningful operation (it clears just such a key) but has no
+layout side effect.
+
+**Why we rely on it:** the sidebar delete entry calls the public service first
+and only then asks the pane controller to forget the workspace
+(`dsh-workspaces.js:createSectionActions.deleteWorkspace` →
+`dsh-pane-host.js:forgetWorkspace`). The controller drops the layout, releases
+the pane references (never the Host sessions) and moves the visible workspace to
+its Host-order neighbour.
+
+**Verified:** the delete semantics are the user-confirmed contract recorded in
+this feature's spec (§2, §8). Runtime probe on the pinned train: delete a
+workspace with a running conversation and confirm the row and its layout key
+disappear, the directory and sessions remain, and the turn keeps running.
+
+---
+
 ## `sidebar.workspaces` slot
 
 **Provider:** `@deepseek-ai/dsh-client-ui-workspace` and
