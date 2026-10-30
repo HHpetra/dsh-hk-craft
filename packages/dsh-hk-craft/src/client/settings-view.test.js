@@ -1,0 +1,268 @@
+'use strict'
+
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const Module = require('node:module')
+
+const {
+  ENTRY_NAME,
+  createSettingsSection,
+  diagnosticsRows,
+  paneModeKey,
+  togglePaneMode,
+} = require('./settings-view.js')
+const { zh } = require('./locale.js')
+
+/** Read the locale table the way a slot `t` does, so assertions carry real copy. */
+const t = (key) => zh[key] ?? key
+
+/**
+ * A React stand-in for the settings render: only the calls the component makes.
+ * `settings-view.js` resolves `react` lazily, so installing this through
+ * `Module._load` reaches the same module instance the component uses.
+ */
+function installFakeReact() {
+  const originalLoad = Module._load
+  const fake = {
+    Fragment: Symbol('Fragment'),
+    createElement: (type, props, ...children) => ({
+      type,
+      props: { ...(props ?? {}), children },
+    }),
+    useEffect: () => {},
+    useRef: (value) => ({ current: value }),
+    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+  }
+  Module._load = function load(request, parent, isMain) {
+    if (request === 'react') return fake
+    return originalLoad.call(this, request, parent, isMain)
+  }
+  return () => {
+    Module._load = originalLoad
+  }
+}
+
+/** @returns {string} every text node under an element tree, joined by spaces */
+function textOf(node) {
+  if (node === null || node === undefined || node === false) return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join(' ')
+  return textOf(node.props?.children)
+}
+
+/** @returns {object|undefined} the first button whose visible text contains `label` */
+function buttonWithText(node, label) {
+  if (node === null || node === undefined || node === false) return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = buttonWithText(child, label)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (typeof node === 'string' || typeof node === 'number') return undefined
+  if (node.type === 'button' && textOf(node).includes(label)) return node
+  return buttonWithText(node.props?.children, label)
+}
+
+/**
+ * The controller face the settings page consumes: a snapshot, a subscription
+ * and the two mode actions. It records every call.
+ *
+ * @param {{active?: boolean, probe?: object, activateResult?: boolean, activateError?: string, deactivateError?: string}} [options]
+ */
+function fakeController(options = {}) {
+  const calls = { activate: 0, deactivate: 0, refreshProbe: 0 }
+  let snapshot = {
+    active: options.active === true,
+    probe: options.probe ?? { ok: true, status: 'present' },
+    error: null,
+  }
+  return {
+    calls,
+    getSnapshot: () => snapshot,
+    subscribe: () => () => {},
+    refreshProbe() {
+      calls.refreshProbe += 1
+    },
+    activate() {
+      calls.activate += 1
+      if (options.activateResult === false) {
+        if (options.activateError !== undefined) snapshot = { ...snapshot, error: options.activateError }
+        return false
+      }
+      snapshot = { ...snapshot, active: true, error: null }
+      return true
+    },
+    deactivate() {
+      calls.deactivate += 1
+      if (options.deactivateError !== undefined) {
+        snapshot = { ...snapshot, error: options.deactivateError }
+        return
+      }
+      snapshot = { ...snapshot, active: false, error: null }
+    },
+  }
+}
+
+/** @returns {{log: any[], close: Function, setBusy: Function, setError: Function}} */
+function toggleHandlers() {
+  const log = []
+  return {
+    log,
+    close: () => log.push('close'),
+    setBusy: (value) => log.push(['busy', value]),
+    setError: (value) => log.push(['error', value]),
+  }
+}
+
+test('the diagnostics report the loaded client, the entry, the probe and the view', () => {
+  const rows = diagnosticsRows({ active: false, probe: { ok: true, status: 'present' } }, t)
+
+  assert.deepEqual(
+    rows.map((row) => row.label),
+    [
+      zh['settings.diag.loaded'],
+      zh['settings.diag.entry'],
+      zh['settings.diag.content'],
+      zh['settings.diag.view'],
+    ],
+  )
+  assert.deepEqual(
+    rows.map((row) => row.value),
+    ['✓', ENTRY_NAME, zh['settings.diag.status.present'], zh['settings.view.native']],
+  )
+})
+
+test('a failed probe keeps its message next to the localized status', () => {
+  const message = 'factory "conversation.content" is not registered'
+  const rows = diagnosticsRows({ active: true, probe: { ok: false, status: 'missing', message } }, t)
+  const content = rows.find((row) => row.key === 'content')
+
+  assert.equal(content.value, `${zh['settings.diag.status.missing']} — ${message}`)
+})
+
+test('a snapshot without a probe reads as an unknown probe, not as missing copy', () => {
+  const rows = diagnosticsRows({ active: false }, t)
+  const content = rows.find((row) => row.key === 'content')
+
+  assert.equal(content.value, zh['settings.diag.status.unknown'])
+})
+
+test('the pane mode key follows the controller snapshot', () => {
+  assert.equal(paneModeKey({ active: true }), 'settings.view.split')
+  assert.equal(paneModeKey({ active: false }), 'settings.view.native')
+  assert.equal(paneModeKey(undefined), 'settings.view.native')
+})
+
+test('the toggle enters the pane workspace and closes the settings page on success', async () => {
+  const controller = fakeController()
+  const handlers = toggleHandlers()
+
+  const result = await togglePaneMode(controller, handlers)
+
+  assert.deepEqual(result, { ok: true })
+  assert.equal(controller.calls.activate, 1)
+  assert.equal(controller.calls.deactivate, 0)
+  assert.deepEqual(handlers.log, [['busy', true], ['error', null], ['busy', false], 'close'])
+})
+
+test('the toggle returns to the native view and closes on success', async () => {
+  const controller = fakeController({ active: true })
+  const handlers = toggleHandlers()
+
+  const result = await togglePaneMode(controller, handlers)
+
+  assert.deepEqual(result, { ok: true })
+  assert.equal(controller.calls.deactivate, 1)
+  assert.equal(controller.calls.activate, 0)
+  assert.equal(handlers.log.includes('close'), true)
+})
+
+test('a rejected activation shows the controller error and keeps the page open', async () => {
+  const controller = fakeController({
+    activateResult: false,
+    activateError: 'pane main entry is not registered yet',
+  })
+  const handlers = toggleHandlers()
+
+  const result = await togglePaneMode(controller, handlers)
+
+  assert.deepEqual(result, { ok: false, error: 'pane main entry is not registered yet' })
+  assert.equal(handlers.log.includes('close'), false)
+  assert.deepEqual(handlers.log.at(-1), ['error', 'pane main entry is not registered yet'])
+})
+
+test('a failed return to the native view shows the controller error and keeps the page open', async () => {
+  const controller = fakeController({
+    active: true,
+    deactivateError: 'cannot select the native panel',
+  })
+  const handlers = toggleHandlers()
+
+  const result = await togglePaneMode(controller, handlers)
+
+  assert.deepEqual(result, { ok: false, error: 'cannot select the native panel' })
+  assert.equal(handlers.log.includes('close'), false)
+  assert.deepEqual(handlers.log.at(-1), ['error', 'cannot select the native panel'])
+})
+
+test('a rejection without a controller reason still counts as a visible failure', async () => {
+  const controller = fakeController({ activateResult: false })
+  const handlers = toggleHandlers()
+
+  const result = await togglePaneMode(controller, handlers)
+
+  assert.deepEqual(result, { ok: false, error: '' })
+  assert.equal(handlers.log.includes('close'), false)
+  assert.deepEqual(handlers.log.at(-1), ['error', ''])
+})
+
+test('a throwing controller becomes a displayed error instead of an unhandled rejection', async () => {
+  const controller = fakeController()
+  controller.activate = () => {
+    throw new Error('controller exploded')
+  }
+  const handlers = toggleHandlers()
+
+  const result = await togglePaneMode(controller, handlers)
+
+  assert.deepEqual(result, { ok: false, error: 'controller exploded' })
+  assert.equal(handlers.log.includes('close'), false)
+})
+
+test('the settings page renders the diagnostics inline and the transition note', () => {
+  const restore = installFakeReact()
+  try {
+    const Section = createSettingsSection(fakeController())
+    const view = Section({ t, close: () => {} })
+    const text = textOf(view)
+
+    assert.match(text, /HK Craft/)
+    assert.ok(text.includes(zh['settings.diag.title']))
+    assert.ok(text.includes(zh['settings.diag.loaded']))
+    assert.ok(text.includes(ENTRY_NAME))
+    assert.ok(text.includes(zh['settings.diag.status.present']))
+    assert.ok(text.includes(zh['settings.view.native']))
+    assert.ok(text.includes(zh['settings.pane.note']))
+    assert.notEqual(buttonWithText(view, zh['settings.pane.enter']), undefined)
+  } finally {
+    restore()
+  }
+})
+
+test('an active pane workspace offers the way back to the native view', () => {
+  const restore = installFakeReact()
+  try {
+    const Section = createSettingsSection(fakeController({ active: true }))
+    const view = Section({ t, close: () => {} })
+    const text = textOf(view)
+
+    assert.ok(text.includes(zh['settings.view.split']))
+    assert.ok(text.includes(zh['settings.pane.current']))
+    assert.notEqual(buttonWithText(view, zh['settings.pane.exit']), undefined)
+  } finally {
+    restore()
+  }
+})

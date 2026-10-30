@@ -72,6 +72,28 @@ function findByAttribute(element, attribute) {
   return null
 }
 
+/** Every element below `element` carrying `attribute`, depth first. */
+function findAllByAttribute(element, attribute) {
+  const out = []
+  const walk = (node) => {
+    if (node === null || node === undefined || typeof node !== 'object') return
+    if (node.props?.[attribute] !== undefined) {
+      out.push(node)
+      return
+    }
+    for (const child of childrenOf(node)) walk(child)
+  }
+  walk(element)
+  return out
+}
+
+/** One workspace row, matched by its stable marker. */
+function rowOf(tree, workspaceId) {
+  return findAllByAttribute(tree, 'data-hkcraft-workspace-row').find(
+    (row) => row.props['data-hkcraft-workspace-row'] === workspaceId,
+  )
+}
+
 /** Two workspaces, one with a member session so the light has something to read. */
 function snapshots({ current = false } = {}) {
   return {
@@ -93,7 +115,12 @@ function snapshots({ current = false } = {}) {
 }
 
 /** Render the section with the shell hooks stubbed out. */
-function renderSection({ current = false, openWorkspace = () => {}, deleteWorkspace = () => {} } = {}) {
+function renderSection({
+  current = false,
+  openWorkspace = () => {},
+  deleteWorkspace = () => {},
+  reorderWorkspace = () => {},
+} = {}) {
   const { workspaces, sessions, statuses } = snapshots({ current })
   return WorkspaceSection({
     t: (key) => zh[key] ?? key,
@@ -102,6 +129,7 @@ function renderSection({ current = false, openWorkspace = () => {}, deleteWorksp
     useSessionStatus: (selector) => selector(statuses),
     openWorkspace,
     deleteWorkspace,
+    reorderWorkspace,
   })
 }
 
@@ -206,6 +234,212 @@ test('the current workspace still marks its select control', () => {
     const current = buttons.find((button) => button.props['aria-label']?.startsWith('Project A'))
 
     assert.equal(current.props['aria-current'], 'true')
+  } finally {
+    restore()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Drag to reorder (ticket 04). The row container is the pointer target; a press
+// only becomes a drag after 6px, and the drop row is hit-tested because pointer
+// capture keeps the move events on the source row.
+// ---------------------------------------------------------------------------
+
+/** A pointer event shaped like the subset the row handlers read. */
+function pointerEvent(clientX, clientY, { target = null } = {}) {
+  return {
+    button: 0,
+    pointerId: 7,
+    clientX,
+    clientY,
+    target: target ?? { closest: () => null },
+    currentTarget: { setPointerCapture() {}, releasePointerCapture() {} },
+    preventDefault() {},
+  }
+}
+
+/** The element `document.elementFromPoint` returns for a row under the pointer. */
+function fakeRowElement(workspaceId, rect) {
+  const element = {
+    getBoundingClientRect: () => rect,
+    getAttribute: (name) => (name === 'data-hkcraft-workspace-row' ? workspaceId : null),
+    closest(selector) {
+      return selector === '[data-hkcraft-workspace-row]' ? element : null
+    },
+  }
+  return element
+}
+
+/** Run `body` with `document.elementFromPoint` resolving to `element`. */
+function withElementFromPoint(element, body) {
+  const previous = globalThis.document
+  globalThis.document = { elementFromPoint: () => element }
+  try {
+    body()
+  } finally {
+    if (previous === undefined) delete globalThis.document
+    else globalThis.document = previous
+  }
+}
+
+/** The row's primary control, which is what a click opens the workspace with. */
+function selectOf(row) {
+  return childrenOf(row).find((child) => child.type === 'button')
+}
+
+test('a press shorter than six pixels still opens the workspace', () => {
+  const restore = installFakeReact()
+  try {
+    const opened = []
+    const reorders = []
+    const tree = renderSection({
+      openWorkspace: (workspaceId) => opened.push(workspaceId),
+      reorderWorkspace: (...args) => reorders.push(args),
+    })
+    const row = rowOf(tree, 'w2')
+
+    row.props.onPointerDown(pointerEvent(50, 50))
+    row.props.onPointerMove(pointerEvent(54, 53)) // 5px: still a click
+    row.props.onPointerUp(pointerEvent(54, 53))
+    selectOf(row).props.onClick()
+
+    assert.deepEqual(reorders, [], 'a click must not write an order')
+    assert.deepEqual(opened, ['w2'], 'the click still opens the workspace')
+  } finally {
+    restore()
+  }
+})
+
+test('a drag past six pixels reorders and swallows the click that follows', () => {
+  const restore = installFakeReact()
+  try {
+    const opened = []
+    const reorders = []
+    const tree = renderSection({
+      openWorkspace: (workspaceId) => opened.push(workspaceId),
+      reorderWorkspace: (sourceId, beforeId) => {
+        reorders.push([sourceId, beforeId])
+        return Promise.resolve()
+      },
+    })
+    const source = rowOf(tree, 'w2')
+
+    // w2 is dragged onto the upper half of w1, so it must land before w1.
+    withElementFromPoint(fakeRowElement('w1', { top: 100, height: 30 }), () => {
+      source.props.onPointerDown(pointerEvent(50, 150))
+      source.props.onPointerMove(pointerEvent(50, 110))
+      source.props.onPointerUp(pointerEvent(50, 110))
+    })
+    // The browser follows pointerup with a click on the source row's control.
+    selectOf(source).props.onClick()
+
+    assert.deepEqual(reorders, [['w2', 'w1']])
+    assert.deepEqual(opened, [], 'the click after a drag must be swallowed')
+  } finally {
+    restore()
+  }
+})
+
+test('the lower half of the last row appends the dragged workspace', () => {
+  const restore = installFakeReact()
+  try {
+    const reorders = []
+    const tree = renderSection({
+      reorderWorkspace: (sourceId, beforeId) => {
+        reorders.push([sourceId, beforeId])
+      },
+    })
+    const source = rowOf(tree, 'w1')
+
+    withElementFromPoint(fakeRowElement('w2', { top: 100, height: 30 }), () => {
+      source.props.onPointerDown(pointerEvent(50, 140))
+      source.props.onPointerMove(pointerEvent(50, 125)) // lower half of the last row
+      source.props.onPointerUp(pointerEvent(50, 125))
+    })
+
+    assert.deepEqual(reorders, [['w1', undefined]], 'an undefined anchor means append')
+  } finally {
+    restore()
+  }
+})
+
+test('dropping a row back where it already is writes nothing', () => {
+  const restore = installFakeReact()
+  try {
+    const opened = []
+    const reorders = []
+    const tree = renderSection({
+      openWorkspace: (workspaceId) => opened.push(workspaceId),
+      reorderWorkspace: (...args) => reorders.push(args),
+    })
+    const source = rowOf(tree, 'w1')
+
+    // w1 on the upper half of w2 would already be w1 before w2.
+    withElementFromPoint(fakeRowElement('w2', { top: 100, height: 30 }), () => {
+      source.props.onPointerDown(pointerEvent(50, 140))
+      source.props.onPointerMove(pointerEvent(50, 105))
+      source.props.onPointerUp(pointerEvent(50, 105))
+    })
+    selectOf(source).props.onClick()
+
+    assert.deepEqual(reorders, [], 'a no-op drop must not write an order')
+    assert.deepEqual(opened, [], 'the drag still swallowed the click')
+  } finally {
+    restore()
+  }
+})
+
+test('a press on the row action slot never starts a drag', () => {
+  const restore = installFakeReact()
+  try {
+    const opened = []
+    const reorders = []
+    const tree = renderSection({
+      openWorkspace: (workspaceId) => opened.push(workspaceId),
+      reorderWorkspace: (...args) => reorders.push(args),
+    })
+    const source = rowOf(tree, 'w2')
+    const actionTarget = {
+      closest: (selector) => (selector === '[data-hkcraft-workspace-action]' ? {} : null),
+    }
+
+    withElementFromPoint(fakeRowElement('w1', { top: 100, height: 30 }), () => {
+      source.props.onPointerDown(pointerEvent(50, 150, { target: actionTarget }))
+      source.props.onPointerMove(pointerEvent(50, 110))
+      source.props.onPointerUp(pointerEvent(50, 110))
+    })
+    selectOf(source).props.onClick()
+
+    assert.deepEqual(reorders, [], 'a row action press must not reorder')
+    assert.deepEqual(opened, ['w2'], 'and it must not swallow the click either')
+  } finally {
+    restore()
+  }
+})
+
+test('only one reorder request may be in flight at a time', () => {
+  const restore = installFakeReact()
+  try {
+    const reorders = []
+    const tree = renderSection({
+      reorderWorkspace: (sourceId, beforeId) => {
+        reorders.push([sourceId, beforeId])
+        return new Promise(() => {})
+      },
+    })
+    const source = rowOf(tree, 'w2')
+    const drag = () => {
+      withElementFromPoint(fakeRowElement('w1', { top: 100, height: 30 }), () => {
+        source.props.onPointerDown(pointerEvent(50, 150))
+        source.props.onPointerMove(pointerEvent(50, 110))
+        source.props.onPointerUp(pointerEvent(50, 110))
+      })
+    }
+
+    drag()
+    drag()
+
+    assert.equal(reorders.length, 1, 'a second drag must not race the first request')
   } finally {
     restore()
   }
