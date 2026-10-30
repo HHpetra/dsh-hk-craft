@@ -166,6 +166,66 @@ function split(layout, paneId, dir, pane) {
 }
 
 /**
+ * A balanced row tree over `paneIds`, left to right, in which every leaf is
+ * exactly `1 / paneIds.length` of the width.
+ *
+ * A nested row split only gives its children shares of *its own* rect, so the
+ * tree is built by splitting a subtree at `leftCount / totalCount`: the left
+ * subtree then occupies exactly the share its leaves need, and each leaf ends
+ * at `1 / N` regardless of nesting depth. Ratios therefore stay well above
+ * `MIN_RATIO` for any realistic pane count (`1/3` is the smallest split).
+ *
+ * @param {string[]} paneIds
+ * @returns {object|null} the root, or null for an empty list
+ */
+function evenRow(paneIds) {
+  if (!Array.isArray(paneIds) || paneIds.length === 0) return null
+  /** @param {string[]} ids @returns {object} */
+  const build = (ids) => {
+    if (ids.length === 1) return leafNode(ids[0])
+    const leftCount = Math.floor(ids.length / 2)
+    return splitNode(
+      'row',
+      leftCount / ids.length,
+      build(ids.slice(0, leftCount)),
+      build(ids.slice(leftCount)),
+    )
+  }
+  return build(paneIds)
+}
+
+/**
+ * Add a pane beside `anchorPaneId` and re-tile the workspace into one row of
+ * equal-width columns (ADR-0006). This is the strip's `+` transition: the
+ * conversation count decides the split, not the last pane's geometry.
+ *
+ * The new pane takes the slot right after the anchor (or the end when the
+ * anchor is absent), is focused, and every manually dragged ratio is discarded
+ * because the whole tree is rebuilt. With no panes open this opens the first
+ * pane, so the caller needs no empty-layout special case.
+ *
+ * @param {object} layout
+ * @param {{paneId: string, sessionId: string, view?: string}} pane
+ * @param {string|null} [anchorPaneId]
+ * @returns {object}
+ */
+function tile(layout, pane, anchorPaneId = null) {
+  if (pane === null || typeof pane !== 'object') return layout
+  if (typeof pane.paneId !== 'string' || pane.paneId === '') return layout
+  if (layout.panes[pane.paneId] !== undefined) return layout
+  const ordered = leaves(layout.root)
+  const anchorIndex =
+    typeof anchorPaneId === 'string' && anchorPaneId !== '' ? ordered.indexOf(anchorPaneId) : -1
+  const insertAt = anchorIndex < 0 ? ordered.length : anchorIndex + 1
+  return {
+    ...layout,
+    root: evenRow([...ordered.slice(0, insertAt), pane.paneId, ...ordered.slice(insertAt)]),
+    panes: { ...layout.panes, [pane.paneId]: normalizePane(pane) },
+    activePaneId: pane.paneId,
+  }
+}
+
+/**
  * Close a pane. Its sibling subtree takes the parent's place — recursively, so
  * a nested close never leaves a blank cell — and the focus moves to the leaf
  * that ended up where the closed pane was. Closing the last pane empties the
@@ -532,6 +592,8 @@ module.exports = {
   findLeafPath,
   openPane,
   split,
+  evenRow,
+  tile,
   close,
   focus,
   resize,

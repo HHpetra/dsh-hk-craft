@@ -149,18 +149,55 @@ turn stops and history is kept.
 
 **Semantics:** `uiConversation.binding(sessionId)` resolves the stable
 per-session binding and throws for an unknown or inactive session.
-`binding.activate(viewId)` switches the resident conversation View (e.g.
-`"chat"`, `"trajectory"`) without rebuilding the session, so the draft and the
-native scroll behaviour are untouched. dsh's own View switcher calls the same
-method and then persists its preference; this plugin keeps the choice in the
-layout tree instead, so no dsh store is written.
+`binding.activate(viewId)` activates the assembler target that builds the View
+data (`"chat"`, `"trajectory"`) without rebuilding the session, so the draft and
+the native scroll behaviour are untouched.
 
-**Why we rely on it:** the pane's `对话 | 轨迹` control is a per-pane memory.
-It must drive the real View through the public binding rather than mount a
-second copy of the conversation.
+**Important:** `binding.activate(view)` alone does **not** change what the shell
+renders. dsh's own View switcher (`selectView` in `conversation.session`) calls
+`activateView(...)` **and** `actions.setView(view)`, where the latter writes
+ui-conversation's per-session `dsh.conversation` store. The rendered View is
+`resolveActiveView(tabs, useStore((s) => s.view))`, so without that store write the
+shell stays on Chat. See the next section for how the pane replaces that
+selection without writing the store.
 
-**Verified:** binding and activate were read in ui-conversation. Runtime probe:
-switch one pane to trajectory and back; the other pane is unaffected.
+**Why we rely on it:** the pane still warms the assembler target through the
+public binding before rendering the View; the actual rendering choice comes from
+the pane's layout record via the embedded `views` slot.
+
+**Verified:** binding, activate, and the `selectView` double write were read in
+ui-conversation 0.2.1-rc.5. Runtime probe: calling only `binding.activate` leaves
+the pane on Chat.
+
+---
+
+## Embedded `views` local slot and View selection
+
+**Provider:** `@deepseek-ai/dsh-client-ui-conversation` (the `conversation.content`
+factory) and `@deepseek-ai/dsh-client-ui-renderer` (factory local components).
+
+**Semantics:** the `conversation.content` factory declares `views` as a local
+`session` component slot. Its default renders the `conversation.session` entry,
+which chooses the View from the per-session store described above.
+`renderFactorySlot(name, props, { slots: { views: Component } })` lets the caller
+replace that local component for its own occurrence. The replacement receives
+the session standard props and the **factory-bound** `renderSlot`, so it can
+render the direct child `conversation.session` with owner props.
+`conversation.session`'s `DefaultConversationViews` honours a `view` prop over the
+store (`viewId = view ?? active?.id`).
+
+**Why we rely on it:** the pane's View memory lives in its layout record, not in
+ui-conversation's store. Replacing `views` and passing that View as
+`conversation.session`'s `view` prop keeps dsh's transcript, draft persistence and
+composer while making the pane's toggle authoritative. The toggle still calls
+`binding.activate` first so the target data is built.
+
+**Verified:** the factory's local `views` declaration, the default adapter, the
+`view` override and `selectView`'s double write were read in ui-conversation
+0.2.1-rc.5; local-component binding was read in `dsh-client-ui-renderer`. Manual
+probe to run after install: toggle a pane to Trajectory and confirm the transcript
+swaps while the composer stays mounted, then click a tool call in Chat and confirm
+the inspect jump reaches the pane.
 
 ---
 
@@ -176,12 +213,12 @@ disabled. `DeveloperToolsPreference` reads `value?.enabled ?? false`, so the
 answer is false until the host value arrives.
 
 **Why we rely on it:** a pane must match native dsh. When the gate is off the
-trajectory segment is not rendered (and a remembered trajectory choice reads
-as chat); when the gate flips back on, the remembered choice is re-asserted.
+trajectory View is not rendered (and a remembered trajectory choice reads as
+chat); when the gate flips back on, the remembered choice is re-asserted.
 
 **Verified:** the gate read and the "skip the View entirely" branch were read
 in ui-conversation and ui-settings. Runtime probe: turn developer tools off and
-confirm the segment disappears from every pane.
+confirm the View disappears from every pane.
 
 ---
 
@@ -337,6 +374,33 @@ not a fork.
 **Verified:** slot render, shipped registration and the priority sort were read
 in the sidebar and ui-workspace bundles. Runtime probe: install, confirm the
 section is slim and uninstall restores the native one.
+
+---
+
+## Optional service reads through `ctx.get`
+
+**Provider:** `@deepseek-ai/cordis` (the client context proxy and
+`ReflectService`).
+
+**Semantics:** a plugin context is a proxy. Reading a service property that the
+plugin did not declare in `inject` throws
+`cannot get property "<name>" without inject`; `ctx.get("<name>")` is the
+supported **no-inject** read and returns `undefined` while the providing fiber
+is inactive. `ctx.get(name, false)` returns an implementation regardless of its
+fiber state.
+
+**Why we rely on it:** the pane must keep working chat-only when `ui-settings` or
+`ui-conversation` is absent or has not loaded, so the View adapter reads both
+optional services through `ctx.get` at call time instead of adding them to
+`inject`. A plain property read must not come first: its Cordis throw looks like
+"service absent" and silently disables the trajectory view and its toggle. That
+was the real cause of the missing pane view toggle.
+
+**Verified:** the proxy trap and `ReflectService.get` were read in
+`@deepseek-ai/cordis` 0.2.1-rc.5. The pane header now reads the gate through
+`ctx.get("configForms").developerTools.enabled`. Runtime probe: open a pane with
+`ui-settings.enabled: true` and confirm the 轨迹/对话 toggle appears and switches
+the resident View.
 
 ---
 

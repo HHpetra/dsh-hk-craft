@@ -8,7 +8,7 @@ const {
   TRAJECTORY_VIEW,
   createViewSwitch,
   effectiveView,
-  viewSegments,
+  viewOptions,
 } = require('./dsh-view-switch.js')
 
 /** Stand-in for the public `ctx.uiConversation` face (the View activation seam). */
@@ -56,6 +56,52 @@ function switchCtx({ uiConversation, developerTools } = {}) {
     configForms: developerTools === undefined ? undefined : { developerTools },
   }
 }
+
+/**
+ * A Cordis-style context proxy: `ctx.get(name)` is the no-inject read, while a
+ * plain property read throws exactly like the real `cannot get property …
+ * without inject` proxy. The plugin does not inject these services, so this is
+ * the shape its adapter must survive.
+ *
+ * @param {Record<string, any>} faces
+ * @returns {any}
+ */
+function cordisContext(faces = {}) {
+  return new Proxy(
+    {
+      get(name) {
+        return faces[name]
+      },
+    },
+    {
+      get(target, prop) {
+        if (prop === 'get') return target.get
+        throw new Error(`cannot get property "${String(prop)}" without inject`)
+      },
+    },
+  )
+}
+
+test('reads optional services through ctx.get on a Cordis context', () => {
+  const uiConversation = fakeUiConversation()
+  const developerTools = fakeDeveloperTools(true)
+  const viewSwitch = createViewSwitch(cordisContext({ uiConversation, configForms: { developerTools } }))
+
+  // A plain `ctx.configForms` read would throw here; the pane must still see the
+  // gate as enabled and drive the View through the no-inject read.
+  assert.equal(viewSwitch.isTrajectoryAvailable(), true)
+  assert.deepEqual(viewSwitch.activate('s1', TRAJECTORY_VIEW), { ok: true })
+  assert.deepEqual(uiConversation.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
+})
+
+test('an inactive service on a Cordis context is absent, not a throw', () => {
+  const viewSwitch = createViewSwitch(cordisContext())
+
+  assert.equal(viewSwitch.isTrajectoryAvailable(), false)
+  const result = viewSwitch.activate('s1', CHAT_VIEW)
+  assert.equal(result.ok, false)
+  assert.match(result.error, /uiConversation/)
+})
 
 test('activating a pane view goes through the public uiConversation binding', () => {
   const uiConversation = fakeUiConversation()
@@ -107,6 +153,40 @@ test('availability stays false until the developer-tools value is accepted', () 
   assert.equal(viewSwitch.isTrajectoryAvailable(), false)
 })
 
+test('availability binds when the settings service arrives after the subscriber', () => {
+  let deliver
+  const ctx = {
+    configForms: undefined,
+    inject(services, callback) {
+      assert.deepEqual(services, ['configForms'])
+      deliver = callback
+    },
+  }
+  const viewSwitch = createViewSwitch(ctx)
+  let notifications = 0
+  const unsubscribe = viewSwitch.subscribeAvailability(() => {
+    notifications += 1
+  })
+
+  // The pane mounted before ui-settings served configForms: the subscription is
+  // pending, not a permanent no-op.
+  assert.equal(viewSwitch.isTrajectoryAvailable(), false)
+
+  const developerTools = fakeDeveloperTools(true)
+  ctx.configForms = { developerTools }
+  deliver({})
+
+  assert.equal(notifications, 1)
+  assert.equal(viewSwitch.isTrajectoryAvailable(), true)
+  assert.equal(developerTools.listenerCount(), 1)
+
+  developerTools.setEnabled(false)
+  assert.equal(notifications, 2)
+
+  unsubscribe()
+  assert.equal(developerTools.listenerCount(), 0)
+})
+
 test('availability subscribers are forwarded to the developer-tools store and released', () => {
   const developerTools = fakeDeveloperTools(false)
   const viewSwitch = createViewSwitch(switchCtx({ developerTools }))
@@ -132,13 +212,13 @@ test('subscribing availability without a developer-tools face is a safe no-op', 
   unsubscribe()
 })
 
-test('the trajectory segment is absent, not disabled, while developer tools are off', () => {
+test('the trajectory View is absent, not disabled, while developer tools are off', () => {
   assert.equal(effectiveView(TRAJECTORY_VIEW, true), TRAJECTORY_VIEW)
   assert.equal(effectiveView(TRAJECTORY_VIEW, false), CHAT_VIEW)
   assert.equal(effectiveView(CHAT_VIEW, false), CHAT_VIEW)
 
-  assert.deepEqual(viewSegments(true), [{ id: CHAT_VIEW }, { id: TRAJECTORY_VIEW }])
+  assert.deepEqual(viewOptions(true), [{ id: CHAT_VIEW }, { id: TRAJECTORY_VIEW }])
   // dsh does not offer the View at all while the gate is false, so the pane
   // must not render a disabled copy of it.
-  assert.deepEqual(viewSegments(false), [{ id: CHAT_VIEW }])
+  assert.deepEqual(viewOptions(false), [{ id: CHAT_VIEW }])
 })

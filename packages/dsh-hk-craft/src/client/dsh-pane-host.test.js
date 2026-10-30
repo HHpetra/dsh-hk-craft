@@ -13,6 +13,8 @@ const {
   createPaneController,
 } = require('./dsh-pane-host.js')
 const { interruptSession } = require('./pane-close.js')
+const { computeLayout } = require('./layout-geometry.js')
+const { leaves } = require('./layout-tree.js')
 
 /** Stand-in for the public `ctx.slots` face used by the probe. */
 function fakeSlots(result) {
@@ -881,7 +883,7 @@ test('switching a pane view never re-retains its session or touches the tree', a
   controller.dispose()
 })
 
-test('a disabled trajectory segment cannot switch a pane even when asked directly', async () => {
+test('a disabled trajectory View cannot switch a pane even when asked directly', async () => {
   const { controller, viewSwitch } = await readyController({
     viewSwitch: fakeViewSwitch({ trajectoryAvailable: false }),
   })
@@ -1076,7 +1078,7 @@ test('focusPaneAt focuses the strip position, using the strip projection', async
   controller.dispose()
 })
 
-test('+ creates a conversation in a new pane beside the focused one', async () => {
+test('+ creates a conversation in a new pane and keeps the row evenly divided', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
 
   assert.equal(await controller.newPane(), true)
@@ -1093,6 +1095,48 @@ test('+ creates a conversation in a new pane beside the focused one', async () =
   assert.equal(state.activePaneId, 'p2')
   assert.deepEqual(fake.calls.create, [{ workspaceId: 'w1' }])
   controller.dispose()
+})
+
+test('+ re-tiles by conversation count instead of halving the focused pane', async () => {
+  const { fake, controller } = await readyController({
+    created: ['s2', 's3', 's4'],
+    paneIds: ['p1', 'p2', 'p3', 'p4'],
+  })
+  await controller.split('p1', 'row')
+  // A dragged ratio must not survive the next new conversation.
+  assert.equal(controller.resize([], 0.7), true)
+  await controller.split('p2', 'row')
+
+  assert.equal(await controller.newPane(), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(leaves(state.root), ['p1', 'p2', 'p3', 'p4'])
+  const widths = Object.fromEntries(
+    computeLayout(state.root).panes.map((rect) => [rect.paneId, rect.width]),
+  )
+  for (const paneId of ['p1', 'p2', 'p3', 'p4']) {
+    assert.ok(Math.abs(widths[paneId] - 0.25) < 1e-6, `${paneId} must be a quarter wide`)
+  }
+  assert.equal(state.activePaneId, 'p4')
+  assert.equal(state.panes.p4.sessionId, 's4')
+  assert.equal(fake.calls.create.length, 3)
+  controller.dispose()
+})
+
+test('+ aborts instead of writing a pane when the controller is disposed mid-create', async () => {
+  const { fake, controller } = await readyController()
+  let resolveCreate
+  fake.ctx.sessions.create = () =>
+    new Promise((resolve) => {
+      resolveCreate = resolve
+    })
+
+  const pending = controller.newPane()
+  controller.dispose()
+  resolveCreate('s9')
+
+  assert.equal(await pending, false)
+  assert.deepEqual(controller.getSnapshot().panes, {})
 })
 
 test('+ from the empty state opens the first pane instead of doing nothing', async () => {

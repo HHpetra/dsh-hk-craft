@@ -534,7 +534,7 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Whether a pane may offer the trajectory segment. Mirrors dsh's own gate
+   * Whether a pane may offer the trajectory View. Mirrors dsh's own gate
    * (`doc/upstream-contracts.md#trajectory-gate-developertools-enabled`): the
    * View only exists while developer tools are enabled. Without an adapter the
    * pane stays chat-only.
@@ -546,7 +546,7 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Follow the developer-tools gate so the segment (and a remembered
+   * Follow the developer-tools gate so the View (and a remembered
    * trajectory choice) react when the setting flips. No-op without an adapter.
    *
    * @param {() => void} listener
@@ -796,6 +796,48 @@ function createPaneController(ctx, options = {}) {
     return true
   }
 
+  /**
+   * Resolve the workspace a new session for `pane` belongs to. A pane tree only
+   * holds sessions of its own workspace (ADR-0005 D3); when the catalog cannot
+   * name one, the pane's layout key is the fallback.
+   *
+   * @param {{sessionId: string}} pane
+   * @param {string|null} workspaceId
+   * @returns {string|undefined}
+   */
+  function newSessionWorkspaceOf(pane, workspaceId) {
+    return (
+      workspaceOf(pane.sessionId) ??
+      (workspaceId === null ? undefined : book.layoutOf(workspaceId).workspaceId)
+    )
+  }
+
+  /**
+   * Create the conversation for a new pane and report a failure. Returns
+   * `undefined` when no workspace can be resolved, the Host call fails, or the
+   * controller was disposed while the call was in flight (the layout book is
+   * already cleared then, and writing would resurrect a persisted pane).
+   *
+   * @param {{paneId: string, sessionId: string}} pane
+   * @param {string|null} workspaceId
+   * @param {string} action error verb, e.g. "split" or "add a pane"
+   * @returns {Promise<string|undefined>}
+   */
+  async function createNewPaneSession(pane, workspaceId, action) {
+    const owningWorkspace = newSessionWorkspaceOf(pane, workspaceId)
+    if (owningWorkspace === undefined) {
+      emit({ error: `cannot ${action}: pane ${pane.paneId} has no workspace` })
+      return undefined
+    }
+    try {
+      const sessionId = await createSession(owningWorkspace)
+      return disposed ? undefined : sessionId
+    } catch (error) {
+      emit({ error: messageOf(error) })
+      return undefined
+    }
+  }
+
   /** Split `paneId` and open (or create) the conversation beside it. */
   async function splitPane(paneId, dir, options = {}) {
     if (disposed || !registered) return false
@@ -829,25 +871,17 @@ function createPaneController(ctx, options = {}) {
         return false
       }
     } else {
-      const owningWorkspace =
-        workspaceOf(origin.sessionId) ??
-        (workspaceId === null ? undefined : book.layoutOf(workspaceId).workspaceId) ??
-        undefined
-      if (owningWorkspace === undefined) {
-        emit({ error: `cannot split: pane ${paneId} has no workspace` })
-        return false
-      }
-      try {
-        sessionId = await createSession(owningWorkspace)
-      } catch (error) {
-        emit({ error: messageOf(error) })
-        return false
-      }
+      sessionId = await createNewPaneSession(origin, workspaceId, 'split')
+      if (sessionId === undefined) return false
     }
 
     const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-    const next = layoutTree.split(book.layoutOf(workspaceId), paneId, dir, pane)
-    if (next === book.layoutOf(workspaceId)) return false
+    const current = book.layoutOf(workspaceId)
+    const next =
+      options.tile === true
+        ? layoutTree.tile(current, pane, paneId)
+        : layoutTree.split(current, paneId, dir, pane)
+    if (next === current) return false
     return apply(next, workspaceId)
   }
 
@@ -868,19 +902,25 @@ function createPaneController(ctx, options = {}) {
       emit({ error: messageOf(error) })
       return false
     }
+    if (disposed) return false
     const current = book.activeLayout()
     if (current.activePaneId !== null) return replaceFocusedValue(sessionId)
     const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
     return apply(layoutTree.openPane(current, pane), targetWorkspace)
   }
 
-  /** `+`: new conversation in a new pane beside the focused one. */
+  /**
+   * `+`: a new conversation in a new pane, with the workspace re-tiled into
+   * equal columns. Delegating to `splitPane(..., { tile: true })` keeps the
+   * session/workspace handling single-sourced; the conversation count decides
+   * the width, so a third pane gives three thirds instead of halving one of two.
+   */
   async function newPaneValue() {
     if (disposed || !registered) return false
     if (!snapshot.active) return false
     const paneId = book.activeLayout().activePaneId
     if (paneId === null) return newInFocusedValue()
-    return splitPane(paneId, 'row')
+    return splitPane(paneId, 'row', { tile: true })
   }
 
   /** Ctrl+Enter in `/resume`: the chosen conversation in a new pane. */
@@ -902,7 +942,7 @@ function createPaneController(ctx, options = {}) {
       const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
       return apply(layoutTree.openPane(book.activeLayout(), pane))
     }
-    return splitPane(paneId, 'row', { sessionId })
+    return splitPane(paneId, 'row', { sessionId, tile: true })
   }
 
   /** Ctrl+1..4: focus the open conversation at that strip position. */
@@ -1117,24 +1157,31 @@ function createPaneController(ctx, options = {}) {
      * already mounted in another pane is focused rather than mounted twice
      * (spec §4.4).
      *
+     * `options.tile` rebuilds the whole workspace into equal-width columns
+     * instead of splitting `paneId` 50/50 (the strip's `+` and `/resume`
+     * Ctrl+Enter path).
+     *
      * @param {string} paneId
      * @param {'row'|'col'} dir
-     * @param {{sessionId?: string}} [options]
+     * @param {{sessionId?: string, tile?: boolean}} [options]
      * @returns {Promise<boolean>}
      */
     split: splitPane,
     /**
-     * `+` on the pane strip: a new conversation in a new pane beside the focused
-     * one. With no pane open this opens the first pane instead (the empty-state
-     * path), so the button never dead-ends.
+     * `+` on the pane strip: a new conversation in a new pane. The new pane is
+     * inserted beside the focused one, then every pane is re-tiled into equal
+     * columns, so the conversation count decides the split. With no pane open
+     * this opens the first pane instead (the empty-state path), so the button
+     * never dead-ends.
      *
      * @returns {Promise<boolean>}
      */
     newPane: newPaneValue,
     /**
-     * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane beside
-     * the focused one, leaving the current pane untouched. The conversation is
-     * never mounted twice — an already-open one just takes the focus.
+     * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane and
+     * re-tile the workspace by conversation count, leaving the current pane
+     * untouched. The conversation is never mounted twice — an already-open one
+     * just takes the focus.
      *
      * @param {string} sessionId
      * @returns {Promise<boolean>}
@@ -1230,8 +1277,8 @@ function createPaneController(ctx, options = {}) {
      * untouched, and the session itself is not rebuilt (ticket 07).
      *
      * A trajectory request while developer tools are disabled is refused rather
-     * than remembered as an unreachable selection; the segment is not rendered
-     * for the same reason (spec §6).
+     * than remembered as an unreachable selection; the View is not rendered
+     * for the same reason (ADR-0006).
      *
      * @param {string} paneId
      * @param {'chat'|'trajectory'} view
@@ -1274,7 +1321,7 @@ function createPaneController(ctx, options = {}) {
       if (pane.view === 'trajectory' && !isTrajectoryAvailable()) return false
       return activateView(pane, pane.view).ok === true
     },
-    /** Whether the trajectory segment is offered (developer-tools gate). */
+    /** Whether the trajectory View is offered (developer-tools gate). */
     isTrajectoryAvailable,
     subscribeViewAvailability,
     /**

@@ -52,13 +52,6 @@ const PANE_SHORTCUTS = Object.freeze([
     action: Object.freeze({ kind: 'split', dir: 'row' }),
   }),
   Object.freeze({
-    id: 'split-down',
-    label: `${PRIMARY}+Shift+D`,
-    code: 'KeyD',
-    key: 'd',
-    action: Object.freeze({ kind: 'split', dir: 'col' }),
-  }),
-  Object.freeze({
     id: 'close-pane',
     label: `${PRIMARY}+Shift+X`,
     code: 'KeyX',
@@ -115,7 +108,6 @@ function paneShortcutHint(t) {
   return [
     `${t('pane.shortcuts.focus')} ${focusShortcutLabel(1)}–${focusShortcutLabel(FOCUS_LIMIT)}`,
     `${t('pane.splitRight')} ${shortcutLabel('split-right')}`,
-    `${t('pane.splitDown')} ${shortcutLabel('split-down')}`,
     `${t('pane.close')} ${shortcutLabel('close-pane')}`,
     `${t('strip.new')} ${shortcutLabel('new-conversation')}`,
   ].join(' · ')

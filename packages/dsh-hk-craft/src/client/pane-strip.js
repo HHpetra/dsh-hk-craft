@@ -7,7 +7,9 @@
  * visible workspace's layout tree, in `leaves()` order (depth-first,
  * left→right / top→bottom). There is no second container level and no
  * per-session list anywhere — the entry set, the order and the keyboard
- * shortcuts all come from the same tree the panes render from.
+ * shortcuts all come from the same tree the panes render from. Adding a
+ * conversation (`+`) re-tiles that tree into equal columns, so the strip order
+ * is also the on-screen left-to-right order.
  *
  * dsh shapes never reach this file. `pane-view.js` feeds it the live session
  * list and status map, and paints the plain entries; the pure rules below stay

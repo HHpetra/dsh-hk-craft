@@ -302,75 +302,42 @@ const hintStyle = {
   textAlign: 'center',
 }
 
-/** The 对话 | 轨迹 control is a segmented switch, not the pane strip (spec §6). */
-const segmentedStyle = {
-  display: 'inline-flex',
-  alignItems: 'stretch',
+/**
+ * The pane header's only two actions: the 对话 ⇄ 轨迹 toggle and "close pane".
+ * The toggle is one button that names the view it will switch *to*, so a narrow
+ * pane never has to fit a segmented control (ADR-0006).
+ */
+const viewToggleStyle = {
+  ...buttonStyle,
   flex: 'none',
-  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
-  borderRadius: 6,
-  overflow: 'hidden',
-}
-
-const segmentStyle = {
-  border: 'none',
-  borderRadius: 0,
-  background: 'transparent',
-  color: 'inherit',
-  cursor: 'pointer',
-  font: 'inherit',
   fontSize: 11,
   lineHeight: '18px',
-  padding: '1px 7px',
+  padding: '1px 8px',
 }
 
-const segmentActiveStyle = {
+/** The filled state marks "this pane is on the non-default view". */
+const viewToggleActiveStyle = {
   background: 'color-mix(in srgb, currentColor 16%, transparent)',
   fontWeight: 600,
 }
 
-/** The `⋯` trigger and its dropdown (spec D1: split/close live in the menu). */
-const menuTriggerStyle = {
-  ...buttonStyle,
-  padding: '0 7px',
-  lineHeight: '20px',
-  fontSize: 14,
-}
-
-const menuStyle = {
-  position: 'absolute',
-  top: '100%',
-  right: 0,
-  zIndex: 3,
-  display: 'flex',
-  flexDirection: 'column',
-  minWidth: 148,
-  padding: 4,
-  border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-  borderRadius: 8,
-  background: 'var(--dsw-alias-bg-base, Canvas)',
-  color: 'var(--dsw-alias-label-primary, CanvasText)',
-  boxShadow: '0 10px 28px rgba(0, 0, 0, 0.22)',
-}
-
-const menuItemStyle = {
-  display: 'flex',
+const headerActionStyle = {
+  display: 'inline-flex',
   alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 16,
-  width: '100%',
-  padding: '5px 8px',
-  border: 'none',
+  justifyContent: 'center',
+  flex: 'none',
+  width: 22,
+  height: 22,
+  padding: 0,
+  border: '1px solid color-mix(in srgb, currentColor 25%, transparent)',
   borderRadius: 5,
   background: 'transparent',
   color: 'inherit',
   font: 'inherit',
-  fontSize: 12,
-  textAlign: 'left',
+  fontSize: 13,
+  lineHeight: 1,
   cursor: 'pointer',
 }
-
-const menuShortcutStyle = { opacity: 0.55, fontSize: 11 }
 
 const closeOverlayStyle = {
   position: 'fixed',
@@ -448,13 +415,9 @@ module.exports = {
   recentDetailStyle,
   recentBadgeStyle,
   hintStyle,
-  segmentedStyle,
-  segmentStyle,
-  segmentActiveStyle,
-  menuTriggerStyle,
-  menuStyle,
-  menuItemStyle,
-  menuShortcutStyle,
+  viewToggleStyle,
+  viewToggleActiveStyle,
+  headerActionStyle,
   closeOverlayStyle,
   closeDialogStyle,
   closeTitleStyle,

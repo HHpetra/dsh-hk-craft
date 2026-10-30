@@ -43,7 +43,7 @@ test('Ctrl+1..4 focus the Nth open conversation; every other combination is igno
 })
 
 test('every declared action binding resolves to its own action', () => {
-  assert.equal(PANE_SHORTCUTS.length, 4)
+  assert.equal(PANE_SHORTCUTS.length, 3)
   for (const shortcut of PANE_SHORTCUTS) {
     // The hint text and the accepted combination are the same record.
     assert.equal(shortcut.label, shortcutLabel(shortcut.id))
@@ -58,10 +58,9 @@ test('every declared action binding resolves to its own action', () => {
     kind: 'split',
     dir: 'row',
   })
-  assert.deepEqual(paneShortcutAction({ code: 'KeyD', ctrlKey: true, shiftKey: true }), {
-    kind: 'split',
-    dir: 'col',
-  })
+  // Vertical splitting is paused: its old chord must not keep working behind
+  // an invisible binding.
+  assert.equal(paneShortcutAction({ code: 'KeyD', ctrlKey: true, shiftKey: true }), null)
   assert.deepEqual(paneShortcutAction({ code: 'KeyX', ctrlKey: true, shiftKey: true }), {
     kind: 'close',
   })
@@ -96,7 +95,6 @@ test('the shortcut table is exactly the documented set', () => {
     PANE_SHORTCUTS.map((shortcut) => [shortcut.id, shortcut.label]),
     [
       ['split-right', 'Ctrl+Shift+E'],
-      ['split-down', 'Ctrl+Shift+D'],
       ['close-pane', 'Ctrl+Shift+X'],
       ['new-conversation', 'Ctrl+Shift+N'],
     ],
@@ -119,4 +117,5 @@ test('the hint text is built from the same labels the listener accepts', () => {
   assert.ok(hint.includes('pane.splitRight'))
   assert.ok(hint.includes('pane.close'))
   assert.ok(hint.includes('strip.new'))
+  assert.ok(!hint.includes('pane.splitDown'), 'the paused vertical split must not be advertised')
 })

@@ -23,7 +23,12 @@ const {
   UNSCOPED_WORKSPACE,
   derivePanePhase,
 } = require('./dsh-pane-host.js')
-const { effectiveView, viewSegments } = require('./dsh-view-switch.js')
+const {
+  CHAT_VIEW,
+  TRAJECTORY_VIEW,
+  effectiveView,
+  viewOptions,
+} = require('./dsh-view-switch.js')
 const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
 const { ratioFromDrag } = require('./layout-tree.js')
 const {
@@ -63,13 +68,9 @@ const {
   recentDetailStyle,
   recentBadgeStyle,
   hintStyle,
-  segmentedStyle,
-  segmentStyle,
-  segmentActiveStyle,
-  menuTriggerStyle,
-  menuStyle,
-  menuItemStyle,
-  menuShortcutStyle,
+  viewToggleStyle,
+  viewToggleActiveStyle,
+  headerActionStyle,
   closeOverlayStyle,
   closeDialogStyle,
   closeTitleStyle,
@@ -103,6 +104,19 @@ function react() {
 /** Subscribe a component to the controller's frozen snapshot. */
 function usePaneSnapshot(React, controller) {
   return React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
+}
+
+/**
+ * Follow the developer-tools gate that decides whether the trajectory View
+ * exists. Shared by the header toggle and the pane's `views` override so both
+ * read the same source and fall back to chat together.
+ */
+function useTrajectoryAvailable(React, controller) {
+  return React.useSyncExternalStore(
+    controller.subscribeViewAvailability,
+    controller.isTrajectoryAvailable,
+    controller.isTrajectoryAvailable,
+  )
 }
 
 /**
@@ -313,70 +327,59 @@ function PaneEmptyState({ controller, workspaceId, visible, t }) {
 }
 
 /**
- * The pane's own `对话 | 轨迹` segmented switch (ticket 07, spec D1 + §6).
+ * The pane's own `对话 ⇄ 轨迹` toggle (ADR-0006).
  *
  * dsh's native View switcher lives in `conversation.session.header`, which is a
  * child slot of the `main.conversation` root — the pane renders only the
  * `conversation.content` factory, so that header is never mounted here. This
- * control replaces it per pane.
+ * one button replaces it per pane: its label names the view it switches *to*,
+ * so the header stays down to two actions even in a narrow column.
  *
  * When developer tools are off, dsh does not offer the trajectory View at all.
- * The segment is therefore absent rather than disabled, and the whole control
- * disappears while fewer than two views are available (native dsh's rule).
+ * The control is therefore absent rather than disabled (native dsh's rule), and
+ * the header keeps only the close button.
  *
- * @param {{ controller: any, pane: object, t: (key: string) => string }} props
+ * @param {{ controller: any, pane: object, t: (key: string, params?: object) => string }} props
  */
-function PaneViewSwitch({ controller, pane, t }) {
+function PaneViewToggle({ controller, pane, t }) {
   const React = react()
   const h = React.createElement
-  const trajectoryAvailable = React.useSyncExternalStore(
-    controller.subscribeViewAvailability,
-    controller.isTrajectoryAvailable,
-    controller.isTrajectoryAvailable,
-  )
-  const segments = viewSegments(trajectoryAvailable)
-  if (segments.length < 2) return null
+  const trajectoryAvailable = useTrajectoryAvailable(React, controller)
+  if (viewOptions(trajectoryAvailable).length < 2) return null
   const selected = effectiveView(pane.view, trajectoryAvailable)
+  const target = selected === CHAT_VIEW ? TRAJECTORY_VIEW : CHAT_VIEW
   const labels = {
-    chat: t('pane.view.chat'),
-    trajectory: t('pane.view.trajectory'),
+    [CHAT_VIEW]: t('pane.view.chat'),
+    [TRAJECTORY_VIEW]: t('pane.view.trajectory'),
   }
   return h(
-    'div',
+    'button',
     {
-      role: 'group',
-      'aria-label': t('pane.view.title'),
-      'data-hkcraft-view-switch': pane.view,
-      style: segmentedStyle,
+      type: 'button',
+      title: t('pane.view.title'),
+      // The label names the View this click switches *to*, so a pressed state
+      // would describe the opposite selection; the aria-label carries both.
+      'aria-label': `${t('pane.view.title')}: ${labels[selected]} → ${labels[target]}`,
+      'data-hkcraft-view-toggle': selected,
+      style: {
+        ...viewToggleStyle,
+        ...(selected === TRAJECTORY_VIEW ? viewToggleActiveStyle : {}),
+      },
+      onClick: () => controller.setView(pane.paneId, target),
     },
-    segments.map((segment) =>
-      h(
-        'button',
-        {
-          key: segment.id,
-          type: 'button',
-          role: 'radio',
-          'aria-checked': segment.id === selected,
-          title: t('pane.view.title'),
-          style: {
-            ...segmentStyle,
-            ...(segment.id === selected ? segmentActiveStyle : {}),
-          },
-          onClick: () => controller.setView(pane.paneId, segment.id),
-        },
-        labels[segment.id] ?? segment.id,
-      ),
-    ),
+    labels[target],
   )
 }
 
 /**
- * One pane: `标题 + [对话|轨迹] + ⋯` (spec D1).
+ * One pane: `标题 + 视图切换 + 关闭` (ADR-0006).
  *
- * Split-right, split-down and close live inside the `⋯` menu, not as a row of
- * glyph buttons. The element type is module-level and the key is the pane id,
- * so the pane is never remounted by a layout change. Only a session replacement
- * resets the conversation subtree (the boundary below is keyed by session id).
+ * The header carries exactly two actions: the 对话 ⇄ 轨迹 toggle and the close
+ * button. Splitting lives on the keyboard (`Ctrl+Shift+E`, `pane-shortcuts.js`);
+ * the old `⋯` menu was removed together with vertical splits. The element type
+ * is module-level and the key is the pane id, so the pane is never remounted by
+ * a layout change. Only a session replacement resets the conversation subtree
+ * (the boundary below is keyed by session id).
  *
  * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string }} props
  */
@@ -388,7 +391,6 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     typeof kit.useSessions === 'function'
       ? kit.useSessions((snapshot) => snapshot.byId[pane.sessionId]?.title)
       : undefined
-  const [menuOpen, setMenuOpen] = React.useState(false)
 
   const close = () => controller.closePane(pane.paneId)
   const focus = () => {
@@ -420,75 +422,25 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     color: 'var(--dsw-alias-label-primary, CanvasText)',
   }
 
-  const splitRightHint = withShortcut(t('pane.splitRight'), shortcutLabel('split-right'))
-  const splitDownHint = withShortcut(t('pane.splitDown'), shortcutLabel('split-down'))
   const closeHint = withShortcut(t('pane.close'), shortcutLabel('close-pane'))
-
-  const runAndClose = (action) => {
-    setMenuOpen(false)
-    action()
-  }
-
-  const menuItem = (key, label, hint, action) =>
-    h(
-      'button',
-      {
-        key,
-        type: 'button',
-        role: 'menuitem',
-        title: hint,
-        style: menuItemStyle,
-        onClick: () => runAndClose(action),
-      },
-      h('span', null, label),
-      h('span', { style: menuShortcutStyle }, hint === label ? '' : hint.replace(`${label} `, '')),
-    )
-
-  const menu = menuOpen
-    ? h(
-        'div',
-        {
-          role: 'menu',
-          'aria-label': t('pane.more'),
-          'data-hkcraft-pane-menu': '',
-          style: menuStyle,
-          onKeyDown: (event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              setMenuOpen(false)
-            }
-          },
-        },
-        menuItem('split-right', t('pane.splitRight'), splitRightHint, () => {
-          runAttempt(controller.split(pane.paneId, 'row'))
-        }),
-        menuItem('split-down', t('pane.splitDown'), splitDownHint, () => {
-          runAttempt(controller.split(pane.paneId, 'col'))
-        }),
-        menuItem('close', t('pane.close'), closeHint, close),
-      )
-    : null
 
   const header = h(
     'div',
     { style: headerStyle },
     h('span', { style: titleStyle }, title ?? t('pane.title')),
-    h(PaneViewSwitch, { key: 'view', controller, pane, t }),
+    h(PaneViewToggle, { key: 'view', controller, pane, t }),
     h(
       'button',
       {
         type: 'button',
-        style: menuTriggerStyle,
-        title: t('pane.more'),
-        'aria-label': t('pane.more'),
-        'aria-haspopup': 'menu',
-        'aria-expanded': menuOpen ? 'true' : 'false',
-        'data-hkcraft-pane-more': pane.paneId,
-        onClick: () => setMenuOpen((value) => !value),
+        style: headerActionStyle,
+        title: closeHint,
+        'aria-label': t('pane.close'),
+        'data-hkcraft-pane-close': pane.paneId,
+        onClick: close,
       },
-      '⋯',
+      '×',
     ),
-    menu,
   )
 
   let body
@@ -676,9 +628,9 @@ function stripPaneIdAt(clientX, clientY) {
  * order (ticket 06, spec §5).
  *
  * Every entry is a pane — clicking it focuses that pane, its × closes the pane
- * (after a confirmation when the session is live), and `+` creates a new
- * conversation in a new pane beside the focused one. Status dots come from the
- * live session status map; nothing here reorders entries by status.
+ * (after a confirmation when the session is live), and `+` adds a conversation
+ * and re-tiles the workspace into equal columns. Status dots come from the live
+ * session status map; nothing here reorders entries by status.
  *
  * The title and status read the shell's root standard hooks (`useSessions`,
  * `useSessionStatus`); ui-session provides them as `sessions` and
@@ -900,8 +852,10 @@ function PaneStrip({ controller, state, kit, t }) {
       'button',
       {
         type: 'button',
-        title: withShortcut(t('strip.new'), shortcutLabel('new-conversation')),
-        'aria-label': withShortcut(t('strip.new'), shortcutLabel('new-conversation')),
+        // `+` adds a pane; `Ctrl+Shift+N` creates a conversation in the focused
+        // pane instead, so this button must not advertise that chord.
+        title: t('strip.new'),
+        'aria-label': t('strip.new'),
         'data-hkcraft-strip-new': '',
         disabled: creating,
         style: { ...stripNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
@@ -1128,10 +1082,89 @@ function createPaneHost(controller) {
 }
 
 /**
+ * The pane currently holding `sessionId`, across every loaded workspace.
+ *
+ * @param {{layouts?: Record<string, object>, panes?: Record<string, object>}} state controller snapshot
+ * @param {string|undefined} sessionId
+ * @returns {object|null}
+ */
+function paneForSession(state, sessionId) {
+  if (typeof sessionId !== 'string' || sessionId === '') return null
+  const find = (panes) =>
+    Object.values(panes ?? {}).find((pane) => pane?.sessionId === sessionId) ?? null
+  let pane = find(state?.panes)
+  if (pane === null) {
+    for (const layout of Object.values(state?.layouts ?? {})) {
+      pane = find(layout?.panes)
+      if (pane !== null) break
+    }
+  }
+  return pane
+}
+
+/**
+ * The View a pane remembers for `sessionId`, across every loaded workspace.
+ *
+ * dsh's own per-session View store (`dsh.conversation`) belongs to ui-conversation
+ * and is not writable from the pane's embedded occurrence. The layout record is
+ * therefore the pane's single source of truth for which View it renders.
+ *
+ * @param {{layouts?: Record<string, object>, panes?: Record<string, object>}} state controller snapshot
+ * @param {string|undefined} sessionId
+ * @returns {'chat'|'trajectory'}
+ */
+function paneViewOfSession(state, sessionId) {
+  const view = paneForSession(state, sessionId)?.view
+  return view === TRAJECTORY_VIEW ? TRAJECTORY_VIEW : CHAT_VIEW
+}
+
+/**
+ * The pane's replacement for the conversation factory's `views` local slot.
+ *
+ * `conversation.content` lets an embedded occurrence replace `views` (see
+ * `doc/upstream-contracts.md#embedded-views-local-slot-and-view-selection`). The
+ * default renders `conversation.session`, whose View comes from ui-conversation's
+ * per-session store; the pane cannot write that store, so it would stay on chat
+ * forever. Rendering `conversation.session` with the layout's View passed as the
+ * `view` prop keeps dsh's transcript, draft persistence and composer intact while
+ * making the pane's toggle authoritative.
+ *
+ * The forced `view` would otherwise swallow the shell's in-conversation
+ * `openView` jumps (a tool-call row switching to the trajectory View). The owner
+ * prop overrides the entry's injected `openView`, so those jumps are routed back
+ * into this pane's layout instead of the shell store the pane does not render.
+ *
+ * @param {any} controller
+ * @returns {(props: any) => any}
+ */
+function createPaneConversationViews(controller) {
+  return function PaneConversationViews(props) {
+    const React = react()
+    // Only this pane's remembered View matters here; selecting the value keeps
+    // unrelated layout changes (focus, resize) from re-rendering the transcript.
+    const remembered = React.useSyncExternalStore(
+      controller.subscribe,
+      () => paneViewOfSession(controller.getSnapshot(), props.sessionId),
+      () => paneViewOfSession(controller.getSnapshot(), props.sessionId),
+    )
+    const trajectoryAvailable = useTrajectoryAvailable(React, controller)
+    const openView = (view) => {
+      const pane = paneForSession(controller.getSnapshot(), props.sessionId)
+      if (pane !== null) controller.setView(pane.paneId, view)
+    }
+    return props.renderSlot('conversation.session', {
+      view: effectiveView(remembered, trajectoryAvailable),
+      openView,
+    })
+  }
+}
+
+/**
  * The session-scoped child entry. It owns the `conversation.content` render and
  * the fallback faces for a missing / crashing factory.
  */
 function createPaneBody(controller) {
+  const PaneConversationViews = createPaneConversationViews(controller)
   return function PaneBody(props) {
     const React = react()
     const h = React.createElement
@@ -1213,7 +1246,7 @@ function createPaneBody(controller) {
       props.renderFactorySlot(
         CONTENT_FACTORY,
         { variant: PANE_CONTENT_OCCURRENCE, phase, hero },
-        { fallback: missing() },
+        { fallback: missing(), slots: { views: PaneConversationViews } },
       ),
     )
   }
@@ -1249,9 +1282,11 @@ module.exports = {
   PaneShortcuts,
   PaneWorkspace,
   workspaceGroups,
-  PaneViewSwitch,
+  PaneViewToggle,
   PaneCloseConfirm,
   PaneStrip,
+  paneViewOfSession,
+  createPaneConversationViews,
   createPaneHost,
   createPaneBody,
   createPaneToggle,
