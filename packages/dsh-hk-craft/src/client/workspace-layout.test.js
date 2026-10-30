@@ -112,14 +112,20 @@ function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 're
     snapshot: (name) => (name === 'factory:conversation.content' ? FACTORY_PRESENT : []),
     onEntryError: () => () => {},
   }
+  let phase = workspacesPhase
+  const workspaceListeners = new Set()
   const workspacesService = {
     list: {
       getSnapshot: () => ({
         items: workspaces,
         archivedSessionIds: [],
         pinnedSessionIds: [],
-        phase: workspacesPhase,
+        phase,
       }),
+      subscribe(listener) {
+        workspaceListeners.add(listener)
+        return () => workspaceListeners.delete(listener)
+      },
     },
   }
   return {
@@ -130,6 +136,10 @@ function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 're
     setPanel(panelId) {
       panel.activePanelId = panelId
       for (const listener of [...panelListeners]) listener()
+    },
+    setWorkspacesPhase(next) {
+      phase = next
+      for (const listener of [...workspaceListeners]) listener()
     },
   }
 }
@@ -499,6 +509,30 @@ test('a workspace catalog that is still loading keeps every stored pane', () => 
   assert.equal(controller.switchWorkspace('w1'), true)
 
   assert.deepEqual(leaves(controller.getSnapshot().root), ['p1', 'p2'])
+  controller.dispose()
+})
+
+test('the prune re-runs when the workspace catalog becomes ready', () => {
+  const layout = split(
+    openPane(createLayout('w1'), pane('p1', 's1')),
+    'p1',
+    'row',
+    pane('p2', 'deleted'),
+  )
+  const storage = memoryStorage({ w1: layout })
+  const { controller, fake } = readyController({ storage, workspacesPhase: 'loading' })
+
+  // The catalog is loading, so the first read must keep both panes.
+  assert.equal(controller.activate('s1'), true)
+  assert.deepEqual(leaves(controller.getSnapshot().root), ['p1', 'p2'])
+
+  // The catalog becomes ready; the vanished session must now be dropped and the
+  // pruned tree persisted, even though the workspace was already loaded.
+  fake.setWorkspacesPhase('ready')
+
+  assert.deepEqual(leaves(controller.getSnapshot().root), ['p1'])
+  assert.deepEqual(Object.keys(controller.getSnapshot().panes), ['p1'])
+  assert.deepEqual(leaves(storage.read('w1', { knownSessionIds: new Set(['s1']) }).root), ['p1'])
   controller.dispose()
 })
 

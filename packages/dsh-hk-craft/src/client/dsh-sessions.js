@@ -5,33 +5,30 @@
  *
  * Components and command handlers only ever see the plain rows this module
  * returns; if one of the assumed shapes changes upstream, this is the only file
- * that needs to change. Verified against the extracted dsh packages (read-only,
- * under `.scratch/_tmp/`):
+ * that needs to change. Verified against dsh 0.2.0-rc.2; the durable record is
+ * `doc/upstream-contracts.md`:
  *
  * - `sessions.list` snapshot shape (`ids`, `byId`, `phase`), the per-row
  *   `{id, title, displayTitle, running, blank, updatedAt}` projection, and
- *   `ClientSessions.using(target, {source, signal}, operate)`:
- *   `dsh-api-session-controller/lib/types/client/sessions/service.js:140-213,
- *   491-567`; runtime build `dsh-api-session-controller/lib/client.js:3842-3865`.
- *  - `displayTitle` falls back to the cwd basename and then the raw id, so a
- *    "missing title" decision must read `title`, never `displayTitle`
- *    (`service.js:499-514`).
+ *   `ClientSessions.using(target, {source, signal}, operate)` —
+ *   `doc/upstream-contracts.md#session-summary-fields`.
+ * - `displayTitle` falls back to the cwd basename and then the raw id, so a
+ *   "missing title" decision must read `title`, never `displayTitle`.
  * - `workspaces.list` snapshot `{items, archivedSessionIds, pinnedSessionIds}`
- *   with `workspace.sessionIds` / `workspace.path`
- *   (`dsh-api-workspace-controller/lib/types/client/model.js:263-272`, and
- *   `dsh-client-ui-workspace/lib/client.js:1421-1425`).
- * - Opening a session: `uiWorkspace.openSession(sessionId)` → `replaceMain(…,
- *   "reveal")` (`dsh-client-ui-workspace/lib/client.js:1471-1473, 1652-1675`).
+ *   with `workspace.sessionIds` / `workspace.path` —
+ *   `doc/upstream-contracts.md#workspace-catalog`.
+ * - Opening a session: `uiWorkspace.openSession(sessionId)` →
+ *   `replaceMain(…, "reveal")` —
+ *   `doc/upstream-contracts.md#native-start-session-reveal`.
  * - New session in the current workspace: `uiWorkspace.startSession(workspaceId)`
  *   → `connectBlank` reuses an existing blank, otherwise creates one, then
- *   reveals it (`dsh-client-ui-workspace/lib/client.js:1403-1439, 1500-1528`).
+ *   reveals it — `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
  * - First user prompt: there is no first-prompt projection on the wire (the
  *   list schema only carries `title` and `sessionListMetadata`), so it is read
  *   from the session's event window: `binding.session.eventSource.getSnapshot()
- *   .entries` (`dsh-api-session-controller/lib/client.js:2255, 2719`),
- *   `session.loadOlder()` (`:2492`), entries shaped `{event}` (`:2587-2667`),
- *   `user/message` with `data.source.kind === "user"` and text blocks (same
- *   filter as `dsh-session-title/lib/index.js:29-45`).
+ *   .entries`, `session.loadOlder()`, entries shaped `{event}`, `user/message`
+ *   with `data.source.kind === "user"` and text blocks (same filter as dsh's
+ *   session-title derivation) — `doc/upstream-contracts.md#session-summary-fields`.
  */
 
 const { normalizeText } = require('./resume-list.js')

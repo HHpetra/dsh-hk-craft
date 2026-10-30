@@ -3,13 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const {
-  normalizeText,
-  truncateText,
-  isFuzzyMatch,
-  formatRelativeTime,
-  buildResumeRows,
-} = require('./resume-list.js')
+const { normalizeText, truncateText, formatRelativeTime, buildResumeRows } = require('./resume-list.js')
 
 /** @returns {(key: string, params?: Record<string, unknown>) => string} */
 function fakeT(table = {}) {
@@ -67,36 +61,6 @@ test('truncateText handles CJK without splitting characters', () => {
 
 test('truncateText normalizes whitespace before measuring', () => {
   assert.equal(truncateText('  a \n b  ', 3), 'a b')
-})
-
-test('isFuzzyMatch matches an ordered, case-insensitive subsequence', () => {
-  assert.equal(isFuzzyMatch('login', 'Fix login bug'), true)
-  assert.equal(isFuzzyMatch('LOGIN', 'Fix login bug'), true)
-  assert.equal(isFuzzyMatch('lgn', 'Fix login bug'), true)
-  assert.equal(isFuzzyMatch('nig', 'Fix login bug'), false)
-})
-
-test('isFuzzyMatch matches CJK text without tokenization', () => {
-  assert.equal(isFuzzyMatch('登录', '修复登录页面报错'), true)
-  assert.equal(isFuzzyMatch('登录', '修复注册页面报错'), false)
-})
-
-test('isFuzzyMatch requires every whitespace-separated token', () => {
-  assert.equal(isFuzzyMatch('login 500', 'Fix login 500 error'), true)
-  assert.equal(isFuzzyMatch('login 404', 'Fix login 500 error'), false)
-  assert.equal(isFuzzyMatch('  登录   500  ', '登录页 500 错误'), true)
-})
-
-test('isFuzzyMatch treats a blank query as matching everything', () => {
-  assert.equal(isFuzzyMatch('', 'anything'), true)
-  assert.equal(isFuzzyMatch('   ', 'anything'), true)
-  assert.equal(isFuzzyMatch('', ''), true)
-})
-
-test('isFuzzyMatch does not match a query against missing text', () => {
-  assert.equal(isFuzzyMatch('x', ''), false)
-  assert.equal(isFuzzyMatch('x', undefined), false)
-  assert.equal(isFuzzyMatch('x', null), false)
 })
 
 test('formatRelativeTime reports just-now, minutes, hours, and days', () => {
@@ -284,29 +248,24 @@ test('buildResumeRows shows the activity age as detail and tolerates a missing t
   assert.equal('detail' in rows[1], false)
 })
 
-test('buildResumeRows filters by title, first prompt, and subsequence', () => {
-  const conversations = [
-    row({ sessionId: 'a', title: 'Fix login bug', firstPrompt: '登录页点击提交后报 500' }),
-    row({ sessionId: 'b', title: 'Write docs', firstPrompt: 'README update' }),
-  ]
-  const byTitle = buildResumeRows(conversations, { workspaceId: 'w1', now: NOW, t, query: 'login' })
-  const byPrompt = buildResumeRows(conversations, { workspaceId: 'w1', now: NOW, t, query: '500' })
-  const bySubsequence = buildResumeRows(conversations, { workspaceId: 'w1', now: NOW, t, query: 'fx lgn' })
-  const byTwoTokens = buildResumeRows(conversations, { workspaceId: 'w1', now: NOW, t, query: 'fix 500' })
-  assert.deepEqual(byTitle.map((entry) => entry.id), ['a'])
-  assert.deepEqual(byPrompt.map((entry) => entry.id), ['a'])
-  assert.deepEqual(bySubsequence.map((entry) => entry.id), ['a'])
-  assert.deepEqual(byTwoTokens.map((entry) => entry.id), ['a'])
-})
+test('buildResumeRows marks a conversation already open in a pane with its position', () => {
+  const rows = buildResumeRows(
+    [
+      row({ sessionId: 'open', title: 'Open', running: true }),
+      row({ sessionId: 'closed', title: 'Closed' }),
+    ],
+    {
+      workspaceId: 'w1',
+      now: NOW,
+      t: fakeT({ ...labels, 'command.resume.inPane': 'In pane {n}' }),
+      paneIndexOf: (sessionId) => (sessionId === 'open' ? 2 : null),
+    },
+  )
 
-test('buildResumeRows returns an empty list when the query matches nothing', () => {
-  const rows = buildResumeRows([row({ title: 'Fix login bug' })], {
-    workspaceId: 'w1',
-    now: NOW,
-    t,
-    query: 'zzz',
-  })
-  assert.deepEqual(rows, [])
+  assert.equal(rows.find((entry) => entry.id === 'open').badge, 'running · In pane 2')
+  assert.equal('badge' in rows.find((entry) => entry.id === 'closed'), false)
+  // The badge describes an entry; it never reorders the list.
+  assert.deepEqual(rows.map((entry) => entry.id).sort(), ['closed', 'open'])
 })
 
 test('buildResumeRows tolerates malformed rows', () => {

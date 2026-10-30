@@ -19,19 +19,19 @@ const {
   paneShortcutHint,
   shortcutLabel,
   focusShortcutLabel,
-  tabShortcutIndex,
+  focusShortcutIndex,
   withShortcut,
 } = require('./pane-shortcuts.js')
 
-test('Ctrl+1..4 focus the Nth pane; every other combination is ignored', () => {
+test('Ctrl+1..4 focus the Nth open conversation; every other combination is ignored', () => {
   assert.deepEqual(paneShortcutAction({ key: '1', ctrlKey: true }), { kind: 'focus', index: 1 })
   assert.deepEqual(paneShortcutAction({ key: '4', ctrlKey: true }), { kind: 'focus', index: 4 })
   assert.deepEqual(paneShortcutAction({ key: '2', metaKey: true }), { kind: 'focus', index: 2 })
   // Layout-independent fallback: the physical code works when `key` is absent.
   assert.deepEqual(paneShortcutAction({ code: 'Digit3', ctrlKey: true }), { kind: 'focus', index: 3 })
 
-  assert.equal(tabShortcutIndex({ key: '5', ctrlKey: true }), null)
-  assert.equal(tabShortcutIndex({ key: '0', ctrlKey: true }), null)
+  assert.equal(focusShortcutIndex({ key: '5', ctrlKey: true }), null)
+  assert.equal(focusShortcutIndex({ key: '0', ctrlKey: true }), null)
   assert.equal(paneShortcutAction({ key: '1' }), null)
   assert.equal(paneShortcutAction({ key: '1', ctrlKey: true, shiftKey: true }), null)
   assert.equal(paneShortcutAction({ key: '1', ctrlKey: true, altKey: true }), null)
@@ -118,5 +118,5 @@ test('the hint text is built from the same labels the listener accepts', () => {
   assert.ok(hint.includes('pane.shortcuts.focus'))
   assert.ok(hint.includes('pane.splitRight'))
   assert.ok(hint.includes('pane.close'))
-  assert.ok(hint.includes('tab.new'))
+  assert.ok(hint.includes('strip.new'))
 })

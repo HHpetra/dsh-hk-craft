@@ -2,77 +2,61 @@
 
 /**
  * Every dsh assumption this plugin makes about mounting a Session into the
- * central `main` area lives here, so a wrong guess is a one-file fix.
+ * central `main` area is recorded in `doc/upstream-contracts.md` (verified
+ * against dsh 0.2.0-rc.2). The parts relevant here:
  *
- * Verified against the unpacked client bundles in `.scratch/_tmp/client/`:
- *
- * - `main` is a keyed root slot. The frame renders it with
- *   `entryKey: activePanelId ?? "conversation"` (ui-layout:119), so selecting a
- *   different key unmounts the native Conversation instead of stacking on it.
- * - `ctx.layout.selectPanel(id)` rejects ids that have no live `main` entry and
- *   `selectPanel(null)` returns to the native Conversation (ui-layout:468-472).
+ * - `main` is a keyed root slot; the frame renders `activePanelId ??
+ *   "conversation"`, so selecting a different key unmounts the native
+ *   Conversation instead of stacking on it — `#main-keyed-slot-and-selectpanel`.
+ * - `ctx.layout.selectPanel(id)` rejects ids without a live `main` entry;
+ *   `selectPanel(null)` returns to the native Conversation.
  * - A `main` entry that declares a non-root child gets `SessionProvider` and
- *   `renderSlot` in its kit (ui-renderer:753-760). A session-scoped slot entry
- *   additionally gets the session standard props (sessionId, useSession, …).
- * - `renderFactorySlot(name, props)` is available on every entry kit and does
- *   not check ownership (ui-renderer:740, 1061-1069). The official Conversation
- *   mounts the body as `renderFactorySlot("conversation.content", { variant:
- *   "main", phase, hero }, { slots: CONTENT_SLOTS })`
- *   (ui-conversation:17601-17620).
- * - The factory is named `conversation.content` (ui-conversation:19936-19998).
+ *   `renderSlot` in its kit, plus `renderFactorySlot` for
+ *   `conversation.content` — `#sessionprovider-and-conversationcontent`.
  * - Retention is an independent reference per caller:
- *   `sessions.retain(id, { source })` … `reference.release()`, exactly as the
- *   right sidebar does with `source: "sidebarView"`
- *   (ui-sidebar-right:1753, 1801-1807).
- * - "Current session" is derived, not stored: the first session row with
- *   `retainedBy.mainView > 0` (ui-workspace:867, ui-session:917). Therefore the
- *   focused pane holds one `mainView` reference and every other pane holds a
- *   `hkcraftPane` reference only — never two panes with `mainView`.
- * - Creating a conversation without leaving the plugin panel:
- *   `sessions.create({ workspaceId })` resolves to the new session id and
- *   publishes its catalog row before resolving
- *   (dsh-api-session-controller/lib/client.js:3965-3977). The native path
- *   `uiWorkspace.startSession(workspaceId)` instead reveals the session through
- *   `replaceMain(..., "reveal")`, which calls `ctx.layout.selectPanel(null)` and
- *   would dismiss the pane workspace (ui-workspace:1500-1530, 1652-1676), so the
- *   pane host never calls it.
- * - Workspace membership is read from the `workspaces.list` snapshot exactly as
- *   `/resume` does (`dsh-sessions.js:workspaceIdOf`, ui-workspace:1421-1425).
- * - While a plugin panel is selected (`activePanelId !== null`) the shell gates
- *   its own "current session" consumers on the panel state: the sidebar rows
- *   ignore the mainView-derived current row (ui-workspace:3026-3028, 3357,
- *   3463) and rename/fork shortcuts are blocked (ui-workspace:143-148). There is
- *   no public API to release the native `uiWorkspace.mainReference` without
- *   revealing a session (which calls `selectPanel(null)`), so the pane host can
- *   only guarantee the mainView references it owns — one, on the focused pane.
+ *   `sessions.retain(id, { source })` … `reference.release()`. "Current
+ *   session" is derived from the first row with `retainedBy.mainView > 0`, so
+ *   the focused pane holds one `mainView` reference and every other pane holds
+ *   a `hkcraftPane` reference only — `#retention-sources-and-the-single-mainview-derivation`.
+ * - `sessions.create({ workspaceId })` publishes the catalog row before
+ *   resolving and never reuses a blank session; the native
+ *   `uiWorkspace.startSession(workspaceId)` reveals through
+ *   `replaceMain(…, "reveal")` → `selectPanel(null)`, which would dismiss the
+ *   pane workspace, so the pane host never calls it —
+ *   `#creating-a-session-without-leaving-the-panel`.
+ * - Workspace membership comes from the `workspaces.list` snapshot —
+ *   `#workspace-catalog`.
+ * - While a plugin panel is selected the shell gates its own "current session"
+ *   consumers on the panel state (sidebar current row, rename/fork shortcuts).
+ *   There is no public API to release the native `uiWorkspace.mainReference`
+ *   without revealing a session, so the pane host can only guarantee the
+ *   mainView references it owns: one, on the focused pane.
  */
 
 const { listWorkspaceConversations, workspaceIdOf } = require('./dsh-sessions.js')
 const layoutTree = require('./layout-tree.js')
-const { emptyLayout, readLayout, writeLayout } = require('./layout-store.js')
-const { paneIdForTabIndex } = require('./tab-strip.js')
+const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
+const { createCloseFlow } = require('./pane-close.js')
+const { messageOf } = require('./shared.js')
+const { mainSessionId } = require('./workspace-status.js')
+const { openConversationItems, paneIdForStripIndex } = require('./pane-strip.js')
 
 const MAIN_SLOT = 'main'
 const PANEL_KEY = 'hkcraft.panes'
 const PANE_SLOT = 'hkcraft.pane'
 const CONTENT_FACTORY = 'conversation.content'
 const PANE_SOURCE = 'hkcraftPane'
-/** The single retention dsh reads as "the current session" (ui-workspace:867). */
+/** The single retention dsh reads as "the current session". */
 const MAIN_SOURCE = 'mainView'
-/**
- * Internal key for the memory-only layout used when no workspace can be
- * derived. It is not a workspace id: it never reaches storage or a slot prop.
- */
-const UNSCOPED_WORKSPACE = '\u0000unscoped'
 
 /**
  * Probe the `conversation.content` Factory through the public slots snapshot.
  *
  * `ctx.slots.snapshot(root)` accepts `factory:<name>` and returns an array of
  * composition trees, or an empty array when the root is absent
- * (ui-renderer:1557-1563, platform ui-slots `SlotCore.snapshot`). An older or
- * different shell may not expose `snapshot`; in that case the pane still
- * mounts optimistically and relies on the FactoryOutlet fallback.
+ * (`doc/upstream-contracts.md#sessionprovider-and-conversationcontent`). An
+ * older or different shell may not expose `snapshot`; in that case the pane
+ * still mounts optimistically and relies on the FactoryOutlet fallback.
  *
  * @param {any} slots the `ctx.slots` face
  * @returns {{ ok: boolean, status: 'present'|'missing'|'error'|'unknown', message?: string }}
@@ -100,78 +84,9 @@ function probeConversationContent(slots) {
 }
 
 /**
- * Interrupt the running turn of one session through the public client route the
- * shell's own stop button uses.
- *
- * Verified against the unpacked bundles:
- * - the stop action resolves its session-scoped conversation face as
- *   `sessions.scope(id).get("conversation")` (ui-conversation:19674-19680) and
- *   calls `cancel()` on it (ui-conversation:19808-19810);
- * - that `cancel()` forwards to `sessions.binding(id).session.cancel()`
- *   (ui-conversation:4940-4953), which is the Host RPC
- *   `remote.session.cancel({ sessionId })`
- *   (dsh-api-session-controller:2429-2440, types/session.js:257-267).
- *
- * The direct binding is the fallback, because it is the same call with one less
- * hop; it reports failures as `{ ok: false }` instead of throwing, so this
- * adapter normalises that. Releasing a Session reference is *not* a substitute:
- * it only tears down the client generation and never stops the Host Agent
- * (dsh-api-session-controller/README.md:82).
- *
- * @param {any} sessions the `ctx.sessions` face
- * @param {string} sessionId
- * @returns {Promise<void>} rejects when no public route exists or the Host
- *   refuses to cancel the turn
- */
-async function interruptSession(sessions, sessionId) {
-  if (typeof sessionId !== 'string' || sessionId === '') {
-    throw new Error('interruptSession: a session id is required')
-  }
-  if (typeof sessions?.scope === 'function') {
-    const scoped = sessions.scope(sessionId)
-    const conversation = scoped?.get?.('conversation')
-    if (conversation !== undefined && typeof conversation.cancel === 'function') {
-      await conversation.cancel()
-      return
-    }
-  }
-  if (typeof sessions?.binding === 'function') {
-    const session = sessions.binding(sessionId)?.session
-    if (session !== undefined && typeof session.cancel === 'function') {
-      const result = await session.cancel()
-      if (result !== null && result !== undefined && result.ok === false) {
-        const error = result.error ?? {}
-        throw new Error(
-          `session.cancel failed: ${error.code ?? 'unknown'}: ${error.message ?? 'unknown error'}`,
-        )
-      }
-      return
-    }
-  }
-  throw new Error(`no public interrupt route for session "${sessionId}"`)
-}
-
-/**
- * Derive the session dsh currently treats as "the conversation".
- *
- * dsh does not store this id. Every consumer scans the session list for the
- * first row retained through `mainView` (ui-workspace:867, ui-session:917).
- *
- * @param {any} sessions the `ctx.sessions` face
- * @returns {string | undefined}
- */
-function findCurrentSession(sessions) {
-  const byId = sessions?.list?.getSnapshot?.()?.byId ?? {}
-  for (const row of Object.values(byId)) {
-    if ((row?.retainedBy?.mainView ?? 0) > 0) return row.id
-  }
-  return undefined
-}
-
-/**
- * The native Conversation's phase derivation (ui-conversation:17605-17611,
- * helper at 17379-17381), kept pure so the pane can pass the same props the
- * official main panel passes to `conversation.content`.
+ * The native Conversation's phase derivation, kept pure so the pane can pass
+ * the same props the official main panel passes to `conversation.content`
+ * (`doc/upstream-contracts.md#sessionprovider-and-conversationcontent`).
  *
  * @param {{ sessionId?: string, session?: any, conversation?: any, summaryBlank?: boolean }} input
  * @returns {{ phase: 'blank'|'engaging'|'active'|'settling'|'hero', hero: boolean }}
@@ -229,10 +144,11 @@ function defaultStorage() {
  * - closing a pane, replacing its session, hiding the panel or disposing all
  *   release the matching references.
  *
- * Persistence is best-effort and workspace-scoped (`layout-store.js`): every
- * change writes `dsh.hkcraft.layout.v1.<workspaceId>`, and a workspace's layout
- * is read back from that key the first time the workspace is shown. Panes whose
- * session is gone are dropped at restore time.
+ * Persistence and the per-workspace registry live in `pane-layouts.js`; every
+ * change writes `dsh.hkcraft.layout.v1.<workspaceId>` (best-effort), and a
+ * workspace's layout is read back from that key the first time the workspace is
+ * shown. Panes whose session is gone are dropped at restore time, and the prune
+ * re-runs if the catalog was still loading when the layout was first read.
  *
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
  * @param {{ nextPaneId?: () => string, storage?: any, viewSwitch?: any }} [options]
@@ -261,17 +177,8 @@ function createPaneController(ctx, options = {}) {
   const refs = new Map()
   /** @type {Set<() => void>} */
   const listeners = new Set()
-  /** @type {Record<string, object>} workspaceId → layout (ticket 08) */
-  let layouts = {}
-  /**
-   * A layout whose workspace cannot be derived (a shell without a workspaces
-   * service, or a test fake). It is memory-only: there is no key to persist it
-   * under. Once a workspace is known, new panes land in the keyed map; a tree
-   * that already lived here is not migrated.
-   */
-  let unscopedLayout = emptyLayout(null)
-  /** The workspace whose tree is visible; null until one is known. */
-  let activeWorkspaceId = null
+  /** Per-workspace layouts, the visible workspace and persistence. */
+  const book = createPaneLayouts({ storage, nextPaneId: () => nextPaneId() })
   let paneSeq = 0
   let registered = false
   let disposed = false
@@ -298,39 +205,13 @@ function createPaneController(ctx, options = {}) {
     for (const listener of [...listeners]) listener()
   }
 
-  /** The active workspace's layout (the memory-only layout when none is known). */
-  function activeLayout() {
-    return layoutOf(activeWorkspaceId)
-  }
-
-  /** @param {string|null} workspaceId */
-  function layoutOf(workspaceId) {
-    if (workspaceId === null) return unscopedLayout
-    if (layouts[workspaceId] !== undefined) return layouts[workspaceId]
-    return emptyLayout(workspaceId)
-  }
-
-  /** Every layout that currently owns panes, including the memory-only one. */
-  function allLayouts() {
-    const all = { ...layouts }
-    if (unscopedLayout.root !== null || Object.keys(unscopedLayout.panes).length > 0) {
-      all[UNSCOPED_WORKSPACE] = unscopedLayout
-    }
-    return all
-  }
-
-  /** The key the active layout lives under inside `allLayouts()`. */
-  function activeKey() {
-    return activeWorkspaceId === null ? UNSCOPED_WORKSPACE : activeWorkspaceId
-  }
-
   /** The snapshot fields that mirror the active layout tree. */
   function statePatch(active) {
-    const value = activeLayout()
+    const value = book.activeLayout()
     const focused = value.activePaneId === null ? undefined : value.panes[value.activePaneId]
     return {
-      workspaceId: activeWorkspaceId,
-      layouts,
+      workspaceId: book.getActiveWorkspaceId(),
+      layouts: book.layoutsMap(),
       root: value.root,
       panes: value.panes,
       activePaneId: value.activePaneId,
@@ -346,13 +227,9 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
-  function messageOf(error) {
-    return error instanceof Error ? error.message : String(error)
-  }
-
   /** Every pane id currently loaded, across all workspaces. */
   function paneIdInUse(paneId) {
-    for (const layoutValue of Object.values(allLayouts())) {
+    for (const layoutValue of Object.values(book.allLayouts())) {
       if (layoutValue.panes[paneId] !== undefined) return true
     }
     return false
@@ -370,7 +247,8 @@ function createPaneController(ctx, options = {}) {
 
   function watchReference(reference) {
     // The reference starts opening asynchronously; surface a failed open the
-    // same way the right sidebar does (ui-sidebar-right:1753-1756).
+    // same way the right sidebar does (see `doc/upstream-contracts.md`
+    // `#retention-sources-and-the-single-mainview-derivation`).
     const ready = reference?.ready
     if (ready !== undefined && typeof ready.catch === 'function') {
       ready.catch((error) => {
@@ -409,7 +287,7 @@ function createPaneController(ctx, options = {}) {
    * `hkcraftPane` only.
    *
    * Every new retention is taken *before* any stale one is released. That order
-   * matters for the tab-drag swap (ticket 10): pane A's and pane B's sessions
+   * matters for the strip-entry drag swap (ticket 10): pane A's and pane B's sessions
    * trade places in one layout change, and releasing first would momentarily
    * drop each session to zero client references — tearing down the dsh client
    * generation and losing the scroll position / composer draft that the split
@@ -449,7 +327,7 @@ function createPaneController(ctx, options = {}) {
         keep.set(pane.paneId, held)
         acquired.push(held)
       } catch (error) {
-        failed.push({ paneId: pane.paneId, workspaceId: workspaceOfPane(nextLayouts, pane.paneId), error })
+        failed.push({ paneId: pane.paneId, workspaceId: book.workspaceOfPane(nextLayouts, pane.paneId), error })
       }
     }
 
@@ -467,7 +345,7 @@ function createPaneController(ctx, options = {}) {
     refs.clear()
     for (const [paneId, held] of keep) refs.set(paneId, held)
 
-    const focused = focusedPaneOf(nextLayouts)
+    const focused = book.focusedPaneOf(nextLayouts)
     for (const [paneId, held] of [...refs]) {
       if ((focused === null || paneId !== focused.paneId) && held.main !== undefined) {
         releaseOne(held.main)
@@ -480,7 +358,7 @@ function createPaneController(ctx, options = {}) {
         try {
           held.main = retainSource(focused.sessionId, MAIN_SOURCE)
         } catch (error) {
-          failed.push({ paneId: focused.paneId, workspaceId: activeWorkspaceId, error })
+          failed.push({ paneId: focused.paneId, workspaceId: book.getActiveWorkspaceId(), error })
         }
       }
     }
@@ -490,42 +368,11 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
-  /** @param {Record<string, object>} nextLayouts */
-  function focusedPaneOf(nextLayouts) {
-    const value = nextLayouts[activeKey()]
-    if (value === undefined || value.activePaneId === null) return null
-    return value.panes[value.activePaneId] ?? null
-  }
-
-  /**
-   * @param {Record<string, object>} nextLayouts
-   * @param {string} paneId
-   * @returns {string}
-   */
-  function workspaceOfPane(nextLayouts, paneId) {
-    for (const [workspaceId, value] of Object.entries(nextLayouts)) {
-      if (value.panes[paneId] !== undefined) return workspaceId
-    }
-    return ''
-  }
-
-  /** Persist one workspace's layout; best-effort by design. */
-  function persist(value) {
-    writeLayout(storage, value)
-  }
-
-  /** Store one layout under the active workspace (or the memory-only slot). */
-  function commitLayout(value) {
-    if (activeWorkspaceId === null) unscopedLayout = value
-    else layouts = { ...layouts, [activeWorkspaceId]: value }
-    persist(value)
-  }
-
   /** Apply a layout change atomically; a failed reconcile rolls back. */
-  function apply(next, workspaceId = activeWorkspaceId) {
-    const current = layoutOf(workspaceId)
+  function apply(next, workspaceId = book.getActiveWorkspaceId()) {
+    const current = book.layoutOf(workspaceId)
     if (next === current) return false
-    const previous = allLayouts()
+    const previous = book.allLayouts()
     const proposed = { ...previous, [workspaceId === null ? UNSCOPED_WORKSPACE : workspaceId]: next }
     const { failure } = snapshot.active ? reconcileAll(proposed) : { failure: null }
     if (failure !== null) {
@@ -533,12 +380,7 @@ function createPaneController(ctx, options = {}) {
       emit({ error: failure })
       return false
     }
-    if (workspaceId === null) {
-      unscopedLayout = next
-    } else {
-      layouts = { ...layouts, [workspaceId]: next }
-    }
-    persist(next)
+    book.store(workspaceId, next)
     emit({ ...statePatch(snapshot.active), error: null })
     return true
   }
@@ -576,44 +418,53 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Load a workspace's layout the first time it is shown: read its scoped key,
-   * reconcile against the live catalog, give restored panes globally unique ids
-   * and make the pruned result the persisted truth.
+   * Make one workspace's layout available, restoring it on first use.
+   *
+   * The restore prune can only run against a ready catalog. When the layout was
+   * first loaded while `workspaces.list` was still loading, every pane was
+   * kept; the prune must therefore be able to re-run later, so this also prunes
+   * an already-loaded workspace whenever the catalog is now ready (spec §9).
    *
    * @param {string} workspaceId
    * @returns {boolean}
    */
   function ensureWorkspace(workspaceId) {
     if (typeof workspaceId !== 'string' || workspaceId === '') return false
-    if (layouts[workspaceId] !== undefined) return true
-    const restored = readLayout(storage, workspaceId, { knownSessionIds: knownSessionsOf(workspaceId) })
-    const adopted = adoptPaneIds(workspaceId, restored)
-    layouts = { ...layouts, [workspaceId]: adopted }
-    persist(adopted)
+    ensureCatalogSubscription()
+    const known = knownSessionsOf(workspaceId)
+    const already = book.hasWorkspace(workspaceId)
+    if (!book.ensureWorkspace(workspaceId, known)) return false
+    if (already) pruneWorkspace(workspaceId, known)
     return true
   }
 
   /**
-   * Restored pane ids came from a controller instance that knew nothing about
-   * the other workspaces, so two keys can hold the same `pane-1`. Pane ids are
-   * the renderer's element keys and the reference map's keys, so they must be
-   * unique across all loaded workspaces.
+   * Apply the catalog prune to one loaded workspace.
+   *
+   * Goes through `apply` for both visible and hidden workspaces: while the panel
+   * is active every loaded workspace has mounted panes and retained
+   * references, so the reconcile has to see the pruned tree even when that
+   * workspace is not the visible one.
    *
    * @param {string} workspaceId
-   * @param {object} value
-   * @returns {object}
+   * @param {Set<string>|null} knownSessionIds
    */
-  function adoptPaneIds(workspaceId, value) {
-    const taken = new Set()
-    for (const [otherId, other] of Object.entries(allLayouts())) {
-      if (otherId === workspaceId) continue
-      for (const paneId of Object.keys(other.panes)) taken.add(paneId)
+  function pruneWorkspace(workspaceId, knownSessionIds) {
+    const pruned = book.pruneCandidate(workspaceId, knownSessionIds)
+    if (pruned === null) return
+    apply(pruned, workspaceId)
+  }
+
+  /**
+   * Re-run the prune for every loaded workspace once the catalog becomes ready.
+   * Called from the catalog subscription and from every action that already
+   * reads the catalog, so a late load cannot leave vanished sessions mounted.
+   */
+  function pruneLoadedWorkspaces() {
+    if (disposed) return
+    for (const workspaceId of book.workspaceIds()) {
+      pruneWorkspace(workspaceId, knownSessionsOf(workspaceId))
     }
-    const mapping = new Map()
-    for (const paneId of Object.keys(value.panes)) {
-      if (taken.has(paneId)) mapping.set(paneId, nextPaneId())
-    }
-    return mapping.size === 0 ? value : layoutTree.renamePanes(value, mapping)
   }
 
   async function createSession(workspaceId) {
@@ -629,13 +480,14 @@ function createPaneController(ctx, options = {}) {
   }
 
   function focusedPane() {
-    const value = activeLayout()
+    const value = book.activeLayout()
     const paneId = value.activePaneId
     return paneId === null ? null : (value.panes[paneId] ?? null)
   }
 
   function focusedWorkspaceId() {
-    if (activeWorkspaceId !== null) return activeWorkspaceId
+    const active = book.getActiveWorkspaceId()
+    if (active !== null) return active
     const pane = focusedPane()
     const fromPane = pane === null ? undefined : workspaceOf(pane.sessionId)
     if (fromPane !== undefined) return fromPane
@@ -645,17 +497,6 @@ function createPaneController(ctx, options = {}) {
     // pane instead of doing nothing.
     const items = workspacesFace()?.list?.getSnapshot?.()?.items
     return Array.isArray(items) ? items[0]?.workspaceId : undefined
-  }
-
-  /** @param {string} paneId @returns {{workspaceId: string|null, pane: object}|null} */
-  function locatePane(paneId) {
-    const pane = unscopedLayout.panes[paneId]
-    if (pane !== undefined) return { workspaceId: null, pane }
-    for (const [workspaceId, value] of Object.entries(layouts)) {
-      const found = value.panes[paneId]
-      if (found !== undefined) return { workspaceId, pane: found }
-    }
-    return null
   }
 
   function refreshProbe() {
@@ -685,9 +526,10 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Whether a pane may offer the trajectory segment. Mirrors ui-conversation's
-   * own gate (ui-conversation:19753-19758): the View only exists while
-   * developer tools are enabled. Without an adapter the pane stays chat-only.
+   * Whether a pane may offer the trajectory segment. Mirrors dsh's own gate
+   * (`doc/upstream-contracts.md#trajectory-gate-developertools-enabled`): the
+   * View only exists while developer tools are enabled. Without an adapter the
+   * pane stays chat-only.
    */
   function isTrajectoryAvailable() {
     return typeof viewSwitch?.isTrajectoryAvailable === 'function'
@@ -710,7 +552,7 @@ function createPaneController(ctx, options = {}) {
 
   /**
    * Drive the real conversation View through the public binding. This is the
-   * same call dsh's own tab row makes, so the session is not rebuilt and the
+   * same call dsh's own View switcher makes, so the session is not rebuilt and the
    * draft / scroll state are dsh's own.
    *
    * @returns {{ok: boolean, error?: string}}
@@ -767,22 +609,59 @@ function createPaneController(ctx, options = {}) {
   const unsubscribeViewAvailability = subscribeViewAvailability(() => {
     if (disposed) return
     if (!isTrajectoryAvailable()) return
-    for (const layoutValue of Object.values(layouts)) {
+    for (const layoutValue of Object.values(book.layoutsMap())) {
       for (const pane of Object.values(layoutValue.panes)) {
         if (pane.view === 'trajectory') activateView(pane, pane.view)
       }
     }
   })
 
+  /**
+   * Workspace-catalog notifications. `workspaces.list` is the store whose
+   * `phase` decides whether a restore may prune; subscribing to it means a
+   * catalog that becomes ready after the first show still runs the prune
+   * (spec §9). The service can load after this plugin, so subscription is
+   * retried from every action that reads the catalog. If the store exposes no
+   * `subscribe`, those actions are the fallback.
+   */
+  const catalogDisposers = []
+  let subscribedList = null
+  function ensureCatalogSubscription() {
+    if (disposed) return
+    const list = workspacesFace()?.list
+    if (list === null || list === undefined || typeof list.subscribe !== 'function') return
+    if (subscribedList === list) return
+    try {
+      const dispose = list.subscribe(() => pruneLoadedWorkspaces())
+      if (typeof dispose === 'function') {
+        subscribedList = list
+        catalogDisposers.push(dispose)
+      }
+    } catch {
+      // A store that refuses subscription is simply not observed.
+    }
+  }
+
+  function unsubscribeCatalog() {
+    subscribedList = null
+    for (const dispose of catalogDisposers.splice(0)) {
+      try {
+        dispose()
+      } catch {
+        // The store is shutting down; forgetting the listener is enough.
+      }
+    }
+  }
+
   /** Focus a pane; false when it is absent or already focused. */
   function focusPaneValue(paneId) {
     if (disposed) return false
-    const located = locatePane(paneId)
+    const located = book.locatePane(paneId)
     if (located === null) return false
-    if (located.workspaceId !== activeWorkspaceId) {
+    if (located.workspaceId !== book.getActiveWorkspaceId()) {
       if (!switchWorkspaceValue(located.workspaceId)) return false
     }
-    return apply(layoutTree.focus(layoutOf(located.workspaceId), paneId), located.workspaceId)
+    return apply(layoutTree.focus(book.layoutOf(located.workspaceId), paneId), located.workspaceId)
   }
 
   /** The session list row the shell publishes for a session, if still known. */
@@ -803,123 +682,42 @@ function createPaneController(ctx, options = {}) {
     return rowOf(sessionId)?.running === true
   }
 
-  /** Drop a pending close (and its error); no layout or session change. */
-  function clearPendingClose() {
-    if (
-      snapshot.pendingClose === null &&
-      snapshot.closeError === null &&
-      snapshot.closeBusy === false
-    ) {
-      return
-    }
-    emit({ pendingClose: null, closeBusy: false, closeError: null })
-  }
-
   /** Close a pane by id; false when it is absent. */
   function closePaneValue(paneId) {
     if (disposed) return false
-    const located = locatePane(paneId)
+    const located = book.locatePane(paneId)
     if (located === null) return false
-    return apply(layoutTree.close(layoutOf(located.workspaceId), paneId), located.workspaceId)
+    return apply(layoutTree.close(book.layoutOf(located.workspaceId), paneId), located.workspaceId)
   }
 
-  /**
-   * Ask to close one pane. An idle session closes immediately. A running one is
-   * only staged in `pendingClose`: the user must confirm, because closing the
-   * pane interrupts the turn (spec D4).
-   *
-   * @param {string} paneId
-   * @returns {boolean} whether the pane closed immediately
-   */
-  function requestClose(paneId) {
-    if (disposed) return false
-    const located = locatePane(paneId)
-    if (located === null) return false
-    const pane = located.pane
-    if (!isSessionRunning(pane.sessionId)) {
-      const closed = closePaneValue(paneId)
-      if (closed) clearPendingClose()
-      return closed
-    }
-    const title = rowOf(pane.sessionId)?.title
-    emit({
-      pendingClose: {
-        paneId,
-        sessionId: pane.sessionId,
-        ...(typeof title === 'string' && title !== '' ? { title } : {}),
-      },
-      closeBusy: false,
-      closeError: null,
-    })
-    return false
-  }
-
-  /**
-   * Confirm the staged close: interrupt the running turn first, then release the
-   * pane. A failed interrupt keeps the pane mounted and leaves the dialog open
-   * with `closeError`, so nothing is half-closed and the user can retry or
-   * cancel.
-   *
-   * @returns {Promise<boolean>} whether the pane was closed
-   */
-  async function confirmCloseValue() {
-    if (disposed) return false
-    const pending = snapshot.pendingClose
-    if (pending === null || snapshot.closeBusy) return false
-    emit({ closeBusy: true, closeError: null })
-    try {
-      await interruptSession(sessions, pending.sessionId)
-    } catch (error) {
-      if (disposed) return false
-      emit({ closeBusy: false, closeError: messageOf(error) })
-      return false
-    }
-    if (disposed) return false
-    // The panel may have been hidden (or another close requested) while the
-    // interrupt was in flight; in that case the pane already lost its refs and
-    // must not be structurally re-reconciled from an inactive panel.
-    if (!snapshot.active || snapshot.pendingClose?.paneId !== pending.paneId) {
-      emit({ closeBusy: false })
-      return false
-    }
-    const closed = closePaneValue(pending.paneId)
-    emit({ pendingClose: null, closeBusy: false, closeError: null })
-    return closed
-  }
-
-  /** Dismiss the staged close without changing the session or the layout. */
-  function cancelCloseValue() {
-    if (disposed || snapshot.pendingClose === null || snapshot.closeBusy) return false
-    emit({ pendingClose: null, closeError: null })
-    return true
-  }
+  // The staged-close flow (interrupt first, then close) lives in
+  // `pane-close.js`; it reads this controller's state through the callbacks.
+  const closeFlow = createCloseFlow({
+    sessions,
+    getSnapshot: () => snapshot,
+    emit,
+    isDisposed: () => disposed,
+    locatePane: (paneId) => book.locatePane(paneId),
+    rowOf,
+    isSessionRunning,
+    closePane: (paneId) => closePaneValue(paneId),
+  })
 
   /** Replace the focused pane's session, focusing an existing holder instead. */
   function replaceFocusedValue(sessionId) {
     if (disposed || !registered) return false
-    const value = activeLayout()
+    const value = book.activeLayout()
     const paneId = value.activePaneId
     if (paneId === null) return false
-    const holder = locatePaneIn(sessionId)
+    const holder = book.locatePaneIn(sessionId)
     if (holder !== null) {
-      return holder.paneId === paneId && holder.workspaceId === activeWorkspaceId
+      return holder.paneId === paneId && holder.workspaceId === book.getActiveWorkspaceId()
         ? true
         : focusPaneValue(holder.paneId)
     }
     const next = layoutTree.replaceSession(value, paneId, sessionId)
     if (next === value) return true
     return apply(next)
-  }
-
-  /** @param {string} sessionId */
-  function locatePaneIn(sessionId) {
-    const unscoped = layoutTree.paneOfSession(unscopedLayout, sessionId)
-    if (unscoped !== undefined) return { workspaceId: null, paneId: unscoped }
-    for (const [workspaceId, value] of Object.entries(layouts)) {
-      const paneId = layoutTree.paneOfSession(value, sessionId)
-      if (paneId !== undefined) return { workspaceId, paneId }
-    }
-    return null
   }
 
   /**
@@ -934,14 +732,13 @@ function createPaneController(ctx, options = {}) {
   function switchWorkspaceValue(workspaceId) {
     if (disposed) return false
     if (!ensureWorkspace(workspaceId)) return false
-    if (workspaceId === activeWorkspaceId) return true
-    const previous = activeWorkspaceId
-    activeWorkspaceId = workspaceId
+    const switched = book.switchTo(workspaceId, knownSessionsOf(workspaceId))
+    if (switched === null || !switched.changed) return switched !== null
     if (snapshot.active) {
-      const { failure } = reconcileAll(allLayouts())
+      const { failure } = reconcileAll(book.allLayouts())
       if (failure !== null) {
-        activeWorkspaceId = previous
-        reconcileAll(allLayouts())
+        book.setActiveWorkspace(switched.previous)
+        reconcileAll(book.allLayouts())
         emit({ error: failure })
         return false
       }
@@ -973,7 +770,7 @@ function createPaneController(ctx, options = {}) {
       return false
     }
     refreshProbe()
-    const previous = allLayouts()
+    const previous = book.allLayouts()
     const { failure } = reconcileAll(previous)
     if (failure !== null) {
       reconcileAll({})
@@ -994,7 +791,7 @@ function createPaneController(ctx, options = {}) {
   /** Split `paneId` and open (or create) the conversation beside it. */
   async function splitPane(paneId, dir, options = {}) {
     if (disposed || !registered) return false
-    const located = locatePane(paneId)
+    const located = book.locatePane(paneId)
     if (located === null) return false
     const origin = located.pane
     const workspaceId = located.workspaceId
@@ -1011,12 +808,12 @@ function createPaneController(ctx, options = {}) {
           emit({ error: `cannot show workspace ${owningWorkspace}` })
           return false
         }
-        const holder = locatePaneIn(sessionId)
+        const holder = book.locatePaneIn(sessionId)
         if (holder !== null) focusPaneValue(holder.paneId)
         else switchWorkspaceValue(owningWorkspace)
         return false
       }
-      const holder = locatePaneIn(sessionId)
+      const holder = book.locatePaneIn(sessionId)
       if (holder !== null) {
         if (holder.paneId !== paneId || holder.workspaceId !== workspaceId) {
           focusPaneValue(holder.paneId)
@@ -1026,7 +823,7 @@ function createPaneController(ctx, options = {}) {
     } else {
       const owningWorkspace =
         workspaceOf(origin.sessionId) ??
-        (workspaceId === null ? undefined : layoutOf(workspaceId).workspaceId) ??
+        (workspaceId === null ? undefined : book.layoutOf(workspaceId).workspaceId) ??
         undefined
       if (owningWorkspace === undefined) {
         emit({ error: `cannot split: pane ${paneId} has no workspace` })
@@ -1041,8 +838,8 @@ function createPaneController(ctx, options = {}) {
     }
 
     const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-    const next = layoutTree.split(layoutOf(workspaceId), paneId, dir, pane)
-    if (next === layoutOf(workspaceId)) return false
+    const next = layoutTree.split(book.layoutOf(workspaceId), paneId, dir, pane)
+    if (next === book.layoutOf(workspaceId)) return false
     return apply(next, workspaceId)
   }
 
@@ -1053,7 +850,7 @@ function createPaneController(ctx, options = {}) {
     const targetWorkspace = workspaceId ?? focusedWorkspaceId()
     if (typeof targetWorkspace !== 'string' || targetWorkspace === '') return false
     if (!ensureWorkspace(targetWorkspace)) return false
-    if (targetWorkspace !== activeWorkspaceId) {
+    if (targetWorkspace !== book.getActiveWorkspaceId()) {
       if (!switchWorkspaceValue(targetWorkspace)) return false
     }
     let sessionId
@@ -1063,17 +860,17 @@ function createPaneController(ctx, options = {}) {
       emit({ error: messageOf(error) })
       return false
     }
-    const current = activeLayout()
+    const current = book.activeLayout()
     if (current.activePaneId !== null) return replaceFocusedValue(sessionId)
     const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
     return apply(layoutTree.openPane(current, pane), targetWorkspace)
   }
 
   /** `+`: new conversation in a new pane beside the focused one. */
-  async function newTabValue() {
+  async function newPaneValue() {
     if (disposed || !registered) return false
     if (!snapshot.active) return false
-    const paneId = activeLayout().activePaneId
+    const paneId = book.activeLayout().activePaneId
     if (paneId === null) return newInFocusedValue()
     return splitPane(paneId, 'row')
   }
@@ -1088,30 +885,31 @@ function createPaneController(ctx, options = {}) {
     const targetWorkspace = workspaceOf(sessionId) ?? focusedWorkspaceId()
     if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
       if (!ensureWorkspace(targetWorkspace)) return false
-      if (targetWorkspace !== activeWorkspaceId && !switchWorkspaceValue(targetWorkspace)) {
+      if (targetWorkspace !== book.getActiveWorkspaceId() && !switchWorkspaceValue(targetWorkspace)) {
         return false
       }
     }
-    const paneId = activeLayout().activePaneId
+    const paneId = book.activeLayout().activePaneId
     if (paneId === null) {
       const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-      return apply(layoutTree.openPane(activeLayout(), pane))
+      return apply(layoutTree.openPane(book.activeLayout(), pane))
     }
     return splitPane(paneId, 'row', { sessionId })
   }
 
-  /** Ctrl+1..4: focus the Nth tab of the visible workspace. */
-  function focusTabValue(index) {
+  /** Ctrl+1..4: focus the open conversation at that strip position. */
+  function focusPaneAtValue(index) {
     if (disposed) return false
-    const paneId = paneIdForTabIndex(activeLayout(), index)
+    const paneId = paneIdForStripIndex(book.activeLayout(), index)
     return paneId === null ? false : focusPaneValue(paneId)
   }
 
   /**
-   * Drag a tab onto another tab: exchange the two panes' contents (spec §4.2).
+   * Drag a strip entry onto another entry: exchange the two panes' contents
+   * (spec §4.2).
    *
    * The two panes must live in the same workspace tree — a drag can never leave
-   * one tab strip (spec D3) — and the transition is the pure `swap` of
+   * one strip (spec D3) — and the transition is the pure `swap` of
    * `layout-tree.js`: pane ids, leaf positions, ratios and the focus stay put,
    * while the session and the remembered view move. The reference reconciliation
    * acquires both new pane retentions before releasing the old ones, so neither
@@ -1124,11 +922,11 @@ function createPaneController(ctx, options = {}) {
   function swapPanesValue(a, b) {
     if (disposed) return false
     if (typeof a !== 'string' || typeof b !== 'string' || a === b) return false
-    const first = locatePane(a)
-    const second = locatePane(b)
+    const first = book.locatePane(a)
+    const second = book.locatePane(b)
     if (first === null || second === null) return false
     if (first.workspaceId !== second.workspaceId) return false
-    const current = layoutOf(first.workspaceId)
+    const current = book.layoutOf(first.workspaceId)
     const next = layoutTree.swap(current, a, b)
     if (next === current) return false
     return apply(next, first.workspaceId)
@@ -1189,7 +987,8 @@ function createPaneController(ctx, options = {}) {
         return false
       }
       refreshProbe()
-      const target = sessionId ?? findCurrentSession(sessions)
+      pruneLoadedWorkspaces()
+      const target = sessionId ?? mainSessionId(sessions?.list?.getSnapshot?.())
       const targetWorkspace =
         target === undefined ? focusedWorkspaceId() : (workspaceOf(target) ?? focusedWorkspaceId())
       if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
@@ -1197,10 +996,10 @@ function createPaneController(ctx, options = {}) {
           emit({ error: `cannot show workspace ${targetWorkspace}` })
           return false
         }
-        activeWorkspaceId = targetWorkspace
+        book.setActiveWorkspace(targetWorkspace)
       }
 
-      const current = activeLayout()
+      const current = book.activeLayout()
       if (snapshot.active) {
         if (target === undefined) {
           emit({ ...statePatch(true), active: true, error: null })
@@ -1237,8 +1036,8 @@ function createPaneController(ctx, options = {}) {
             : layoutTree.replaceSession(next, next.activePaneId, target)
       }
 
-      const previous = allLayouts()
-      const proposed = { ...previous, [activeKey()]: next }
+      const previous = book.allLayouts()
+      const proposed = { ...previous, [book.activeKey()]: next }
       const { failure } = reconcileAll(proposed)
       if (failure !== null) {
         reconcileAll(previous)
@@ -1252,7 +1051,7 @@ function createPaneController(ctx, options = {}) {
         emit({ error: messageOf(error) })
         return false
       }
-      commitLayout(next)
+      book.store(book.getActiveWorkspaceId(), next)
       emit({ ...statePatch(true), active: true, error: null })
       return true
     },
@@ -1305,7 +1104,7 @@ function createPaneController(ctx, options = {}) {
      *
      * With no `options.sessionId` a brand-new conversation is created in the
      * pane's workspace and the new pane takes the focus. Passing an explicit
-     * session is the seam the tab strip's `+` and `/resume`'s Ctrl+Enter use:
+     * session is the seam the strip's `+` and `/resume`'s Ctrl+Enter use:
      * the session is opened in the new pane instead of being created. A session
      * already mounted in another pane is focused rather than mounted twice
      * (spec §4.4).
@@ -1317,13 +1116,13 @@ function createPaneController(ctx, options = {}) {
      */
     split: splitPane,
     /**
-     * `+` on the tab strip: a new conversation in a new pane beside the focused
+     * `+` on the pane strip: a new conversation in a new pane beside the focused
      * one. With no pane open this opens the first pane instead (the empty-state
      * path), so the button never dead-ends.
      *
      * @returns {Promise<boolean>}
      */
-    newTab: newTabValue,
+    newPane: newPaneValue,
     /**
      * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane beside
      * the focused one, leaving the current pane untouched. The conversation is
@@ -1334,16 +1133,32 @@ function createPaneController(ctx, options = {}) {
      */
     openInNewPane: openInNewPaneValue,
     /**
-     * Ctrl+1..4: focus the Nth tab in `leaves()` order.
+     * Ctrl+1..4: focus the open conversation at that strip position. The
+     * numbering is the strip's own projection, not a raw leaf walk.
      *
-     * @param {number} index 1-based tab number
+     * @param {number} index 1-based strip position
      * @returns {boolean}
      */
-    focusTab: focusTabValue,
+    focusPaneAt: focusPaneAtValue,
     /**
-     * Tab-to-tab drag: exchange two panes' sessions and remembered views while
+     * The 1-based strip position of a conversation already open in the visible
+     * workspace's panes, or null. `/resume` uses it for the "已在窗格 N" badge
+     * (spec D10); selecting such a row focuses that pane instead of remounting.
+     *
+     * @param {string} sessionId
+     * @returns {number|null}
+     */
+    paneIndexOf(sessionId) {
+      if (disposed || typeof sessionId !== 'string' || sessionId === '') return null
+      const item = openConversationItems(book.activeLayout()).find(
+        (entry) => entry.sessionId === sessionId,
+      )
+      return item === undefined ? null : item.index
+    },
+    /**
+     * Strip-entry drag: exchange two panes' sessions and remembered views while
      * keeping the tree shape, the ratios and the focus (ticket 10). Dropping on
-     * the same tab, an unknown pane or a pane of another workspace is a no-op.
+     * the same entry, an unknown pane or a pane of another workspace is a no-op.
      *
      * @param {string} a
      * @param {string} b
@@ -1359,12 +1174,12 @@ function createPaneController(ctx, options = {}) {
      * @returns {boolean} whether the pane closed immediately
      */
     closePane(paneId) {
-      return requestClose(paneId)
+      return closeFlow.requestClose(paneId)
     },
     /** Close the pane showing `sessionId` (the conversation fallbacks' exit). */
     closePaneBySession(sessionId) {
-      const holder = locatePaneIn(sessionId)
-      return holder === null ? false : requestClose(holder.paneId)
+      const holder = book.locatePaneIn(sessionId)
+      return holder === null ? false : closeFlow.requestClose(holder.paneId)
     },
     /**
      * Confirm a staged close: interrupt the running turn, then close the pane.
@@ -1373,11 +1188,11 @@ function createPaneController(ctx, options = {}) {
      * @returns {Promise<boolean>} whether the pane was closed
      */
     confirmClose() {
-      return confirmCloseValue()
+      return closeFlow.confirmClose()
     },
     /** Dismiss the staged close; the session and the layout are unchanged. */
     cancelClose() {
-      return cancelCloseValue()
+      return closeFlow.cancelClose()
     },
     /**
      * Pane-aware `/resume`: swap the focused pane's conversation without
@@ -1407,8 +1222,8 @@ function createPaneController(ctx, options = {}) {
      * untouched, and the session itself is not rebuilt (ticket 07).
      *
      * A trajectory request while developer tools are disabled is refused rather
-     * than remembered as an unreachable selection; the segment is disabled for
-     * the same reason.
+     * than remembered as an unreachable selection; the segment is not rendered
+     * for the same reason (spec §6).
      *
      * @param {string} paneId
      * @param {'chat'|'trajectory'} view
@@ -1416,7 +1231,7 @@ function createPaneController(ctx, options = {}) {
      */
     setView(paneId, view) {
       if (disposed) return false
-      const located = locatePane(paneId)
+      const located = book.locatePane(paneId)
       if (located === null) return false
       const pane = located.pane
       if (view !== 'chat' && view !== 'trajectory') return false
@@ -1430,7 +1245,7 @@ function createPaneController(ctx, options = {}) {
         }
       }
       return apply(
-        layoutTree.setView(layoutOf(located.workspaceId), paneId, view),
+        layoutTree.setView(book.layoutOf(located.workspaceId), paneId, view),
         located.workspaceId,
       )
     },
@@ -1444,9 +1259,9 @@ function createPaneController(ctx, options = {}) {
      */
     restoreViewFor(sessionId) {
       if (disposed) return false
-      const holder = locatePaneIn(sessionId)
+      const holder = book.locatePaneIn(sessionId)
       if (holder === null) return false
-      const pane = layoutOf(holder.workspaceId).panes[holder.paneId]
+      const pane = book.layoutOf(holder.workspaceId).panes[holder.paneId]
       if (pane === undefined) return false
       if (pane.view === 'trajectory' && !isTrajectoryAvailable()) return false
       return activateView(pane, pane.view).ok === true
@@ -1464,7 +1279,7 @@ function createPaneController(ctx, options = {}) {
      */
     resize(path, ratio) {
       if (disposed) return false
-      return apply(layoutTree.resize(activeLayout(), path, ratio))
+      return apply(layoutTree.resize(book.activeLayout(), path, ratio))
     },
     /** Plugin unload / panel unregistration: release everything, restore native. */
     dispose() {
@@ -1473,15 +1288,14 @@ function createPaneController(ctx, options = {}) {
       unsubscribePanel()
       unsubscribeEntryError()
       unsubscribeViewAvailability()
+      unsubscribeCatalog()
       releaseAll()
       try {
         if (panelId() === PANEL_KEY) layout.selectPanel(null)
       } catch {
         // The layout may already be gone during shell teardown.
       }
-      layouts = {}
-      unscopedLayout = emptyLayout(null)
-      activeWorkspaceId = null
+      book.clear()
       snapshot = Object.freeze({
         ...snapshot,
         active: false,
@@ -1507,9 +1321,8 @@ module.exports = {
   CONTENT_FACTORY,
   PANE_SOURCE,
   MAIN_SOURCE,
+  UNSCOPED_WORKSPACE,
   probeConversationContent,
-  findCurrentSession,
   derivePanePhase,
-  interruptSession,
   createPaneController,
 }

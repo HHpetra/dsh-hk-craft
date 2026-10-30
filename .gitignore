@@ -54,12 +54,6 @@ env/
 # Generated browser plugin bundle (built from src/client/)
 /packages/*/lib/client.js
 
-# The client linker under `src/build/` is SOURCE, not build output; the generic
-# `build/` rule above would otherwise hide it and only the build script would
-# notice (on a clean clone).
-!packages/dsh-hk-craft/src/build/
-!packages/dsh-hk-craft/src/build/**
-
 # Disposable dsh profile used by smoke tests
 /.dsh-dev/
 

@@ -3,18 +3,13 @@
 /**
  * The adapter is where every dsh assumption lives, so its test doubles are the
  * shell's public client services — not internals. Each fake mirrors a contract
- * verified against the extracted dsh client packages (the citations sit next to
- * the calls in `dsh-workspaces.js`).
+ * recorded in `doc/upstream-contracts.md`.
  */
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const {
-  sectionModel,
-  createSectionActions,
-  DEFAULT_WORKSPACE_TITLE,
-} = require('./dsh-workspaces.js')
+const { sectionModel, createSectionActions } = require('./dsh-workspaces.js')
 
 /**
  * A client context with the two services the section touches.
@@ -50,10 +45,6 @@ function fakeCtx(options = {}) {
     },
   }
 }
-
-test('exposes dsh\'s automatic workspace title literal', () => {
-  assert.equal(DEFAULT_WORKSPACE_TITLE, 'default-workspace')
-})
 
 test('sectionModel projects the shell snapshots into section rows', () => {
   const rows = sectionModel(

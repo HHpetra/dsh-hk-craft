@@ -20,10 +20,11 @@
 
 ## Comments
 
-- 落点：`tab-strip.js`（纯投影：叶子顺序、标题、状态点、快捷键）+ `pane-view.js`（`TabStrip` 组件，挂进
-  `PaneHost` 的 tab strip + pane area 两层盒）+ `dsh-pane-host.js`（`newTab` / `openInNewPane` /
-  `requestClosePane` / `focusTab`）+ `commands.js`（`/resume` 的 `onSelect` 接 Ctrl+Enter）+ `index.js`
-  （命令面加 `openInNewPane`）。标签就是窗格，没有第二层 tab，也没有任何 per-session 列表。
+- 落点：`pane-strip.js`（纯投影：叶子顺序、标题、状态点、快捷键）+ `pane-view.js`（`PaneStrip` 组件，挂进
+  `PaneHost` 的 pane strip + pane area 两层盒）+ `dsh-pane-host.js`（`newPane` / `openInNewPane` /
+  `closePane` / `focusPaneAt`）+ `commands.js`（`/resume` 的 `onSelect` 接 Ctrl+Enter）+ `index.js`
+  （命令面加 `openInNewPane` / `paneIndexFor`）。标签条是窗格的索引，条目是已打开的会话，没有第二层容器，
+  也没有任何 per-session 列表。
 - **Ctrl+Enter 的接法（新 dsh 假设）**：dsh 的 popupSelect 只按 `Enter` / `Tab` 选中，事件修饰键被忽略
   （`dsh-client-ui-commands/lib/client.js:1913-1939`，`Enter` 分支 1923-1926）；`onSelect(option, context)`
   也不带事件（同文件 1250）。插件无法包住该键盘处理器，所以 `commands.js` 在 document 捕获阶段记录

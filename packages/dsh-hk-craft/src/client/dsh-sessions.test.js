@@ -27,7 +27,7 @@ function sessionsSnapshot(rows) {
   return { ids: rows.map((row) => row.id), byId, phase: 'ready', projectionsBySession: {} }
 }
 
-/** A host-shaped session list row (see dsh-api-session-controller service.js:491-567). */
+/** A host-shaped session list row (`doc/upstream-contracts.md#session-summary-fields`). */
 function sessionRow(overrides = {}) {
   return {
     id: 's1',

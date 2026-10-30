@@ -9,11 +9,10 @@ const {
   MAIN_SOURCE,
   PANEL_KEY,
   probeConversationContent,
-  findCurrentSession,
   derivePanePhase,
-  interruptSession,
   createPaneController,
 } = require('./dsh-pane-host.js')
+const { interruptSession } = require('./pane-close.js')
 
 /** Stand-in for the public `ctx.slots` face used by the probe. */
 function fakeSlots(result) {
@@ -121,23 +120,6 @@ test('interruptSession turns a binding failure result into a rejection', async (
 
 test('interruptSession reports a missing public route instead of silently succeeding', async () => {
   await assert.rejects(() => interruptSession({}, 's1'), /public interrupt/)
-})
-
-test('the explicitly chosen target defaults to the derived current session', () => {
-  const sessions = {
-    list: {
-      getSnapshot: () => ({
-        byId: {
-          idle: { id: 'idle', retainedBy: {} },
-          current: { id: 'current', retainedBy: { mainView: 1 } },
-          background: { id: 'background', retainedBy: { sidebarView: 1 } },
-        },
-      }),
-    },
-  }
-
-  assert.equal(findCurrentSession(sessions), 'current')
-  assert.equal(findCurrentSession({ list: { getSnapshot: () => ({ byId: {} }) } }), undefined)
 })
 
 test('pane phase follows the native Conversation phase derivation', () => {
@@ -1039,10 +1021,10 @@ test('switching workspace dismisses the staged close of the workspace being left
 })
 
 // ---------------------------------------------------------------------------
-// Tab strip actions (ticket 06)
+// Strip actions (ticket 06)
 // ---------------------------------------------------------------------------
 
-test('focusTab focuses the Nth tab in layout order', async () => {
+test('focusPaneAt focuses the strip position, using the strip projection', async () => {
   const { controller } = await readyController({ created: ['s2', 's3'] })
   await controller.split('p1', 'row')
   await controller.split('p2', 'col')
@@ -1050,21 +1032,21 @@ test('focusTab focuses the Nth tab in layout order', async () => {
   // row(p1, col(p2, p3)): p3 is focused.
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
 
-  assert.equal(controller.focusTab(1), true)
+  assert.equal(controller.focusPaneAt(1), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
-  assert.equal(controller.focusTab(3), true)
+  assert.equal(controller.focusPaneAt(3), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
 
-  assert.equal(controller.focusTab(4), false)
-  assert.equal(controller.focusTab(0), false)
-  assert.equal(controller.focusTab(1.5), false)
+  assert.equal(controller.focusPaneAt(4), false)
+  assert.equal(controller.focusPaneAt(0), false)
+  assert.equal(controller.focusPaneAt(1.5), false)
   controller.dispose()
 })
 
 test('+ creates a conversation in a new pane beside the focused one', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
 
-  assert.equal(await controller.newTab(), true)
+  assert.equal(await controller.newPane(), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.root, {
@@ -1084,12 +1066,24 @@ test('+ from the empty state opens the first pane instead of doing nothing', asy
   const { fake, controller } = await readyController({ created: ['s2'] })
   controller.closePane('p1')
 
-  assert.equal(await controller.newTab(), true)
+  assert.equal(await controller.newPane(), true)
 
   const activePaneId = controller.getSnapshot().activePaneId
   assert.equal(activePaneId, 'p2')
   assert.equal(controller.getSnapshot().panes[activePaneId].sessionId, 's2')
   assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+test('paneIndexOf reports the strip position used by the /resume badge', async () => {
+  const { controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+
+  // row(p1, p2): p1 is position 1, p2 position 2.
+  assert.equal(controller.paneIndexOf('s1'), 1)
+  assert.equal(controller.paneIndexOf('s2'), 2)
+  assert.equal(controller.paneIndexOf('not-open'), null)
+  assert.equal(controller.paneIndexOf(''), null)
   controller.dispose()
 })
 
@@ -1121,7 +1115,7 @@ test('Ctrl+Enter on a conversation already open focuses its pane instead of dupl
 })
 
 // ---------------------------------------------------------------------------
-// Dragging a tab onto another tab swaps the pane contents (ticket 10)
+// Dragging one strip entry onto another swaps the pane contents (ticket 10)
 // ---------------------------------------------------------------------------
 
 test('swapping two panes exchanges sessions and views, keeping the tree and the focus', async () => {

@@ -3,35 +3,33 @@
 /**
  * The one place this plugin touches dsh's conversation View API.
  *
- * Verified against the unpacked client bundle in
- * `.scratch/_tmp/client/dsh-client-ui-conversation/lib/client.js`:
+ * Verified against dsh 0.2.0-rc.2 (durable record:
+ * `doc/upstream-contracts.md#conversation-view-switch`):
  *
  * - `uiConversation.binding(sessionId)` resolves the stable per-session binding
- *   and throws for an unknown or inactive session (ui-conversation:4078-4085).
+ *   and throws for an unknown or inactive session.
  * - `binding.activate(viewId)` performs a View switch on the resident
  *   conversation; it does not rebuild the session, so the draft and the native
- *   scroll behaviour are untouched (ui-conversation:3951-3954, 19766-19768).
+ *   scroll behaviour are untouched.
  * - The native View switcher calls the same method, then persists its own
  *   preference; this plugin keeps the per-pane choice in the layout tree
- *   instead, so no dsh store is written (ui-conversation:20086-20089).
+ *   instead, so no dsh store is written.
  * - The trajectory View is gated by
  *   `ctx.configForms.developerTools.enabled.getSnapshot()`; while it is false
- *   ui-conversation skips that View entirely (ui-conversation:19753-19758).
+ *   ui-conversation skips that View entirely
+ *   (`doc/upstream-contracts.md#trajectory-gate-developertools-enabled`).
  *   `DeveloperToolsPreference` reads `value?.enabled ?? false`, so the answer is
- *   false until the host value arrives (ui-settings:1032-1052).
+ *   false until the host value arrives.
  *
  * `ctx` faces are read lazily: both services may load after this plugin, and a
  * missing service degrades to "chat only" instead of a crash. No React here, so
  * unit tests can drive the adapter with fakes.
  */
 
+const { messageOf } = require('./shared.js')
+
 const CHAT_VIEW = 'chat'
 const TRAJECTORY_VIEW = 'trajectory'
-
-/** @param {unknown} error @returns {string} */
-function messageOf(error) {
-  return error instanceof Error ? error.message : String(error)
-}
 
 /**
  * @param {any} ctx
@@ -96,16 +94,20 @@ function effectiveView(view, trajectoryAvailable) {
 }
 
 /**
- * The two segments of the pane control, in display order.
+ * The segments of the pane control, in display order.
+ *
+ * When developer tools are off the trajectory View does not exist in dsh at
+ * all, so it is absent here too — not rendered-but-disabled. Callers hide the
+ * whole control while fewer than two segments are available, matching native
+ * dsh's "available views < 2" rule.
  *
  * @param {boolean} trajectoryAvailable
- * @returns {{id: 'chat'|'trajectory', disabled: boolean}[]}
+ * @returns {{id: 'chat'|'trajectory'}[]}
  */
 function viewSegments(trajectoryAvailable) {
-  return [
-    { id: CHAT_VIEW, disabled: false },
-    { id: TRAJECTORY_VIEW, disabled: trajectoryAvailable !== true },
-  ]
+  return trajectoryAvailable === true
+    ? [{ id: CHAT_VIEW }, { id: TRAJECTORY_VIEW }]
+    : [{ id: CHAT_VIEW }]
 }
 
 /**

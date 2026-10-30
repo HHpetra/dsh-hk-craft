@@ -7,58 +7,42 @@
  * a one-file fix. The component (`sidebar-workspaces.js`) consumes only the
  * plain rows and callbacks this module produces.
  *
- * Verified against the extracted dsh client/host packages under
- * `.scratch/_tmp/` (read-only reference, dsh 0.2.1-rc.5-d4db512):
+ * Verified against dsh 0.2.0-rc.2. The durable contract record lives in
+ * `doc/upstream-contracts.md`; this module is the one place that adapts it:
  *
- * - The slot: `sidebar.workspaces`, a `single` root slot rendered by the sidebar
- *   shell as `renderSlot('sidebar.workspaces', { wide, expandSidebar })`
- *   (dsh-client-ui-sidebar/lib/client.js:502-510). Its shipped occupant is
- *   ui-workspace's `WorkspaceBrowser`, registered with no `priority`
- *   (dsh-client-ui-workspace/lib/client.js:5221-5252), i.e. priority 0; the slot
- *   core sorts entries ascending by `priority ?? 0` and renders the first, so a
- *   negative priority shadows it (frontend shell bundle, `register` /
- *   `entriesOfSlot`).
+ * - The slot: `sidebar.workspaces` is a `single` root slot rendered by the
+ *   sidebar shell as `renderSlot('sidebar.workspaces', { wide, expandSidebar })`
+ *   (`doc/upstream-contracts.md#sidebarworkspaces-slot`). Its shipped occupant
+ *   is ui-workspace's `WorkspaceBrowser`, registered with no `priority`, i.e.
+ *   0; the slot core sorts entries ascending by `priority ?? 0` and renders the
+ *   first, so a negative priority shadows it.
  * - Switching workspaces: `uiWorkspace.startSession(workspaceId, {
- *   clearPreviousDraft: false })` (dsh-client-ui-workspace/lib/client.js:1500-1528)
- *   reuses the workspace's blank session or creates one and makes it the main
- *   view. This is the same call the shipped picker makes after adding
- *   (…/client.js:3937-3939).
+ *   clearPreviousDraft: false })` reuses the workspace's blank session or
+ *   creates one and makes it the main view — the same call the shipped picker
+ *   makes after adding (`doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`).
  * - Adding a workspace: dsh's own add flow picks a directory, calls
- *   `workspaces.create({ path })` and then selects the returned workspace
- *   (…/client.js:2605-2607). The picking half is either the Electron preload
- *   bridge `globalThis.__DSH_DIRECTORY_PICKER__.pick()`
- *   (dsh-client-ui-directory-picker-native/lib/client.js:63-64) or the public
- *   service `uiWorkspace.pickDirectory()`
- *   (dsh-client-ui-workspace/lib/client.js:1560-1564). Both resolve a path or
- *   `null` when the user cancels.
- * - Records: a workspace is `{ workspaceId, path, title, sessionIds, createdAt,
- *   updatedAt }` (dsh-api-workspace-controller/lib/typert.remote-client.js:48-53);
- *   `workspaces.list` is the snapshot `{ items, archivedSessionIds,
- *   pinnedSessionIds, phase, state }`
- *   (dsh-api-workspace-controller/lib/client.js:259-267), its `create`
- *   resolving the workspace or throwing `WorkspaceCreateError`
- *   (…/lib/client.js:386-397). The session list snapshot is `{ phase, ids,
- *   byId }`; `sessionStatus` is a `Map<sessionId, { running, pendingInteraction,
- *   completionUnread }>` (dsh-client-ui-session/lib/client.js:1104-1108,
- *   976-992). "Main view" is derived from the one session retained under
- *   `mainView` (…/client.js:973-975).
+ *   `workspaces.create({ path })` and then selects the returned workspace. The
+ *   picking half is either the Electron preload bridge
+ *   `globalThis.__DSH_DIRECTORY_PICKER__.pick()` or the public service
+ *   `uiWorkspace.pickDirectory()`; both resolve a path or `null` when the user
+ *   cancels (`doc/upstream-contracts.md#directory-picker`).
+ * - Records: `workspaces.list` is `{ items, archivedSessionIds,
+ *   pinnedSessionIds, phase, state }` with workspace members in `sessionIds`;
+ *   the session list snapshot is `{ phase, ids, byId }`; `sessionStatus` is a
+ *   `Map<sessionId, { running, pendingInteraction, completionUnread }>`. "Main
+ *   view" is derived from the one session retained under `mainView`
+ *   (`doc/upstream-contracts.md#workspace-catalog`,
+ *   `#session-summary-fields`).
  * - The automatic first-use workspace title is the literal `default-workspace`,
- *   localized at display time (dsh-client-ui-workspace/lib/client.js:1737-1739).
+ *   localized at display time (`workspace-status.js:displayWorkspaceName`).
  *
- * Known gap: dsh exposes no cheap "this session's last turn failed" bit — the
- * client status map carries only running / pendingInteraction / completionUnread
- * (dsh-client-ui-session/lib/client.js:984-988) and the host `SessionSummary`
- * has no error field (dsh-api-session-controller/lib/typert.host.js:2967), while
- * a turn failure is a conversation node. `workspace-status.js` therefore keeps
- * an `errored` input the light honors, but nothing feeds it yet: red currently
- * means "waiting for you". Reading errors would cost a per-session history open,
- * which the sidebar must not do (documented in the ticket's Comments).
+ * Red means "waiting for you" only: dsh exposes no cheap "this session's last
+ * turn failed" bit, and reading one would mean opening per-session history,
+ * which the sidebar must not do. See spec §7 and
+ * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
 const { projectWorkspaceSection } = require('./workspace-status.js')
-
-/** dsh's stored title for the automatic first workspace (display-time localized). */
-const DEFAULT_WORKSPACE_TITLE = 'default-workspace'
 
 /**
  * Project the shell's live snapshots into the rows `WorkspaceSection` renders.
@@ -144,7 +128,6 @@ function createSectionActions(ctx, options = {}) {
 }
 
 module.exports = {
-  DEFAULT_WORKSPACE_TITLE,
   sectionModel,
   createSectionActions,
   pickDirectory,
