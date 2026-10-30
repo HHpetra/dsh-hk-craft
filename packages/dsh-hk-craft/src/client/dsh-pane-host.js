@@ -36,6 +36,7 @@
 
 const { listWorkspaceConversations, workspaceIdOf } = require('./dsh-sessions.js')
 const layoutTree = require('./layout-tree.js')
+const { hasLayoutKey } = require('./layout-store.js')
 const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
 const { createCloseFlow } = require('./pane-close.js')
 const { messageOf } = require('./shared.js')
@@ -505,6 +506,27 @@ function createPaneController(ctx, options = {}) {
     // pane instead of doing nothing.
     const items = workspacesFace()?.list?.getSnapshot?.()?.items
     return Array.isArray(items) ? items[0]?.workspaceId : undefined
+  }
+
+  /**
+   * Whether a workspace was ever opened in split (ticket 02, spec §1). "Enabled"
+   * is deliberately a layout fact, not a session fact: a workspace has a loaded
+   * layout in this process or a persisted `dsh.hkcraft.layout.v1.<id>` key from an
+   * earlier one. Opening the workspace in the native view never reaches this
+   * controller and writes no key, so it does not count; entering split — by
+   * clicking the workspace while panes show, by the footer toggle, or by any
+   * action that restores a tree — does.
+   *
+   * The answer is a plain boolean and never throws: an unreadable store just
+   * means "no key", which can only under-report enablement for that workspace.
+   *
+   * @param {string} workspaceId
+   * @returns {boolean}
+   */
+  function isWorkspaceEnabledValue(workspaceId) {
+    if (disposed) return false
+    if (typeof workspaceId !== 'string' || workspaceId === '') return false
+    return book.hasWorkspace(workspaceId) || hasLayoutKey(storage, workspaceId)
   }
 
   function refreshProbe() {
@@ -998,6 +1020,17 @@ function createPaneController(ctx, options = {}) {
     focusedPane,
     /** The workspace the pane workspace is currently showing. */
     focusedWorkspaceId,
+    /**
+     * Whether a workspace was ever opened in split: a loaded layout or a
+     * persisted layout key. The sidebar uses it to gate the four-state light; it
+     * is not a dsh fact, it is this plugin's own record.
+     *
+     * @param {string} workspaceId
+     * @returns {boolean}
+     */
+    isWorkspaceEnabled(workspaceId) {
+      return isWorkspaceEnabledValue(workspaceId)
+    },
     /**
      * The workspace's recent conversations, for the empty state (ticket 10).
      * Rows are raw (`buildResumeRows` filters / sorts / truncates them); the
