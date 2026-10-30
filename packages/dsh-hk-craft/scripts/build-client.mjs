@@ -8,9 +8,16 @@
  * so esbuild bundles `src/client/` as CJS and the loader call is wrapped around
  * it with a banner/footer. Platform modules (declared in `dsh.client.inject`)
  * stay external and are satisfied by the factory's `require`.
+ *
+ * Two ways to reach esbuild:
+ *  - in-process service (normal), and
+ *  - the esbuild CLI with `stdio: "inherit"` when the service cannot start
+ *    (confined sandboxes block piped child stdio, which is how the service
+ *    talks to its binary). Set `HK_CRAFT_ESBUILD_CLI=1` to force the CLI.
  */
-import { build } from 'esbuild'
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,7 +40,8 @@ const footer = `    return module.exports;
   }
 });`
 
-const result = await build({
+/** @type {Record<string, unknown>} */
+const options = {
   entryPoints: [entry],
   outfile: outFile,
   bundle: true,
@@ -49,10 +57,62 @@ const result = await build({
   banner: { js: banner },
   footer: { js: footer },
   metafile: true,
-})
+}
 
-const outputs = result.metafile.outputs
-const built = Object.values(outputs)[0]
+/** `spawn EPERM` from the esbuild service means "binary could not be spawned", not "build is broken". */
+function isSpawnDenial(error) {
+  const code = /** @type {{ code?: string }} */ (error)?.code
+  return code === 'EPERM' || /spawn (EPERM|EACCES)/i.test(String(error?.message ?? error))
+}
+
+/** Mirror the option object as CLI flags for the fallback path. */
+function toCliArgs() {
+  const args = [
+    entry,
+    '--outfile=' + outFile,
+    '--bundle',
+    '--format=cjs',
+    '--platform=browser',
+    '--target=es2020',
+    '--jsx=transform',
+    '--loader:.js=jsx',
+    '--banner:js=' + banner,
+    '--footer:js=' + footer,
+  ]
+  for (const specifier of declared) args.push('--external:' + specifier)
+  return args
+}
+
+async function buildInProcess() {
+  const { build } = await import('esbuild')
+  return await build(options)
+}
+
+function buildViaCli() {
+  const require = createRequire(import.meta.url)
+  const cli = require.resolve('esbuild/bin/esbuild')
+  const result = spawnSync(process.execPath, [cli, ...toCliArgs()], { stdio: 'inherit' })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    console.error(`esbuild CLI exited with status ${result.status}`)
+    process.exit(result.status ?? 1)
+  }
+  return null
+}
+
+let result = null
+if (process.env.HK_CRAFT_ESBUILD_CLI === '1') {
+  buildViaCli()
+} else {
+  try {
+    result = await buildInProcess()
+  } catch (error) {
+    if (!isSpawnDenial(error)) throw error
+    console.log('esbuild service unavailable in this sandbox — falling back to the esbuild CLI')
+    buildViaCli()
+  }
+}
+
 const code = readFileSync(outFile, 'utf8')
 
 /** Every bare require must be declared in `dsh.client.inject`, else the shell cannot resolve it. */
@@ -65,7 +125,8 @@ if (undeclared.length > 0) {
   process.exit(1)
 }
 
+const modules = result ? Object.keys(Object.values(result.metafile.outputs)[0].inputs).length : null
 const kb = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(1)
 console.log(
-  `built ${outFile} — ${Object.keys(built.inputs).length} module(s), ${kb} kB, id=${id}`,
+  `built ${outFile} — ${modules === null ? 'cli' : modules + ' module(s)'}, ${kb} kB, id=${id}`,
 )
