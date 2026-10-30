@@ -34,16 +34,55 @@
  *   view" is derived from the one session retained under `mainView`
  *   (`doc/upstream-contracts.md#workspace-catalog`,
  *   `#session-summary-fields`).
+ * - A summary row's `blank` bit is inverted into the light's `started` signal: a
+ *   conversation that never sent a message must not light its workspace green
+ *   (`doc/upstream-contracts.md#session-summary-fields`).
+ * - "Enabled" (ever opened in split) is the pane controller's answer, from its
+ *   loaded layouts plus the workspace layout key's existence. Opening a
+ *   workspace in the native view does not count, because it never writes a pane
+ *   layout key (`doc/upstream-contracts.md#workspace-enablement`).
  * - The automatic first-use workspace title is the literal `default-workspace`,
  *   localized at display time (`workspace-status.js:displayWorkspaceName`).
  *
  * Red means "waiting for you" only: dsh exposes no cheap "this session's last
  * turn failed" bit, and reading one would mean opening per-session history,
- * which the sidebar must not do. See spec §7 and
+ * which the sidebar must not do. See spec §1 and
  * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
 const { projectWorkspaceSection } = require('./workspace-status.js')
+
+/**
+ * The enabled-workspace set for one projection, or `undefined` when it cannot be
+ * known.
+ *
+ * `panes` is the pane controller's narrow face (`isWorkspaceEnabled`). A missing
+ * face, a face without the method, or a throw inside it all mean "cannot know":
+ * returning `undefined` makes the projection treat every workspace as enabled,
+ * which loses the never-opened gray instead of painting the column gray (spec
+ * §1). A set is still returned when the controller answered for every row, so an
+ * empty set genuinely means "none of these was ever opened in split".
+ *
+ * @param {{ items?: ReadonlyArray<any> } | undefined} workspacesSnapshot
+ * @param {{ isWorkspaceEnabled?: (workspaceId: string) => boolean } | null | undefined} panes
+ * @returns {Set<string> | undefined}
+ */
+function enabledWorkspacesOf(workspacesSnapshot, panes) {
+  if (panes === null || panes === undefined) return undefined
+  if (typeof panes.isWorkspaceEnabled !== 'function') return undefined
+  const items = Array.isArray(workspacesSnapshot?.items) ? workspacesSnapshot.items : []
+  const enabled = new Set()
+  try {
+    for (const item of items) {
+      const workspaceId = item?.workspaceId
+      if (typeof workspaceId !== 'string' || workspaceId === '') continue
+      if (panes.isWorkspaceEnabled(workspaceId)) enabled.add(workspaceId)
+    }
+  } catch (_error) {
+    return undefined
+  }
+  return enabled
+}
 
 /**
  * Project the shell's live snapshots into the rows `WorkspaceSection` renders.
@@ -51,10 +90,17 @@ const { projectWorkspaceSection } = require('./workspace-status.js')
  * @param {any} workspacesSnapshot `workspaces.list` snapshot
  * @param {any} sessionsSnapshot `sessions.list` snapshot
  * @param {any} statusSnapshot `sessionStatus` map
- * @returns {Array<{ workspaceId: string, title: string, light: 'green' | 'yellow' | 'red', current: boolean }>}
+ * @param {{ isWorkspaceEnabled?: (workspaceId: string) => boolean } | null} [panes]
+ *   the pane controller face; omit it to treat every workspace as enabled
+ * @returns {Array<{ workspaceId: string, title: string, light: 'gray' | 'green' | 'yellow' | 'red', current: boolean }>}
  */
-function sectionModel(workspacesSnapshot, sessionsSnapshot, statusSnapshot) {
-  return projectWorkspaceSection(workspacesSnapshot, sessionsSnapshot, statusSnapshot)
+function sectionModel(workspacesSnapshot, sessionsSnapshot, statusSnapshot, panes) {
+  return projectWorkspaceSection(
+    workspacesSnapshot,
+    sessionsSnapshot,
+    statusSnapshot,
+    enabledWorkspacesOf(workspacesSnapshot, panes),
+  )
 }
 
 /**

@@ -257,7 +257,9 @@ carries `{ id, title, displayTitle, running, blank, updatedAt }`;
 is a `Map<sessionId, { running, pendingInteraction, completionUnread }>`, where
 `pendingInteraction` is an approval/question/plan-review union. There is **no
 failure bit** in either projection: a failed turn is a conversation node, not a
-summary field.
+summary field. `blank` is true while the conversation has never sent a message;
+the sidebar inverts it into the light's `started` signal, so an enabled workspace
+holding only fresh blank sessions stays gray (spec §1).
 
 **Why we rely on it:** the sidebar lights and the strip dots are derived from
 these fields only; reading an error would require opening every session's
@@ -354,6 +356,38 @@ catalog, and re-runs the prune when the catalog becomes ready.
 **Verified:** snapshot and record shapes were read in the workspace controller
 and ui-workspace. Runtime probe: restart dsh with a deleted session and check
 the pane is dropped.
+
+---
+
+## Workspace enablement ("ever opened in split")
+
+**Provider:** this plugin itself — the workspace layout key
+`dsh.hkcraft.layout.v1.<workspaceId>` (`src/client/layout-store.js`) plus the pane
+controller's loaded-layout registry (`dsh-pane-host.js:isWorkspaceEnabled`).
+
+**Semantics:** a workspace is "enabled" when it has a loaded pane layout in this
+process or a persisted layout key from an earlier one. The controller writes the
+key the first time a workspace's tree is restored or shown in split, including an
+empty tree; nothing else writes it. Opening a workspace in the native view goes
+through `uiWorkspace.startSession`/`openSession` and never reaches the pane
+controller, so it does **not** count as enabled and must not change the gray
+light. The key's existence is read without parsing the payload: a corrupt or
+empty payload still proves the workspace was opened in split at some point.
+
+**Why we rely on it:** the sidebar's gray light means "never opened in split, or
+no conversation finished yet", not "no active session". The key is also the
+record ticket 03 must clear when it deletes a workspace, so a removed workspace
+cannot come back as an enabled gray row.
+
+**Degradation:** an absent storage backend or a throwing store means "no key" for
+that workspace only; a pane controller that cannot answer at all makes the
+section treat every workspace as enabled and derive green/yellow/red/gray from
+the sessions, which loses at most the never-opened gray (spec §1).
+
+**Verified:** key existence and write timing were exercised through the storage
+seam and the controller's fake services. Runtime probe: open a workspace in split
+and watch the row leave gray without a reload; restart dsh and confirm it is
+still enabled; open another workspace natively and confirm it stays gray.
 
 ---
 

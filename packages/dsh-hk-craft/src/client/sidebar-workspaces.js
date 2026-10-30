@@ -1,12 +1,15 @@
 'use strict'
 
 /**
- * The sidebar workspace section: one status light plus one name per workspace,
- * and the one "Add workspace" entry (spec §7, ticket 02).
+ * The sidebar workspace section: one four-state status light plus one name per
+ * workspace, and the one "Add workspace" entry (spec §1, tickets 01/02).
  *
  * This component is deliberately dumb. It receives plain rows from
  * `dsh-workspaces.js` and renders them; nothing here knows what a dsh workspace
- * record looks like, so an upstream shape change never reaches this file.
+ * record looks like, so an upstream shape change never reaches this file. The one
+ * extra input is the pane controller's narrow face (`panes`), needed to ask
+ * "was this workspace ever opened in split" and to re-render as soon as that
+ * changes.
  *
  * A row is a container holding the primary select button (light + name) and a
  * sibling inline action slot, which ticket 01 reserves empty for the delete
@@ -27,7 +30,34 @@ const { displayWorkspaceName } = require('./workspace-status.js')
 const { crossedDragThreshold, dropAnchor, dropSideFor } = require('./workspace-reorder.js')
 
 /** Neutral fallback for an unexpected light value, so a bad row never renders blank. */
-const LIGHT_FALLBACK = LIGHT_COLORS.green
+const LIGHT_FALLBACK = LIGHT_COLORS.gray
+
+/** No-op store for the pane subscription when no controller is wired. */
+const noSubscribe = () => () => {}
+const noSnapshot = () => undefined
+
+/**
+ * Follow the pane controller's snapshot so a workspace opened in split changes
+ * its row from gray immediately (spec §1: "进入某个工作区的分屏后灯色立即可变").
+ * The snapshot value itself is not read here — the light projection asks the
+ * controller through `isWorkspaceEnabled` — it only drives the re-render.
+ *
+ * A stand-in React without `useSyncExternalStore` (the Node tests, an older
+ * shell) renders the current state once instead of subscribing.
+ *
+ * @param {any} React the lazily resolved platform module
+ * @param {{ subscribe?: () => (() => void), getSnapshot?: () => unknown } | undefined} panes
+ * @returns {unknown}
+ */
+function usePaneSnapshot(React, panes) {
+  const useSyncExternalStore = React?.useSyncExternalStore
+  if (typeof useSyncExternalStore !== 'function') return undefined
+  return useSyncExternalStore(
+    typeof panes?.subscribe === 'function' ? panes.subscribe : noSubscribe,
+    typeof panes?.getSnapshot === 'function' ? panes.getSnapshot : noSnapshot,
+    noSnapshot,
+  )
+}
 
 /** The insertion line's colour: the shell's business accent, themed per palette. */
 const DROP_LINE_COLOR = 'var(--dsw-alias-state-business-primary, Highlight)'
@@ -231,6 +261,11 @@ function workspaceRowAt(clientX, clientY) {
  *   useSessions?: (selector: (state: any) => any) => any,
  *   useSessionStatus?: (selector: (state: any) => any) => any,
  *   useWorkspaces?: (selector: (state: any) => any) => any,
+ *   panes?: {
+ *     isWorkspaceEnabled?: (workspaceId: string) => boolean,
+ *     subscribe?: (listener: () => void) => () => void,
+ *     getSnapshot?: () => unknown,
+ *   },
  *   openWorkspace?: (workspaceId: string) => void,
  *   addWorkspace?: () => Promise<void>,
  *   reorderWorkspace?: (workspaceId: string, beforeWorkspaceId?: string) => Promise<void>,
@@ -249,6 +284,7 @@ function WorkspaceSection(props) {
   const sessions = useSessions((state) => state)
   const statuses = useSessionStatus((state) => state)
   const workspaces = useWorkspaces((state) => state)
+  usePaneSnapshot(React, props?.panes)
 
   const [busy, setBusy] = React.useState(false)
   const [failure, setFailure] = React.useState(null)
@@ -262,7 +298,7 @@ function WorkspaceSection(props) {
   /** One reorder request at a time (spec §3); the ref is the synchronous guard. */
   const reorderBusy = React.useRef(false)
 
-  const rows = sectionModel(workspaces, sessions, statuses)
+  const rows = sectionModel(workspaces, sessions, statuses, props?.panes)
   const order = rows.map((row) => row.workspaceId)
   const defaultName = t('workspace.defaultName')
 

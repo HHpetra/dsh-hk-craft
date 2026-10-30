@@ -10,6 +10,7 @@ const {
   emptyLayout,
   encodeLayout,
   decodeLayout,
+  hasLayoutKey,
   readLayout,
   writeLayout,
 } = require('./layout-store.js')
@@ -383,6 +384,52 @@ test('writing without a workspace id writes nothing; a failing store is a silent
   assert.equal(unwritable.writes.length, 0)
   assert.equal(writeLayout(thrownStorage(new Error('quota')), threePaneLayout()), false)
   assert.equal(writeLayout(undefined, threePaneLayout()), false)
+})
+
+// ---------------------------------------------------------------------------
+// Key existence: "has this workspace ever been opened in split?"
+// ---------------------------------------------------------------------------
+
+test('a stored key exists even when its payload is empty or corrupt', () => {
+  const store = new Map()
+  const storage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, value),
+  }
+
+  assert.equal(hasLayoutKey(storage, 'w1'), false, 'nothing written yet')
+  assert.equal(hasLayoutKey(storage, 'w2'), false, 'nothing written yet')
+
+  // Existence is the fact, not parseability: a stale or corrupt value still proves
+  // the workspace was opened in split at some point.
+  store.set(layoutKey('w1'), '')
+  store.set(layoutKey('w2'), '{not json')
+  assert.equal(hasLayoutKey(storage, 'w1'), true)
+  assert.equal(hasLayoutKey(storage, 'w2'), true)
+})
+
+test('an absent, throwing or invalid-id store reports no key instead of throwing', () => {
+  assert.equal(hasLayoutKey(undefined, 'w1'), false)
+  assert.equal(hasLayoutKey({}, 'w1'), false)
+  assert.equal(hasLayoutKey(thrownStorage(new Error('security error')), 'w1'), false)
+  assert.equal(hasLayoutKey(fakeStorage(null), ''), false)
+  assert.equal(hasLayoutKey(fakeStorage(null), undefined), false)
+  assert.equal(hasLayoutKey(fakeStorage(null), null), false)
+})
+
+test('writing a layout key makes the existence check agree with readLayout', () => {
+  const store = new Map()
+  const storage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, value),
+  }
+  const layout = threePaneLayout()
+
+  assert.equal(hasLayoutKey(storage, 'w1'), false)
+  assert.deepEqual(readLayout(storage, 'w1'), emptyLayout('w1'))
+  writeLayout(storage, layout)
+  assert.equal(hasLayoutKey(storage, 'w1'), true)
+  assert.deepEqual(readLayout(storage, 'w1'), layout)
 })
 
 test('two workspaces persist under separate keys without overwriting each other', () => {
