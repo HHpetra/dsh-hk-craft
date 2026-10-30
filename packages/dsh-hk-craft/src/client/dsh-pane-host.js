@@ -1022,7 +1022,7 @@ function createPaneController(ctx, options = {}) {
      * Omitted `sessionId` means "the session dsh currently treats as the
      * conversation". With panes already open in that workspace, a known session
      * focuses its pane and an unknown one replaces the focused pane's content —
-     * the footer toggle never dismantles the layout. A session of another
+     * the settings-page switch never dismantles the layout. A session of another
      * workspace switches the visible workspace first (ticket 08).
      *
      * @param {string} [sessionId]

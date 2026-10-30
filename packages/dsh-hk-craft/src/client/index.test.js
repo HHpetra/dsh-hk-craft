@@ -11,6 +11,9 @@ const {
   createModeRosterLoader,
   createStripSeats,
   WORKSPACE_SLOT_PRIORITY,
+  SETTINGS_SECTION_ID,
+  SETTINGS_SECTION_ORDER,
+  SETTINGS_SLOT,
 } = require('./index.js')
 const { zh, en } = require('./locale.js')
 const { BUILT_IN_MODE_KEYS } = require('./pane-mode.js')
@@ -39,9 +42,9 @@ function workspaceServices() {
  * `inject(names, callback)` mirrors the real contract: the callback only runs
  * once every named service exists.
  *
- * @param {{services?: Record<string, unknown>}} [options]
+ * @param {{services?: Record<string, unknown>, absentSlots?: string[]}} [options]
  */
-function fakeCtx({ services = workspaceServices() } = {}) {
+function fakeCtx({ services = workspaceServices(), absentSlots = [] } = {}) {
   const calls = {
     effect: [],
     locale: [],
@@ -80,7 +83,7 @@ function fakeCtx({ services = workspaceServices() } = {}) {
       },
       bind(namespace) {
         return (key) => {
-          const table = namespace === NS ? dictionaries.zh : {}
+          const table = namespace === NS ? zh : en
           return table[key] ?? key
         }
       },
@@ -109,6 +112,7 @@ function fakeCtx({ services = workspaceServices() } = {}) {
     slots: {
       inject(key, callback) {
         calls.injected.push(key)
+        if (absentSlots.includes(key)) return () => {}
         const result = callback()
         if (result !== null && typeof result === 'object' && typeof result.next === 'function') {
           const disposers = []
@@ -199,18 +203,25 @@ test('registers its main key with a session-scoped child slot', () => {
   assert.equal(typeof body.component, 'function')
 })
 
-test('registers the diagnostics action and the visible pane toggle in the footer slot', () => {
+test('registers a dedicated HK Craft settings section instead of sidebar footer actions', () => {
   const ctx = fakeCtx()
   apply(ctx)
 
-  const footer = ctx.calls.registered
-    .filter((entry) => entry.options.name === 'sidebar.footer.action')
-    .map((entry) => entry.options.id)
-    .sort()
+  const footer = ctx.calls.registered.filter(
+    (entry) => entry.options.name === 'sidebar.footer.action',
+  )
+  assert.deepEqual(footer, [])
+  assert.equal(ctx.calls.injected.includes('sidebar.footer.action'), false)
 
-  assert.deepEqual(footer, ['dsh-hk-craft.diagnostics', 'dsh-hk-craft.panes'])
-  assert.ok(ctx.calls.injected.includes('sidebar.footer.action'))
-  assert.ok(ctx.calls.injected.includes('main'))
+  const section = entryNamed(ctx, SETTINGS_SLOT)
+  assert.equal(section.options.id, SETTINGS_SECTION_ID)
+  assert.equal(section.options.locale, NS)
+  assert.equal(typeof section.options.label, 'function')
+  assert.equal(section.options.label(), zh['settings.nav'])
+  assert.equal(typeof section.component, 'function')
+  assert.equal(section.options.order, SETTINGS_SECTION_ORDER)
+  // Official top-level sections use orders -10..20; this page follows them.
+  assert.ok(section.options.order > 20)
 })
 
 test('feature-probes conversation.content when the pane registration mounts', () => {
@@ -226,19 +237,29 @@ test('waits for the workspace services before touching the workspaces slot', () 
   assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
 })
 
+test('stays out of the settings panel when the shell declares no section slot', () => {
+  const ctx = fakeCtx({ absentSlots: [SETTINGS_SLOT] })
+  apply(ctx)
+
+  assert.equal(
+    ctx.calls.registered.some((entry) => entry.options.name === SETTINGS_SLOT),
+    false,
+  )
+  assert.equal(ctx.calls.injected.includes(SETTINGS_SLOT), true)
+  // The rest of the plugin still mounts: a shell without settings is degraded,
+  // not broken.
+  assert.ok(ctx.calls.registered.some((entry) => entry.options.name === 'main'))
+  assert.ok(ctx.calls.registered.some((entry) => entry.options.name === 'sidebar.workspaces'))
+})
+
 test('registers the workspace entry alongside this ticket\'s pane entries', () => {
   const ctx = fakeCtx()
   apply(ctx)
   assert.deepEqual(
     ctx.calls.registered.map((entry) => entry.options.name).sort(),
-    ['hkcraft.pane', 'main', 'sidebar.footer.action', 'sidebar.footer.action', 'sidebar.workspaces'],
+    ['hkcraft.pane', 'main', 'settings.section', 'sidebar.workspaces'],
   )
-  assert.deepEqual(ctx.calls.injected, [
-    'sidebar.footer.action',
-    'sidebar.footer.action',
-    'main',
-    'sidebar.workspaces',
-  ])
+  assert.deepEqual(ctx.calls.injected, ['settings.section', 'main', 'sidebar.workspaces'])
 })
 
 test('shadows the sidebar workspace section at a lower priority than the shipped occupant', () => {
@@ -254,15 +275,16 @@ test('shadows the sidebar workspace section at a lower priority than the shipped
   assert.equal(typeof component, 'function')
 })
 
-test('the workspace entry injects only the two callbacks the component consumes', () => {
+test('the workspace entry injects only the three callbacks the component consumes', () => {
   const ctx = fakeCtx()
   apply(ctx)
   const { options } = entryNamed(ctx, 'sidebar.workspaces')
   assert.equal(typeof options.inject, 'function')
   const injected = options.inject()
-  assert.deepEqual(Object.keys(injected).sort(), ['addWorkspace', 'openWorkspace'])
+  assert.deepEqual(Object.keys(injected).sort(), ['addWorkspace', 'openWorkspace', 'reorderWorkspace'])
   assert.equal(typeof injected.openWorkspace, 'function')
   assert.equal(typeof injected.addWorkspace, 'function')
+  assert.equal(typeof injected.reorderWorkspace, 'function')
 })
 
 test('the workspace entry declares no child slots and no store', () => {
@@ -289,7 +311,7 @@ test('skips command registration when a command service is missing', () => {
   const ctx = fakeCtx()
   apply(ctx)
   assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
-  assert.equal(ctx.calls.registered.length, 5)
+  assert.equal(ctx.calls.registered.length, 4)
 })
 
 test('apply is idempotent in shape: no module-level state leaks between loads', () => {

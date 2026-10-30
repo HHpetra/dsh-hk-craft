@@ -42,8 +42,9 @@ the plugin does not have to clean it up by hand.
 `selectPanel(null)` is the clean way back to native dsh.
 
 **Verified:** slot key fallback, `selectPanel` validation, and the
-unregistration reset were read in the ui-layout bundle. Runtime probe: toggle
-the footer action and confirm the native conversation unmounts.
+unregistration reset were read in the ui-layout bundle. Runtime probe: enter the
+split panes from the HK Craft settings page and confirm the native conversation
+unmounts.
 
 ---
 
@@ -400,6 +401,40 @@ the pane is dropped.
 
 ---
 
+## Workspace display order
+
+**Provider:** `@deepseek-ai/dsh-client-ui-workspace` (the injectable `workspaces`
+client service) over `@deepseek-ai/dsh-api-workspace-controller`.
+
+**Semantics:** `workspaces.insertBefore(workspaceId, beforeWorkspaceId?)` moves
+one workspace in the registry's durable display order. The positional
+`beforeWorkspaceId` is the workspace the moved one must precede; omitting it (or
+passing `undefined`) appends to the end. The remote request is the object
+`{ workspaceId, beforeWorkspaceId? }` and its result is the complete resulting
+order as `{ workspaceIds }`. The client model installs the optimistic order
+immediately, then reconciles it with the returned complete order; on failure it
+reinstalls its `committedOrder` **before** rejecting, and the rejection is a
+plain `Error` whose message is `workspace reorder failed: <code>: <message>`.
+`workspaces.list().items` is already in display order and is the only order the
+plugin renders — the plugin keeps no order of its own, so a failed write needs
+no local rollback.
+
+**Why we rely on it:** pointer drag reordering (ticket 04) only decides an
+anchor from the row under the pointer and its upper/lower half; persistence,
+optimism and rollback belong to the host. The sidebar therefore never sorts or
+caches an order: it writes through this call and re-renders `workspaces.list`,
+which is why "drop back into place" is detected before the call (no meaningless
+write) and a failure simply shows the host's committed order again.
+
+**Verified:** the positional client signature, the object-shaped remote request,
+the `workspaceIds` result, the optimistic install / `committedOrder` restore and
+the `commandError("reorder", …)` message were read in the workspace-controller
+and ui-workspace bundles (0.2.1-rc.5). Runtime probe: drag a row past 6px, drop
+it before/after another, restart dsh and confirm the order survived; then force a
+failure and confirm the row snaps back while the error is shown.
+
+---
+
 ## Split panel hides the native right bar
 
 **Provider:** `@deepseek-ai/dsh-client-ui-sidebar-right` (the `rightbar` slot
@@ -449,6 +484,42 @@ not a fork.
 **Verified:** slot render, shipped registration and the priority sort were read
 in the sidebar and ui-workspace bundles. Runtime probe: install, confirm the
 section is slim and uninstall restores the native one.
+
+---
+
+## `settings.section` slot
+
+**Provider:** `@deepseek-ai/dsh-client-ui-settings-general` (the settings shell).
+
+**Semantics:** the shell declares `settings.section` as a `list` root slot and
+renders the active page with
+`renderSlot("settings.section", { close }, { only: active })`. A contribution
+registers `{ name, id, order, label, locale }` (plus optional
+`children` / `inject`) through `ctx.slots.inject` followed by
+`ctx.slots.register`; a list entry requires an `id`. The navigation projects
+every entry as `{ id, order, label }` and sorts by `order` ascending. The
+official top-level sections use `account -10` (when signed in), `general 0`,
+`models 10`, `plugins 15` and `agent-presets 20`, so a page that wants the end of
+the nav registers a larger order. `label` is a thunk resolved with
+`resolveSlotLabel` and re-read whenever the slot version or the locale revision
+changes, which is how a nav label follows a live language switch. The section
+component receives the standard slot props (including the `t` bound by its
+`locale`) plus `close`, the callback that dismisses the settings panel.
+
+**Why we rely on it:** the diagnostics panel and the native ⇄ pane switch used
+to be two `sidebar.footer.action` buttons; ticket 05 moves them into one
+dedicated HK Craft settings page. The page consumes only the slot's `t` / `close`
+and the pane controller closure, so it needs neither `configForms` nor a
+settings data namespace. Because the entry is registered inside
+`ctx.slots.inject`, a shell without the settings slot never runs the callback
+and the page simply stays absent.
+
+**Verified:** the root slot declaration, the ordered nav projection, the
+`{ close }` render props and the thunk refresh were read in the
+ui-settings-general bundle 0.2.1-rc.5; the account and agent-preset
+registrations were read in their own bundles. Runtime probe: open Settings,
+confirm the HK Craft row is last, the diagnostics match the shell, and entering
+split view from the page closes Settings and selects the pane panel.
 
 ---
 

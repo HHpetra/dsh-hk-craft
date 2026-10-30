@@ -9,28 +9,40 @@
  *
  * Everything here goes through public plugin services only: `slots`, `locale`,
  * `sessions`, `layout`, `uiWorkspace` and `workspaces` for the sidebar workspace
- * section, and `commandUi`, `sessions`, `workspaces` and `uiWorkspace` for the
- * slash commands. Optional capabilities attach through `ctx.inject`, except the
- * agent-preset roster behind the read-only mode badge, which is read through
- * `ctx.get('remote')` at call time (ticket 07). The footer action therefore
- * keeps working even when a service is absent.
+ * section and the settings page, and `commandUi`, `sessions`, `workspaces` and
+ * `uiWorkspace` for the slash commands. Optional capabilities attach through
+ * `ctx.inject`, except the agent-preset roster behind the read-only mode badge,
+ * which is read through `ctx.get('remote')` at call time (ticket 07), so the
+ * plugin keeps working even when a service is absent.
  *
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
- * and thin React views (`pane-view.js`).
+ * and thin React views (`pane-view.js`); the HK Craft settings page
+ * (`settings-view.js`) is the transitional home of the diagnostics and the
+ * split-view switch (ticket 05).
  */
 
 const { dictionaries } = require('./locale.js')
-const { DiagnosticsAction } = require('./diagnostics.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
 const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
 const { createViewSwitch } = require('./dsh-view-switch.js')
-const { createPaneBody, createPaneHost, createPaneToggle } = require('./pane-view.js')
+const { createPaneBody, createPaneHost } = require('./pane-view.js')
+const { createSettingsSection } = require('./settings-view.js')
 const { modeRosterRows } = require('./pane-mode.js')
 const { createModeSeat } = require('./pane-mode-seat.js')
 const { registerCommands } = require('./commands.js')
 
 const NS = 'dsh-hk-craft'
+
+/** The settings slot declared by ui-settings-general (a root list slot). */
+const SETTINGS_SLOT = 'settings.section'
+/** This plugin's fixed settings-nav id. */
+const SETTINGS_SECTION_ID = 'dsh-hk-craft'
+/**
+ * After every official top-level section (account -10, general 0, models 10,
+ * plugins 15, agent presets 20), so the page sits at the end of the nav.
+ */
+const SETTINGS_SECTION_ORDER = 100
 
 /**
  * The priority that shadows dsh's own `sidebar.workspaces` occupant.
@@ -104,17 +116,7 @@ function createStripSeats(ctx) {
  */
 function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, dictionaries), 'dsh-hk-craft: dictionaries')
-
-  ctx.slots.inject('sidebar.footer.action', () =>
-    ctx.slots.register(
-      {
-        name: 'sidebar.footer.action',
-        id: 'dsh-hk-craft.diagnostics',
-        locale: NS,
-      },
-      DiagnosticsAction,
-    ),
-  )
+  const t = ctx.locale.bind(NS)
 
   // The View adapter is optional: without `uiConversation` (or the
   // developer-tools gate) the panes stay chat-only instead of failing to mount.
@@ -129,7 +131,24 @@ function apply(ctx) {
   const stripSeats = createStripSeats(ctx)
   const PaneHost = createPaneHost(controller, { seats: stripSeats })
   const PaneBody = createPaneBody(controller)
-  const PaneToggle = createPaneToggle(controller)
+
+  // The HK Craft settings page (ticket 05): diagnostics plus the transitional
+  // split-view switch. `settings.section` is a root list slot declared by
+  // ui-settings-general; `slots.inject` only runs this callback once that slot
+  // exists, so a shell without a settings panel simply never shows the page.
+  const SettingsSection = createSettingsSection(controller)
+  ctx.slots.inject(SETTINGS_SLOT, () =>
+    ctx.slots.register(
+      {
+        name: SETTINGS_SLOT,
+        id: SETTINGS_SECTION_ID,
+        order: SETTINGS_SECTION_ORDER,
+        label: () => t('settings.nav'),
+        locale: NS,
+      },
+      SettingsSection,
+    ),
+  )
 
   /**
    * The pane face the slash commands see: enough to keep `/resume` and `/clear`
@@ -146,17 +165,6 @@ function apply(ctx) {
     newConversation: (workspaceId) => controller.newInFocused(workspaceId),
     paneIndexFor: (sessionId) => controller.paneIndexOf(sessionId),
   }
-
-  ctx.slots.inject('sidebar.footer.action', () =>
-    ctx.slots.register(
-      {
-        name: 'sidebar.footer.action',
-        id: 'dsh-hk-craft.panes',
-        locale: NS,
-      },
-      PaneToggle,
-    ),
-  )
 
   ctx.effect(() => {
     // The `main` keyed root slot is declared by ui-layout. Register our key
@@ -204,6 +212,7 @@ function apply(ctx) {
           inject: () => ({
             openWorkspace: actions.openWorkspace,
             addWorkspace: actions.addWorkspace,
+            reorderWorkspace: actions.reorderWorkspace,
           }),
         },
         WorkspaceSection,
@@ -211,7 +220,6 @@ function apply(ctx) {
     )
   })
 
-  const t = ctx.locale.bind(NS)
   ctx.inject(COMMAND_SERVICES, (scope) => {
     scope.effect(() => {
       const disposers = registerCommands({
@@ -237,4 +245,7 @@ module.exports = {
   WORKSPACE_SLOT_PRIORITY,
   createModeRosterLoader,
   createStripSeats,
+  SETTINGS_SLOT,
+  SETTINGS_SECTION_ID,
+  SETTINGS_SECTION_ORDER,
 }
