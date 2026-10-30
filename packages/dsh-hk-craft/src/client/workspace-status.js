@@ -151,6 +151,7 @@ module.exports = {
   LIGHT_RED,
   workspaceLight,
   sessionSignal,
+  readStatus,
   projectWorkspaceSection,
   displayWorkspaceName,
 }
