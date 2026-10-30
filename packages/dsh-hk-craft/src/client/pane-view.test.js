@@ -2,11 +2,13 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const Module = require('node:module')
+
+const { withFakeReact } = require('./fake-react.js')
 
 const {
   PANE_CONTENT_OCCURRENCE,
   PaneFrame,
+  PaneStripActions,
   PaneViewToggle,
   createPaneBody,
   createPaneConversationViews,
@@ -16,33 +18,21 @@ const {
 
 /**
  * A React stand-in for the pane body render: only the calls `PaneBody` makes.
- * `pane-view.js` resolves `react` lazily, so installing this through
- * `Module._load` reaches the same module instance the component uses.
+ * `pane-view.js` resolves `react` lazily, so the shared installer routes it to
+ * this instance.
  */
-function installFakeReact() {
-  const originalLoad = Module._load
-  const Fragment = Symbol('Fragment')
-  class Component {
+const fakeReact = {
+  Fragment: Symbol('Fragment'),
+  Component: class Component {
     constructor(props) {
       this.props = props
     }
-  }
-  const fake = {
-    Fragment,
-    Component,
-    createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
-    useEffect: () => {},
-    useRef: (value) => ({ current: value }),
-    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
-    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
-  }
-  Module._load = function load(request, parent, isMain) {
-    if (request === 'react') return fake
-    return originalLoad.call(this, request, parent, isMain)
-  }
-  return () => {
-    Module._load = originalLoad
-  }
+  },
+  createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
+  useEffect: () => {},
+  useRef: (value) => ({ current: value }),
+  useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
 }
 
 /** The controller face `PaneBody` reads: a snapshot plus the actions it calls. */
@@ -71,8 +61,7 @@ function fakeController() {
 }
 
 test('a pane mounts the embedded conversation.content occurrence', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const renders = []
     const PaneBody = createPaneBody(fakeController())
     PaneBody({
@@ -98,14 +87,11 @@ test('a pane mounts the embedded conversation.content occurrence', () => {
     // The pane replaces the factory's `views` local slot so its layout record,
     // not ui-conversation's own View store, chooses the rendered View.
     assert.equal(typeof renders[0].options.slots.views, 'function')
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('a blank pane still asks for the hero state', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const renders = []
     const PaneBody = createPaneBody(fakeController())
     PaneBody({
@@ -122,9 +108,7 @@ test('a blank pane still asks for the hero state', () => {
     assert.equal(renders[0].input.variant, 'embedded')
     assert.equal(renders[0].input.phase, 'hero')
     assert.equal(renders[0].input.hero, true)
-  } finally {
-    restore()
-  }
+  })
 })
 
 
@@ -147,8 +131,7 @@ test('paneViewOfSession reads the pane layout record across loaded workspaces', 
 })
 
 test('the views override renders conversation.session with the layout view', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const state = {
       layouts: {
         w1: {
@@ -188,14 +171,11 @@ test('the views override renders conversation.session with the layout view', () 
     // routed into this pane's layout, not swallowed by the forced view.
     renders[0].props.openView('chat')
     assert.deepEqual(switches, [['p2', 'chat']])
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('the views override falls back to chat while developer tools hide trajectory', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const state = {
       layouts: { w1: { panes: { p1: { paneId: 'p1', sessionId: 's1', view: 'trajectory' } } } },
       panes: {},
@@ -220,9 +200,7 @@ test('the views override falls back to chat while developer tools hide trajector
     assert.equal(renders.length, 1)
     assert.equal(renders[0].name, 'conversation.session')
     assert.equal(renders[0].props.view, 'chat')
-  } finally {
-    restore()
-  }
+  })
 })
 
 /** @param {string} paneId @param {string} sessionId */
@@ -255,8 +233,7 @@ function headerController({ trajectory = true, calls = [] } = {}) {
 }
 
 test('the pane header offers exactly a view toggle and a close button', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const controller = headerController()
     const frame = PaneFrame({
       controller,
@@ -291,14 +268,11 @@ test('the pane header offers exactly a view toggle and a close button', () => {
       assert.equal(text.includes('pane.splitRight'), false)
       assert.equal(text.includes('pane.splitDown'), false)
     }
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('the view toggle names the other view and switches it with one click', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const calls = []
     const controller = headerController({ calls })
     const t = (key) => key
@@ -323,20 +297,15 @@ test('the view toggle names the other view and switches it with one click', () =
       ['view', 'p1', 'trajectory'],
       ['view', 'p1', 'chat'],
     ])
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('the view toggle is absent while developer tools hide the trajectory view', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const controller = headerController({ trajectory: false })
 
     assert.equal(PaneViewToggle({ controller, pane: pane('p1', 's1'), t: (key) => key }), null)
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('every loaded workspace is rendered, exactly one of them visible', () => {
@@ -409,4 +378,65 @@ test('a missing active workspace falls back to the first rendered group', () => 
 
   assert.equal(groups.length, 1)
   assert.equal(groups[0].visible, true)
+})
+
+/* ── strip action group: empty seats take no box ─────────────────────────── */
+
+/** The element children a fake React element carries, flattening arrays. */
+function elementChildren(element) {
+  const out = []
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child)
+      return
+    }
+    if (node !== null && node !== undefined && typeof node === 'object') out.push(node)
+  }
+  walk(element?.props?.children)
+  return out
+}
+
+test('the strip action group reserves no padding or gap when both seats render null', () => {
+  withFakeReact(fakeReact, () => {
+    const NullSeat = () => null
+    const tree = PaneStripActions({ seats: { mode: NullSeat, subagents: NullSeat }, context: {} })
+
+    assert.equal(tree.props.style.padding, undefined, 'the group must not reserve group padding')
+    assert.equal(tree.props.style.gap, undefined, 'the group must not reserve a gap')
+    assert.equal(tree.props.style.width, undefined, 'the group must not reserve a fixed width')
+
+    const wrappers = elementChildren(tree)
+    assert.equal(wrappers.length, 2)
+    for (const wrapper of wrappers) {
+      // A display:contents wrapper has no box of its own; only the seat root can.
+      assert.equal(wrapper.props.style.display, 'contents')
+    }
+  })
+})
+
+test('a visible seat carries its width cap and spacing on its own root', () => {
+  withFakeReact(fakeReact, () => {
+    const seats = []
+    const Seat = (props) => {
+      seats.push(props)
+      return null
+    }
+    const tree = PaneStripActions({
+      seats: { mode: Seat, subagents: Seat },
+      context: { marker: 'context' },
+    })
+
+    const seatElements = elementChildren(tree).map((wrapper) => elementChildren(wrapper)[0])
+    assert.equal(seatElements.length, 2)
+    assert.deepEqual(
+      seatElements.map((element) => element.props.seatStyle.maxWidth),
+      [140, 180],
+      'each seat keeps its own width cap',
+    )
+    for (const element of seatElements) {
+      assert.equal(element.props.seatStyle.marginLeft, 8, 'spacing belongs to the seat root')
+      assert.equal(element.props.seatStyle.flex, 'none', 'a seat never shrinks')
+      assert.equal(element.props.marker, 'context', 'the seat context still reaches the seat')
+    }
+  })
 })

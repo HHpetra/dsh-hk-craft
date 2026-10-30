@@ -1,10 +1,10 @@
 'use strict'
 
 /**
- * Pane strip native-action group (ticket 06).
+ * Pane strip native-action group.
  *
- * The group only arranges independent seats; the read-only mode badge (ticket
- * 07) and the subagent viewer (ticket 08) each fill one seat without touching
+ * The group only arranges independent seats; the read-only mode badge
+ * and the subagent viewer each fill one seat without touching
  * the group. These tests cover that contract, not React markup.
  */
 

@@ -251,7 +251,7 @@ test('without the bridge the public workspace picker is used', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// Reordering (ticket 04): the adapter forwards the anchor the drop math chose.
+// Reordering: the adapter forwards the anchor the drop math chose.
 // ---------------------------------------------------------------------------
 
 test('reordering moves the source before the chosen host anchor', async () => {
@@ -350,7 +350,7 @@ test('a workspace added in pane mode is selected without a native reveal', async
 })
 
 // ---------------------------------------------------------------------------
-// Deleting a workspace (ticket 03): the public service first, then the local
+// Deleting a workspace: the public service first, then the local
 // pane bookkeeping. The host order is captured before the delete because the
 // catalog drops the row immediately.
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * Workspace drag reordering, as two pure rules (ticket 04, spec §3).
+ * Workspace drag reordering, as two pure rules.
  *
  * `sidebar-workspaces.js` owns the pointer plumbing (capture, hit testing,
  * indicator, click suppression); this module owns the math that is worth
@@ -16,11 +16,15 @@
  * lower half of the last row an append.
  */
 
-/** Drags shorter than this stay clicks (spec §3's 6px threshold). */
+/** Drags shorter than this stay clicks (the 6px threshold). */
 const REORDER_DRAG_THRESHOLD_PX = 6
 
 /**
- * Has the pointer travelled far enough to count as a drag?
+ * Has the pointer travelled farther than the threshold, so the press counts as
+ * a drag?
+ *
+ * "移动超过 6px" is literal: exactly 6px still opens the workspace, and only a
+ * move *past* the threshold starts a reorder.
  *
  * Distance, not axis travel: a press that wanders diagonally must cross the
  * threshold the same way a horizontal one does. A malformed sample never starts
@@ -36,7 +40,7 @@ const REORDER_DRAG_THRESHOLD_PX = 6
 function crossedDragThreshold(startX, startY, clientX, clientY, threshold = REORDER_DRAG_THRESHOLD_PX) {
   const values = [startX, startY, clientX, clientY, threshold]
   if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) return false
-  return Math.hypot(clientX - startX, clientY - startY) >= threshold
+  return Math.hypot(clientX - startX, clientY - startY) > threshold
 }
 
 /**

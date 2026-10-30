@@ -41,6 +41,7 @@ const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
 const { createCloseFlow } = require('./pane-close.js')
 const { messageOf } = require('./shared.js')
 const { mainSessionId } = require('./workspace-status.js')
+const { neighbourWorkspaceId, workspaceOrderOf } = require('./workspace-order.js')
 const { openConversationItems, paneIdForStripIndex } = require('./pane-strip.js')
 
 const MAIN_SLOT = 'main'
@@ -296,7 +297,7 @@ function createPaneController(ctx, options = {}) {
    * Used when a whole workspace is deleted: the workspace's panes disappear
    * from `book.allLayouts()` at once, and releasing their `hkcraftPane`
    * generation is what unmounts the client side. It never touches the Host
-   * session, so a running turn keeps running (spec §2, Further Notes 4) — the
+   * session, so a running turn keeps running — the
    * interrupt route belongs to closing a pane, not to deleting a registration.
    */
   function releaseOrphanedPanes() {
@@ -526,7 +527,7 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Whether a workspace was ever opened in split (ticket 02, spec §1). "Enabled"
+   * Whether a workspace was ever opened in split. "Enabled"
    * is deliberately a layout fact, not a session fact: a workspace has a loaded
    * layout in this process or a persisted `dsh.hkcraft.layout.v1.<id>` key from an
    * earlier one. Opening the workspace in the native view never reaches this
@@ -559,12 +560,7 @@ function createPaneController(ctx, options = {}) {
    */
   function hostWorkspaceOrder() {
     try {
-      const items = workspacesFace()?.list?.getSnapshot?.()?.items
-      return Array.isArray(items)
-        ? items
-            .map((item) => item?.workspaceId)
-            .filter((workspaceId) => typeof workspaceId === 'string' && workspaceId !== '')
-        : []
+      return workspaceOrderOf(workspacesFace()?.list?.getSnapshot?.())
     } catch {
       return []
     }
@@ -1041,22 +1037,16 @@ function createPaneController(ctx, options = {}) {
 
   /**
    * The workspace that inherits the view when `deletedId` goes away: the next
-   * one in host order, else the previous one, else none.
+   * one in host order, else the previous one, else none. Without a usable order,
+   * fall back to the remaining loaded workspaces in load order.
    *
    * @param {string} deletedId
    * @param {string[]} order host display order, captured *before* the delete
    * @returns {string|null}
    */
-  function neighbourWorkspaceId(deletedId, order) {
-    const index = order.indexOf(deletedId)
-    if (index !== -1) {
-      for (let i = index + 1; i < order.length; i += 1) {
-        if (order[i] !== deletedId) return order[i]
-      }
-      for (let i = index - 1; i >= 0; i -= 1) {
-        if (order[i] !== deletedId) return order[i]
-      }
-      return null
+  function neighbourWorkspaceIdFor(deletedId, order) {
+    if (Array.isArray(order) && order.includes(deletedId)) {
+      return neighbourWorkspaceId(order, deletedId)
     }
     // No order reached us (older shell, or the catalog already dropped the row):
     // fall back to the remaining loaded workspaces, in load order.
@@ -1065,7 +1055,7 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Forget a deleted workspace (ticket 03, spec §2).
+   * Forget a deleted workspace.
    *
    * The adapter calls this only after the public `workspaces.delete(id)` has
    * resolved, so the registration is already gone. Here the local state follows:
@@ -1094,7 +1084,7 @@ function createPaneController(ctx, options = {}) {
     if (!wasLoaded && !order.includes(workspaceId)) return false
 
     const wasActive = book.getActiveWorkspaceId() === workspaceId
-    const target = wasActive ? neighbourWorkspaceId(workspaceId, order) : null
+    const target = wasActive ? neighbourWorkspaceIdFor(workspaceId, order) : null
 
     book.forget(workspaceId)
     releaseOrphanedPanes()
@@ -1268,7 +1258,7 @@ function createPaneController(ctx, options = {}) {
       return switchWorkspaceValue(workspaceId)
     },
     /**
-     * Forget a workspace whose registration was just deleted (ticket 03).
+     * Forget a workspace whose registration was just deleted.
      * Drops its layout, clears its persisted key, releases its pane references
      * (without interrupting the Host sessions) and moves a visible workspace to
      * its host-order neighbour. `options.order` is the pre-delete host order.

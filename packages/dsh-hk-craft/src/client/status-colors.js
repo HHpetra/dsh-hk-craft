@@ -10,7 +10,7 @@
  *
  * The sidebar's fourth state, gray, is a deliberately neutral fill that does not
  * follow the theme's accent: it means "not enabled / no conversation finished",
- * not "disabled by the shell" (spec §1, §10).
+ * not "disabled by the shell".
  */
 
 const {

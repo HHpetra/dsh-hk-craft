@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The pane strip's subagent viewer seat (ticket 08).
+ * The pane strip's subagent viewer seat.
  *
  * The seat is dumb: `pane-subagents.js` projects the focused conversation's
  * `subagentCatalog` into plain rows, `pane-subagents-view.js` only paints those
@@ -12,7 +12,8 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const Module = require('node:module')
+
+const { withFakeReact } = require('./fake-react.js')
 
 const {
   SUBAGENT_ACTIVITY_COMPLETED,
@@ -28,7 +29,6 @@ const {
   projectSubagentCatalog,
   requestCatalogRefresh,
   subagentLabelOf,
-  subagentModeKey,
   subagentModeOf,
 } = require('./pane-subagents.js')
 const { createSubagentSeat } = require('./pane-subagents-view.js')
@@ -57,32 +57,21 @@ function sessionSnapshot(entries, options = {}) {
 }
 
 /** A React stand-in for the seat render: only the calls `pane-subagents.js` makes. */
-function installFakeReact() {
-  const originalLoad = Module._load
-  class Component {
+const fakeReact = {
+  Fragment: Symbol('Fragment'),
+  Component: class Component {
     constructor(props) {
       this.props = props
     }
-  }
-  const fake = {
-    Fragment: Symbol('Fragment'),
-    Component,
-    createElement: (type, props, ...children) => ({
-      type,
-      props: { ...(props ?? {}), children },
-    }),
-    useEffect: () => {},
-    useRef: (value) => ({ current: value }),
-    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
-    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
-  }
-  Module._load = function load(request, parent, isMain) {
-    if (request === 'react') return fake
-    return originalLoad.call(this, request, parent, isMain)
-  }
-  return () => {
-    Module._load = originalLoad
-  }
+  },
+  createElement: (type, props, ...children) => ({
+    type,
+    props: { ...(props ?? {}), children },
+  }),
+  useEffect: () => {},
+  useRef: (value) => ({ current: value }),
+  useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
 }
 
 /** Every element in the fake-React tree. */
@@ -124,7 +113,7 @@ test('direct children keep the catalog order and fall back to their id', () => {
       { id: 'a', createdAt: 1, mode: 'continuable', label: 'Reviewer' },
       { id: 'b', createdAt: 2, mode: 'one-shot', label: '   ' },
       { id: 'c', createdAt: 3, mode: 'external', label: 'Cloud task' },
-      { id: 'd', createdAt: 4, mode: 'unknown' },
+      { id: 'd', createdAt: 4, mode: 'future-mode' },
     ],
     {
       summaries: {
@@ -237,7 +226,6 @@ test('mode ids outside the catalog union read as unknown', () => {
   assert.equal(subagentModeOf('unknown'), SUBAGENT_MODE_UNKNOWN)
   assert.equal(subagentModeOf('future-mode'), SUBAGENT_MODE_UNKNOWN)
   assert.equal(subagentModeOf(undefined), SUBAGENT_MODE_UNKNOWN)
-  assert.equal(subagentModeKey('future-mode'), 'subagent.mode.unknown')
   assert.equal(subagentLabelOf({ id: 'abc', label: '  Named  ' }), 'Named')
   assert.equal(subagentLabelOf({ id: 'abc', label: '   ' }), 'abc')
   assert.equal(subagentLabelOf({ id: 'abc' }), 'abc')
@@ -318,8 +306,7 @@ test('the on-open refresh runs once and swallows every failure', () => {
 })
 
 test('the seat follows the focused strip entry and hides without a catalog', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const Seat = createSubagentSeat({ refreshCatalog: () => {} })
     const baseProps = {
       controller: { openInNewPane: () => {} },
@@ -331,14 +318,11 @@ test('the seat follows the focused strip entry and hides without a catalog', () 
 
     assert.equal(Seat({ ...baseProps, focused: null }), null)
     assert.equal(Seat({ ...baseProps, focused: { sessionId: 's1' } }), null)
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('the seat trigger exposes the total and running counts', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const Seat = createSubagentSeat({ refreshCatalog: () => {} })
     const labels = {
       'subagent.trigger': 'Subagents',
@@ -371,7 +355,5 @@ test('the seat trigger exposes the total and running counts', () => {
     assert.equal(trigger.props['aria-label'], 'Subagents 2 · 1 running')
     assert.equal(trigger.props.title, 'Subagents 2 · 1 running')
     assert.equal(textOf(trigger).replace(/\s+/g, ' ').trim(), 'Subagents 2 1 running')
-  } finally {
-    restore()
-  }
+  })
 })

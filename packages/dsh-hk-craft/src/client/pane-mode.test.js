@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * Read-only current-mode badge (ticket 07).
+ * Read-only current-mode badge.
  *
  * The badge is a projection, not a control: the focused pane's session summary
  * carries the preset id the conversation started with, and a label resolution
@@ -16,7 +16,6 @@ const {
   BUILT_IN_MODE_KEYS,
   focusedPresetId,
   modeRosterRows,
-  projectMode,
   resolveModeLabel,
 } = require('./pane-mode.js')
 
@@ -60,10 +59,16 @@ test('a preset the shell does not know falls back to its raw id', () => {
 })
 
 test('no focused pane or no recorded preset renders nothing', () => {
-  assert.equal(projectMode(null, sessionsWith('s1', 'standard'), [], t), null)
-  assert.equal(projectMode({ sessionId: 's1' }, sessionsWith('s1', 'standard'), [], t).label, 'strip.mode.standard')
-  assert.equal(projectMode({ sessionId: 'gone' }, sessionsWith('s1', 'standard'), [], t), null)
-  assert.equal(projectMode({ sessionId: 's1' }, { byId: {} }, [], t), null)
+  // The seat composes these two public rules; there is no third "project" entry
+  // point just for the tests.
+  const badgeOf = (focused, sessions) => {
+    const presetId = focusedPresetId(focused, sessions)
+    return presetId === undefined ? null : resolveModeLabel(presetId, [], t)
+  }
+  assert.equal(badgeOf(null, sessionsWith('s1', 'standard')), null)
+  assert.equal(badgeOf({ sessionId: 's1' }, sessionsWith('s1', 'standard')).label, 'strip.mode.standard')
+  assert.equal(badgeOf({ sessionId: 'gone' }, sessionsWith('s1', 'standard')), null)
+  assert.equal(badgeOf({ sessionId: 's1' }, { byId: {} }), null)
 })
 
 test('a custom preset shows the name it published, ahead of any built-in name', () => {

@@ -2,8 +2,7 @@
 
 /**
  * The sidebar workspace section: one four-state status light plus one name per
- * workspace, the inline delete entry and the one "Add workspace" entry
- * (spec §1/§7, tickets 01/02/03).
+ * workspace, the inline delete entry and the one "Add workspace" entry.
  *
  * This component is deliberately dumb. It receives plain rows from
  * `dsh-workspaces.js` and renders them; nothing here knows what a dsh workspace
@@ -15,22 +14,24 @@
  * A row is a container holding the primary select button (light + name) and a
  * sibling inline action slot, which holds the delete entry. The slot is a
  * sibling — never a child — of the select button, so the two controls stay real
- * buttons instead of nesting (ticket 01). The row container is also the pointer
+ * buttons instead of nesting. The row container is also the pointer
  * target for drag reordering: pressing in the action slot never starts a drag,
- * so a row action keeps its own click (ticket 04).
+ * so a row action keeps its own click. The pointer plumbing itself lives in
+ * `workspace-drag.js`.
  *
  * Written with `React.createElement` and a lazy `require('react')` for the same
- * reason as `diagnostics.js`: the repository links client modules itself and the
- * unit tests run in Node, where the platform module graph does not exist.
+ * reason as `react-and-translator.js`: the repository links client modules itself
+ * and the unit tests run in Node, where the platform module graph does not exist.
  */
 
-const { createTranslator, react } = require('./diagnostics.js')
+const { createTranslator, react } = require('./react-and-translator.js')
 const { sectionModel, workspaceRunningCount } = require('./dsh-workspaces.js')
 const { WorkspaceDeleteDialog } = require('./workspace-delete-dialog.js')
 const { absentHook, messageOf } = require('./shared.js')
 const { LIGHT_COLORS } = require('./status-colors.js')
 const { displayWorkspaceName } = require('./workspace-status.js')
-const { crossedDragThreshold, dropAnchor, dropSideFor } = require('./workspace-reorder.js')
+const { deleteFocusTarget, workspaceOrderOf } = require('./workspace-order.js')
+const { useWorkspaceDrag } = require('./workspace-drag.js')
 
 /** Neutral fallback for an unexpected light value, so a bad row never renders blank. */
 const LIGHT_FALLBACK = LIGHT_COLORS.gray
@@ -41,9 +42,10 @@ const noSnapshot = () => undefined
 
 /**
  * Follow the pane controller's snapshot so a workspace opened in split changes
- * its row from gray immediately (spec §1: "进入某个工作区的分屏后灯色立即可变").
- * The snapshot value itself is not read here — the light projection asks the
- * controller through `isWorkspaceEnabled` — it only drives the re-render.
+ * its row from gray immediately. The snapshot value itself is not read here —
+ * the light projection asks the controller through `isWorkspaceEnabled` — it only
+ * drives the re-render. This is deliberately separate from the pane view's
+ * `usePaneSnapshot`: the workspace section needs only the wake-up, not the state.
  *
  * A stand-in React without `useSyncExternalStore` (the Node tests, an older
  * shell) renders the current state once instead of subscribing.
@@ -52,7 +54,7 @@ const noSnapshot = () => undefined
  * @param {{ subscribe?: () => (() => void), getSnapshot?: () => unknown } | undefined} panes
  * @returns {unknown}
  */
-function usePaneSnapshot(React, panes) {
+function useWorkspacePaneRevision(React, panes) {
   const useSyncExternalStore = React?.useSyncExternalStore
   if (typeof useSyncExternalStore !== 'function') return undefined
   return useSyncExternalStore(
@@ -61,9 +63,6 @@ function usePaneSnapshot(React, panes) {
     noSnapshot,
   )
 }
-
-/** Focus-restoration sentinel for the "Add workspace" entry (not a workspace id). */
-const ADD_FOCUS = '\u0000add'
 
 /** The insertion line's colour: the shell's business accent, themed per palette. */
 const DROP_LINE_COLOR = 'var(--dsw-alias-state-business-primary, Highlight)'
@@ -88,7 +87,7 @@ const listStyle = {
 
 /**
  * The row container: one hover/current highlight and one pointer target for
- * drag reordering (ticket 04), without being the control itself. Keeping the
+ * drag reordering, without being the control itself. Keeping the
  * action slot a sibling rather than a child of the select button is what lets
  * the delete entry stay a real button (no nested buttons).
  */
@@ -126,9 +125,9 @@ const selectStyle = {
 }
 
 /**
- * The reserved inline action slot. Empty in ticket 01; ticket 03 fills it with
- * the delete entry. The attribute is the stable marker later pointer gestures
- * use to ignore presses that belong to a row action.
+ * The reserved inline action slot. The delete entry fills it; the attribute is
+ * the stable marker pointer gestures use to ignore presses that belong to a row
+ * action.
  */
 const actionSlotStyle = {
   display: 'inline-flex',
@@ -146,12 +145,12 @@ const dotStyle = {
 
 /**
  * The add row keeps the select row's geometry but is a real button itself, so
- * it restores the chrome the row container no longer needs (ticket 01).
+ * it restores the chrome the row container no longer needs.
  */
 const addRowStyle = {
   ...rowStyle,
   // The row container no longer owns the light-to-name gap; the add row is a
-  // real button, so it restores the 8px gap it had before ticket 01.
+  // real button, so it restores the 8px gap the select control has.
   gap: 8,
   padding: '0 8px',
   border: 'none',
@@ -243,38 +242,6 @@ const errorStyle = {
 }
 
 /**
- * True when the press belongs to a row action. The action slot is where ticket
- * 03 puts the delete entry; pressing anywhere in it must neither begin a drag
- * nor swallow the action's own click.
- *
- * @param {any} target pointer event target
- * @returns {boolean}
- */
-function insideWorkspaceAction(target) {
-  return typeof target?.closest === 'function' && target.closest('[data-hkcraft-workspace-action]') !== null
-}
-
-/**
- * The workspace row under the pointer and its box, or null. Pointer capture
- * keeps the move events on the dragged row, so the drop target has to be
- * hit-tested from the pointer coordinates (same approach as the pane strip).
- *
- * @param {number} clientX
- * @param {number} clientY
- * @returns {{ workspaceId: string, rect: { top: number, height: number } | null } | null}
- */
-function workspaceRowAt(clientX, clientY) {
-  if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null
-  const element = document.elementFromPoint(clientX, clientY)
-  if (typeof element?.closest !== 'function') return null
-  const row = element.closest('[data-hkcraft-workspace-row]')
-  const workspaceId = row?.getAttribute?.('data-hkcraft-workspace-row')
-  if (typeof workspaceId !== 'string' || workspaceId === '') return null
-  const rect = typeof row.getBoundingClientRect === 'function' ? row.getBoundingClientRect() : null
-  return { workspaceId, rect }
-}
-
-/**
  * @param {{
  *   wide?: boolean,
  *   expandSidebar?: () => void,
@@ -305,7 +272,7 @@ function WorkspaceSection(props) {
   const sessions = useSessions((state) => state)
   const statuses = useSessionStatus((state) => state)
   const workspaces = useWorkspaces((state) => state)
-  usePaneSnapshot(React, props?.panes)
+  useWorkspacePaneRevision(React, props?.panes)
 
   const [busy, setBusy] = React.useState(false)
   const [failure, setFailure] = React.useState(null)
@@ -316,18 +283,22 @@ function WorkspaceSection(props) {
   const [deleteError, setDeleteError] = React.useState(null)
   const [focusTarget, setFocusTarget] = React.useState(null)
   const focusTargets = React.useRef({})
-  const [drag, setDrag] = React.useState(null)
-  const [reordering, setReordering] = React.useState(false)
-  /** The in-flight press; `drag` state above only drives the visible feedback. */
-  const dragRef = React.useRef(null)
-  /** A drag's pointerup is followed by a click; that click must not open a row. */
-  const suppressClick = React.useRef(false)
-  /** One reorder request at a time (spec §3); the ref is the synchronous guard. */
-  const reorderBusy = React.useRef(false)
 
   const rows = sectionModel(workspaces, sessions, statuses, props?.panes)
-  const order = rows.map((row) => row.workspaceId)
+  const order = workspaceOrderOf(workspaces)
   const defaultName = t('workspace.defaultName')
+
+  // Pointer plumbing lives in its own hook; the section only owns the rows, the
+  // failure line and the focus target.
+  const dragGesture = useWorkspaceDrag(React, {
+    order,
+    reorderWorkspace: props?.reorderWorkspace,
+    onReorderStart: () => setFailure(null),
+    onReorderError: (reason) => {
+      setFailure({ key: 'workspace.reorderFailed', message: messageOf(reason) })
+    },
+  })
+  const { drag, reordering } = dragGesture
 
   const add = () => {
     if (busy) return
@@ -347,18 +318,15 @@ function WorkspaceSection(props) {
   /**
    * Open the confirmation. The name and the running count are captured now, so
    * the dialog keeps reading the truth even if the host snapshot changes while it
-   * is open; the focus fallback is the next row, else the previous one, else the
-   * add entry (spec §2, user story 25).
+   * is open; the focus target is computed from the host order captured here, so a
+   * row that disappears with the delete cannot drag focus along with it.
    */
   const openDelete = (row) => {
-    const index = rows.findIndex((candidate) => candidate.workspaceId === row.workspaceId)
-    const neighbour =
-      index === -1 ? null : (rows[index + 1]?.workspaceId ?? rows[index - 1]?.workspaceId ?? null)
     setPendingDelete({
       workspaceId: row.workspaceId,
       name: displayWorkspaceName(row.title, defaultName),
       runningCount: workspaceRunningCount(workspaces, sessions, statuses, row.workspaceId),
-      focusFallback: neighbour,
+      focusTarget: deleteFocusTarget(order, row.workspaceId),
     })
     setDeleteBusy(false)
     setDeleteError(null)
@@ -375,7 +343,7 @@ function WorkspaceSection(props) {
       .then(() => {
         setPendingDelete(null)
         setDeleteBusy(false)
-        setFocusTarget(target.focusFallback ?? ADD_FOCUS)
+        setFocusTarget(target.focusTarget)
       })
       .catch((reason) => {
         setDeleteBusy(false)
@@ -386,7 +354,7 @@ function WorkspaceSection(props) {
   /** Dismiss without writing and put the focus back on the row that owned it. */
   const cancelDelete = () => {
     if (pendingDelete === null || deleteBusy) return
-    setFocusTarget(pendingDelete.workspaceId)
+    setFocusTarget({ kind: 'workspace', workspaceId: pendingDelete.workspaceId })
     setPendingDelete(null)
     setDeleteError(null)
   }
@@ -397,126 +365,19 @@ function WorkspaceSection(props) {
   React.useEffect(() => {
     if (focusTarget === null) return
     const node =
-      focusTarget === ADD_FOCUS ? focusTargets.current.add : focusTargets.current[focusTarget]
-    if (node === undefined && focusTarget !== ADD_FOCUS) {
-      setFocusTarget(ADD_FOCUS)
+      focusTarget.kind === 'add'
+        ? focusTargets.current.add
+        : focusTargets.current[focusTarget.workspaceId]
+    if (node === undefined && focusTarget.kind === 'workspace') {
+      setFocusTarget({ kind: 'add' })
       return
     }
     setFocusTarget(null)
     if (node !== null && node !== undefined && typeof node.focus === 'function') node.focus()
   }, [focusTarget, rows])
 
-  const clearDrag = () => {
-    dragRef.current = null
-    setDrag(null)
-  }
-
-  /**
-   * The row under `(clientX, clientY)` that a drop from `sourceId` would move
-   * the source onto, or null when the drop is not a position change.
-   */
-  const dropTargetFor = (sourceId, clientX, clientY) => {
-    const over = workspaceRowAt(clientX, clientY)
-    if (over === null || over.workspaceId === sourceId) return null
-    const side = dropSideFor(over.rect, clientY)
-    if (side === null) return null
-    if (dropAnchor(order, sourceId, over.workspaceId, side) === null) return null
-    return { targetId: over.workspaceId, side }
-  }
-
-  /**
-   * Send one reorder to the host. The host persists the order and reinstalls
-   * its committed order if the write fails; this component keeps no local
-   * order, so a failure only has to be shown.
-   */
-  const submitReorder = (sourceId, beforeId) => {
-    if (reorderBusy.current) return
-    if (typeof props?.reorderWorkspace !== 'function') return
-    reorderBusy.current = true
-    setReordering(true)
-    setFailure(null)
-    let pending
-    try {
-      // Start the write on drop, not a microtask later: the busy guard must
-      // already be visible to the next pointerdown.
-      pending = Promise.resolve(props.reorderWorkspace(sourceId, beforeId))
-    } catch (reason) {
-      pending = Promise.reject(reason)
-    }
-    pending
-      .catch((reason) => {
-        setFailure({ key: 'workspace.reorderFailed', message: messageOf(reason) })
-      })
-      .then(() => {
-        reorderBusy.current = false
-        setReordering(false)
-      })
-  }
-
-  const onRowPointerDown = (row) => (event) => {
-    if (event.button !== undefined && event.button !== 0) return
-    if (insideWorkspaceAction(event.target)) return
-    if (reorderBusy.current) return
-    dragRef.current = {
-      sourceId: row.workspaceId,
-      startX: event.clientX,
-      startY: event.clientY,
-      active: false,
-      targetId: null,
-      side: null,
-    }
-    event.currentTarget?.setPointerCapture?.(event.pointerId)
-  }
-
-  const onRowPointerMove = (event) => {
-    const current = dragRef.current
-    if (current === null) return
-    if (!current.active && !crossedDragThreshold(current.startX, current.startY, event.clientX, event.clientY)) {
-      return
-    }
-    const target = dropTargetFor(current.sourceId, event.clientX, event.clientY)
-    const targetId = target === null ? null : target.targetId
-    const side = target === null ? null : target.side
-    // Entering drag mode is itself a change: the source row must dim even when
-    // the pointer is not over another row yet.
-    const changed = !current.active || targetId !== current.targetId || side !== current.side
-    current.active = true
-    current.targetId = targetId
-    current.side = side
-    if (changed) setDrag({ sourceId: current.sourceId, targetId, side })
-    event.preventDefault()
-  }
-
-  const onRowPointerUp = (event) => {
-    const current = dragRef.current
-    if (current === null) return
-    clearDrag()
-    event.currentTarget?.releasePointerCapture?.(event.pointerId)
-    if (!current.active) return
-    // Dropping ends with a click on the source row; consume that one click.
-    suppressClick.current = true
-    if (typeof globalThis.setTimeout === 'function') {
-      globalThis.setTimeout(() => {
-        suppressClick.current = false
-      }, 0)
-    }
-    if (current.targetId === null) return
-    const anchor = dropAnchor(order, current.sourceId, current.targetId, current.side)
-    if (anchor === null) return
-    submitReorder(current.sourceId, anchor.beforeId)
-  }
-
-  const onRowPointerCancel = (event) => {
-    if (dragRef.current === null) return
-    clearDrag()
-    event.currentTarget?.releasePointerCapture?.(event.pointerId)
-  }
-
   const openRow = (row) => {
-    if (suppressClick.current) {
-      suppressClick.current = false
-      return
-    }
+    if (dragGesture.consumeSuppressedClick()) return
     props?.openWorkspace?.(row.workspaceId)
   }
 
@@ -571,10 +432,10 @@ function WorkspaceSection(props) {
           }
           setFocusedRow(null)
         },
-        onPointerDown: onRowPointerDown(row),
-        onPointerMove: onRowPointerMove,
-        onPointerUp: onRowPointerUp,
-        onPointerCancel: onRowPointerCancel,
+        onPointerDown: dragGesture.onRowPointerDown(row),
+        onPointerMove: dragGesture.onRowPointerMove,
+        onPointerUp: dragGesture.onRowPointerUp,
+        onPointerCancel: dragGesture.onRowPointerCancel,
         style: {
           ...rowStyle,
           opacity: source ? 0.55 : 1,
@@ -616,7 +477,7 @@ function WorkspaceSection(props) {
       ),
       // Sibling of the select button: a real delete button, never nested. The
       // stable marker is the handle row gestures use to ignore a press that
-      // belongs to a row action (ticket 04).
+      // belongs to a row action.
       h(
         'span',
         { 'data-hkcraft-workspace-action': '', style: actionSlotStyle },

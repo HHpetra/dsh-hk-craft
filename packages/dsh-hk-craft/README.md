@@ -6,7 +6,13 @@
 - **不提供**启动器、Electron/Tauri 外壳、产品专属 `DSH_HOME`、独立端口或第二套聊天界面。
 - **不 fork** `@deepseek-ai/dsh*`；只通过 bundle 的 `cordis.patch.yml` 贡献插件行。
 
-本包当前是**可安装骨架**：host 行已连通，插件能力与客户端 UI 尚未实现（见仓库 `.scratch/inception/spec.md`）。
+本包交付的能力：
+
+- **多会话分屏**：每个窗格承载一个会话，`+` 按会话数量均分横排；窗格条工具栏的 `+` 紧贴标签，右侧是只读当前模式与子代理查看。
+- **侧栏精简与工作区管理**：工作区行有四态灯（灰/绿/黄/红）、行内删除（二次确认、不中断运行中的会话）与指针拖动排序（顺序由 Host 持久化）。
+- **HK Craft 设置页**：内联诊断与临时的分屏切换入口；侧栏 footer 不再注入按钮。
+
+决策见仓库 `ai-docs/ADR/decisions.md`（ADR-0005/0006/0007），上游契约见 `doc/upstream-contracts.md`。
 
 ## 安装
 
@@ -28,8 +34,8 @@ pnpm test
 | :--- | :--- |
 | `package.json` | `dsh.bundle.patch` 声明本包贡献的配置层 |
 | `cordis.patch.yml` | 插入 `dsh-hk-craft` 行 |
-| `src/index.js` | Host 侧插件入口（当前无服务，仅验证装载） |
-| `src/client/` | 预留（尚未创建）：浏览器侧 UI；落地时补 `dsh.client` 与 `lib/client.js` 构建 |
+| `src/index.js` | Host 侧插件入口（当前无宿主服务，仅装载与日志） |
+| `src/client/` | 浏览器侧 UI：分屏窗格、窗格条工具栏、侧栏工作区、HK Craft 设置页；由 `dsh.client` 声明，构建为 `lib/client.js` |
 
 ## 约定
 

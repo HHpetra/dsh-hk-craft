@@ -1,13 +1,13 @@
 'use strict'
 
 /**
- * The pane strip's pinned native-action group (ticket 06).
+ * The pane strip's pinned native-action group.
  *
  * The strip is an outer bar with two children: a horizontally scrolling
  * viewport holding the tabs followed by `+`, and this action group, which sits
  * outside the scrollport and never shrinks. The group only arranges its seats —
- * the read-only mode badge (ticket 07) and the subagent viewer (ticket 08) are
- * independent seats, so each ticket fills one without editing the group.
+ * the read-only mode badge and the subagent viewer are
+ * independent seats, so each is filled without editing the group.
  *
  * A seat is a React component type `(props) => element`; absent, `null` or any
  * non-function value means "this seat is not filled yet". Seat order is the

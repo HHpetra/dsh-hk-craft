@@ -12,15 +12,15 @@
  * section and the settings page, and `commandUi`, `sessions`, `workspaces` and
  * `uiWorkspace` for the slash commands. Optional capabilities attach through
  * `ctx.inject`, except the agent-preset roster behind the read-only mode badge,
- * which is read through `ctx.get('remote')` at call time (ticket 07), so the
+ * which is read through `ctx.get('remote')` at call time, so the
  * plugin keeps working even when a service is absent.
  *
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
  * and thin React views (`pane-view.js`); the HK Craft settings page
  * (`settings-view.js`) is the transitional home of the diagnostics and the
- * split-view switch (ticket 05). The strip's native-action seats keep the same
+ * split-view switch. The strip's native-action seats keep the same
  * shape: `pane-subagents.js` is the pure projection and
- * `pane-subagents-view.js` its React seat (ticket 08).
+ * `pane-subagents-view.js` its React seat.
  */
 
 const { dictionaries } = require('./locale.js')
@@ -64,8 +64,7 @@ const inject = ['slots', 'locale', 'sessions', 'layout']
 const COMMAND_SERVICES = ['commandUi', 'sessions', 'workspaces', 'uiWorkspace']
 
 /**
- * The optional agent-preset roster adapter behind the read-only mode badge
- * (ticket 07, spec §6).
+ * The optional agent-preset roster adapter behind the read-only mode badge.
  *
  * `remote.agentPresets.list()` is an optional capability, so it is read through
  * `ctx.get('remote')` at call time instead of joining `inject`: an older or
@@ -119,8 +118,8 @@ function catalogRefresher(ctx) {
 }
 
 /**
- * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
- * Ticket 07 fills the read-only mode seat here; ticket 08 fills `subagents` the
+ * The strip's pinned native-action seats (`pane-toolbar.js`).
+ * The read-only mode seat and the subagent seat fill their keys the
  * same way, so neither module has to reach into the strip or the action group.
  * The `createSeat` option exists for tests: production always builds the real
  * seat, and the callback wiring stays observable without rendering React.
@@ -150,8 +149,8 @@ function apply(ctx) {
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
 
   /**
-   * The strip's pinned native-action seats (ticket 06 `pane-toolbar.js`, filled
-   * by tickets 07/08). Each later ticket fills its own key without touching the
+   * The strip's pinned native-action seats (`pane-toolbar.js`). Each seat fills
+   * its own key without touching the
    * strip or the group; `createStripSeats` builds them so an empty map keeps the
    * group invisible and leaves the tabs all the room.
    */
@@ -159,7 +158,7 @@ function apply(ctx) {
   const PaneHost = createPaneHost(controller, { seats: stripSeats })
   const PaneBody = createPaneBody(controller)
 
-  // The HK Craft settings page (ticket 05): diagnostics plus the transitional
+  // The HK Craft settings page: diagnostics plus the transitional
   // split-view switch. `settings.section` is a root list slot declared by
   // ui-settings-general; `slots.inject` only runs this callback once that slot
   // exists, so a shell without a settings panel simply never shows the page.
@@ -222,10 +221,10 @@ function apply(ctx) {
   // The workspace section replaces a slot declared by ui-workspace and drives its
   // public service, so both services must exist before the entry is registered.
   // In pane mode the click switches the visible workspace tree instead of
-  // letting a native reveal dismiss the pane workspace (ticket 08). The same face
+  // letting a native reveal dismiss the pane workspace. The same face
   // answers "was this workspace ever opened in split" and lets the row light
-  // follow the controller snapshot (ticket 02), and it lets a deleted workspace
-  // drop its local layout after the public delete (ticket 03).
+  // follow the controller snapshot, and it lets a deleted workspace
+  // drop its local layout after the public delete.
   const workspacePanes = {
     active: () => controller.getSnapshot().active,
     switchWorkspace: (workspaceId) => controller.switchWorkspace(workspaceId),

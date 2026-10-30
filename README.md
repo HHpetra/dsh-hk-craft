@@ -6,7 +6,9 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 
 ## 状态
 
-**初始化 / 设计阶段。** 仓库已具备可安装、可卸载的 bundle 骨架；插件的具体能力、客户端 UI 与数据通道尚未确定（见 [`.scratch/inception/spec.md`](.scratch/inception/spec.md)）。在能力确定前，骨架只装载一个无副作用的 host 行，不改变 dsh 行为。
+**首个能力已交付**：多会话分屏 + 侧栏精简，并补齐侧栏工作区管理（四态灯、删除确认、拖动排序）、HK Craft 设置页与窗格条工具栏。关键决策见 [ADR-0005/0006/0007](ai-docs/ADR/decisions.md)，上游契约清单见 [`doc/upstream-contracts.md`](doc/upstream-contracts.md)。
+
+插件仍以 bundle 形式装入现有 dsh profile，不改变 dsh 的端口、home 与登录态；安装后需重启 dsh 生效。
 
 ## 依赖
 
@@ -24,7 +26,7 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 
 `desktop` profile 由 Electron 应用独占管理，**不能**用 CLI `dsh plugin --profile desktop ...` 安装；CLI 会返回 `profile "desktop" is managed exclusively by the Electron application`。安装走 dsh 自带的插件面板：
 
-1. 在仓库根执行 `pnpm install && pnpm check && pnpm test`。
+1. 在仓库根执行 `pnpm install && pnpm build && pnpm check && pnpm test`。
 2. 打开 dsh → 侧边栏 **Plugins** → **Add plugin**。
 3. 选择 **Install a third-party plugin**，填入本目录的绝对路径：
    `C:\Agent\Agent14-dsh-hk-craft\packages\dsh-hk-craft`
@@ -43,14 +45,15 @@ dsh plugin --profile craft-smoke add ./packages/dsh-hk-craft
 
 ```powershell
 pnpm test                # 包内单元测试
-pnpm build               # 构建（当前无 client，等价于空操作）
+pnpm build               # 构建客户端 bundle lib/client.js
+pnpm check               # 校验 manifest / patch / 入口与已构建 bundle 一致
 ```
 
 ## 目录说明
 
 | 路径 | 用途 |
 | :--- | :--- |
-| `packages/dsh-hk-craft/` | 唯一可安装 bundle：manifest、`cordis.patch.yml`、host 入口、后续 client UI |
+| `packages/dsh-hk-craft/` | 唯一可安装 bundle：manifest、`cordis.patch.yml`、host 入口、客户端 UI 与构建脚本 |
 | `doc/` | 架构与关键原理（长期） |
 | `ai-docs/ADR/` | 架构决策记录（长期） |
 | `.scratch/` | 当前开发记录：按 feature 组织的 spec 与 issue（短期） |

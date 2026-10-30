@@ -233,7 +233,7 @@ function createPaneLayouts(options = {}) {
   /**
    * Drop one workspace's loaded layout and its persisted key.
    *
-   * Called when the workspace registration itself is deleted (ticket 03): the
+   * Called when the workspace registration itself is deleted: the
    * key must not outlive its workspace, or the "enabled" inference would
    * resurrect a ghost workspace after a restart. Deleting a workspace that was
    * never loaded still clears the key and reports that there was no layout to

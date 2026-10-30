@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The pure half of the pane strip's subagent viewer (ticket 08).
+ * The pure half of the pane strip's subagent viewer.
  *
  * A seat in the strip's pinned native-action group follows the focused strip
  * entry, reads that conversation's direct-child catalog from the raw
@@ -13,8 +13,8 @@
  * dsh record shapes never leak past this file: catalog entries, the status map
  * and the session summaries are normalized into the row model below, so an
  * upstream rename is a one-file fix and every rule stays Node-testable without a
- * DOM. Nested catalogs, hover-open, retry and breadcrumbs are out of this ticket
- * (spec §7).
+ * DOM. Nested catalogs, hover-open, retry and breadcrumbs are out of scope for
+ * this seat.
  */
 
 const { readStatus } = require('./workspace-status.js')
@@ -71,16 +71,6 @@ function subagentModeOf(mode) {
   if (mode === SUBAGENT_MODE_CONTINUABLE) return SUBAGENT_MODE_CONTINUABLE
   if (mode === SUBAGENT_MODE_EXTERNAL) return SUBAGENT_MODE_EXTERNAL
   return SUBAGENT_MODE_UNKNOWN
-}
-
-/**
- * The localized label key for one catalog mode.
- *
- * @param {unknown} mode
- * @returns {string}
- */
-function subagentModeKey(mode) {
-  return SUBAGENT_MODE_KEYS[subagentModeOf(mode)]
 }
 
 /**
@@ -220,7 +210,6 @@ module.exports = {
   SUBAGENT_ACTIVITY_KEYS,
   catalogEntriesOf,
   subagentModeOf,
-  subagentModeKey,
   subagentLabelOf,
   subagentActivityOf,
   projectSubagentCatalog,

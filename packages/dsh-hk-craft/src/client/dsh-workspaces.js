@@ -40,17 +40,18 @@
  * - "Enabled" (ever opened in split) is the pane controller's answer, from its
  *   loaded layouts plus the workspace layout key's existence. Opening a
  *   workspace in the native view does not count, because it never writes a pane
- *   layout key (`doc/upstream-contracts.md#workspace-enablement`).
+ *   layout key (`doc/upstream-contracts.md#workspace-enablement-ever-opened-in-split`).
  * - The automatic first-use workspace title is the literal `default-workspace`,
  *   localized at display time (`workspace-status.js:displayWorkspaceName`).
  *
  * Red means "waiting for you" only: dsh exposes no cheap "this session's last
  * turn failed" bit, and reading one would mean opening per-session history,
- * which the sidebar must not do. See spec §1 and
+ * which the sidebar must not do. See
  * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
 const { projectWorkspaceSection, readStatus, sessionSignal } = require('./workspace-status.js')
+const { workspaceOrderOf } = require('./workspace-order.js')
 
 /**
  * The enabled-workspace set for one projection, or `undefined` when it cannot be
@@ -148,11 +149,7 @@ function workspaceRunningCount(workspacesSnapshot, sessionsSnapshot, statusSnaps
  */
 function hostWorkspaceOrder(ctx) {
   try {
-    const snapshot = ctx.get('workspaces')?.list?.getSnapshot?.()
-    const items = Array.isArray(snapshot?.items) ? snapshot.items : []
-    return items
-      .map((item) => item?.workspaceId)
-      .filter((workspaceId) => typeof workspaceId === 'string' && workspaceId !== '')
+    return workspaceOrderOf(ctx.get('workspaces')?.list?.getSnapshot?.())
   } catch (_error) {
     return []
   }
@@ -183,7 +180,7 @@ async function pickDirectory(ctx) {
 /**
  * The section's behaviors, over public client services only.
  *
- * `options.panes` is the pane controller face (tickets 03/08). While the plugin
+ * `options.panes` is the pane controller face. While the plugin
  * pane workspace is showing, clicking a workspace must not call the native
  * `startSession`: that path reveals the session through
  * `replaceMain(..., "reveal")`, which calls `selectPanel(null)` and dismisses
@@ -249,7 +246,7 @@ function createSectionActions(ctx, options = {}) {
     },
 
     /**
-     * Delete a workspace registration (ticket 03, spec §2).
+     * Delete a workspace registration.
      *
      * The public service goes first: a host refusal must leave the pane layout
      * exactly as it was, so the local cleanup only runs after the call resolves.

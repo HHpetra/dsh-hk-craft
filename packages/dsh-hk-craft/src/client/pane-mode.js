@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The read-only current-mode projection (ticket 07).
+ * The read-only current-mode projection.
  *
  * A conversation records the Agent preset it was composed with on its session
  * summary row (`projectionValues.agentPreset`, the same value the native
@@ -111,26 +111,10 @@ function resolveModeLabel(presetId, roster, t) {
   }
 }
 
-/**
- * The focused pane's badge, or null when there is nothing honest to show.
- *
- * @param {{sessionId?: string}|null|undefined} focused focused strip entry
- * @param {{byId?: Record<string, any>}|undefined} sessions raw `useSessions` snapshot
- * @param {{id: string, name?: string, description?: string}[]|null|undefined} roster normalized rows
- * @param {(key: string) => string} t translator
- * @returns {{id: string, label: string, title: string}|null}
- */
-function projectMode(focused, sessions, roster, t) {
-  const presetId = focusedPresetId(focused, sessions)
-  if (presetId === undefined) return null
-  return resolveModeLabel(presetId, roster, t)
-}
-
 module.exports = {
   BUILT_IN_MODE_KEYS,
   MODE_HINT_KEY,
   focusedPresetId,
   modeRosterRows,
   resolveModeLabel,
-  projectMode,
 }

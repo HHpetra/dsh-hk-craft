@@ -1,12 +1,12 @@
 'use strict'
 
 /**
- * The HK Craft page in dsh's Settings panel (ticket 05).
+ * The HK Craft page in dsh's Settings panel.
  *
  * This used to be two sidebar footer actions — a floating diagnostics panel and
  * the native ⇄ pane toggle. Both are transitional developer entry points, so they
  * moved here: the diagnostics render inline and the split-view switch lives next
- * to them until a long-term entry point is decided (spec §4).
+ * to them until a long-term entry point is decided.
  *
  * The component consumes only the pane controller face and the slot's locale
  * translator; every dsh-specific assumption stays in `dsh-pane-host.js`. The pure
@@ -18,7 +18,7 @@
  * unit tests run in Node, where the platform module graph does not exist.
  */
 
-const { createTranslator, react } = require('./diagnostics.js')
+const { createTranslator, react } = require('./react-and-translator.js')
 const { buttonStyle } = require('./pane-styles.js')
 const { messageOf } = require('./shared.js')
 
@@ -128,7 +128,7 @@ function diagnosticsRows(snapshot, t) {
  * The controller reports failure through its snapshot (both `activate()` and
  * `deactivate()` emit `error`), so the caller must re-read it after the call.
  * On success the settings page closes; on failure the error stays on the page
- * and the page stays open (spec §4). Never rejects.
+ * and the page stays open. Never rejects.
  *
  * @param {any} controller the pane controller face
  * @param {{close?: () => void, setBusy?: (busy: boolean) => void, setError?: (error: string|null) => void}} [handlers]

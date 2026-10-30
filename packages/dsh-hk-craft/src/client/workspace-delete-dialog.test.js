@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The delete-workspace confirmation (ticket 03, spec §2).
+ * The delete-workspace confirmation.
  *
  * These tests render the dialog component directly with the same React
  * stand-in the other view tests use, and assert what a user can observe: the
@@ -12,34 +12,29 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const Module = require('node:module')
+
+const { withFakeReact } = require('./fake-react.js')
 
 const { WorkspaceDeleteDialog } = require('./workspace-delete-dialog.js')
+const { interpolate } = require('./react-and-translator.js')
 const { zh } = require('./locale.js')
+
+/** Localized copy with translator params, the way the real slot `t` behaves. */
+const t = (key, params) => interpolate(zh[key] ?? key, params)
 
 /**
  * A React stand-in covering the calls the dialog makes. `workspace-delete-dialog`
- * resolves `react` lazily, so installing this through `Module._load` reaches the
- * same module instance it uses. It carries the full hook set because Node runs
- * every test file in one process and the first lazy load wins the shared cache.
+ * resolves `react` lazily, so the shared installer routes it to this instance. It
+ * carries the full hook set because Node runs every test file in one process and
+ * the first lazy load wins the shared cache.
  */
-function installFakeReact() {
-  const originalLoad = Module._load
-  const fake = {
-    Fragment: Symbol('Fragment'),
-    createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
-    useEffect: () => {},
-    useRef: (value) => ({ current: value }),
-    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
-    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
-  }
-  Module._load = function load(request, parent, isMain) {
-    if (request === 'react') return fake
-    return originalLoad.call(this, request, parent, isMain)
-  }
-  return () => {
-    Module._load = originalLoad
-  }
+const fakeReact = {
+  Fragment: Symbol('Fragment'),
+  createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
+  useEffect: () => {},
+  useRef: (value) => ({ current: value }),
+  useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
 }
 
 /** Flatten the children arrays a fake element carries into one list. */
@@ -84,15 +79,14 @@ function renderDialog(overrides = {}) {
     onConfirm: () => {
       calls.confirm += 1
     },
-    t: (key) => zh[key] ?? key,
+    t,
     ...overrides,
   }
   return { tree: WorkspaceDeleteDialog(props), calls }
 }
 
 test('the dialog is modal, named after the workspace and explains what is kept', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const { tree } = renderDialog()
     const dialog = find(tree, (element) => element.props?.role === 'dialog')
 
@@ -128,14 +122,11 @@ test('the dialog is modal, named after the workspace and explains what is kept',
     assert.deepEqual(confirm.props.children, [zh['workspace.delete.action']])
     assert.equal(cancel.props.disabled, false)
     assert.equal(confirm.props.disabled, false)
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('a running session is counted and the dialog promises not to stop it', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const { tree } = renderDialog({ runningCount: 3 })
     const warning = find(tree, (element) => element.props?.['data-hkcraft-delete-running'] !== undefined)
 
@@ -144,14 +135,11 @@ test('a running session is counted and the dialog promises not to stop it', () =
     const text = (warning.props.children ?? []).filter((child) => typeof child === 'string').join('')
     assert.match(text, /3/)
     assert.match(text, /不会停止它们/)
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('while deleting, both actions are disabled and the busy label replaces the action', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const { tree, calls } = renderDialog({ busy: true })
     const cancel = find(tree, (element) => element.props?.['data-hkcraft-delete-cancel'] === '')
     const confirm = find(tree, (element) => element.props?.['data-hkcraft-delete-confirm'] === '')
@@ -163,14 +151,11 @@ test('while deleting, both actions are disabled and the busy label replaces the 
     cancel.props.onClick()
     confirm.props.onClick()
     assert.deepEqual(calls, { cancel: 0, confirm: 0 }, 'a busy dialog submits nothing')
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('a failed delete shows the reason in the dialog and keeps it open for a retry', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const { tree, calls } = renderDialog({ error: 'workspace/conflict' })
     const alert = find(tree, (element) => element.props?.role === 'alert')
 
@@ -181,14 +166,11 @@ test('a failed delete shows the reason in the dialog and keeps it open for a ret
 
     find(tree, (element) => element.props?.['data-hkcraft-delete-confirm'] === '').props.onClick()
     assert.equal(calls.confirm, 1, 'the user can retry')
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('cancel and a backdrop click dismiss without deleting; a click inside does not', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const { tree, calls } = renderDialog()
     const overlay = tree
     const dialog = find(tree, (element) => element.props?.role === 'dialog')
@@ -205,7 +187,5 @@ test('cancel and a backdrop click dismiss without deleting; a click inside does 
     let stopped = 0
     dialog.props.onClick({ stopPropagation: () => (stopped += 1) })
     assert.equal(stopped, 1)
-  } finally {
-    restore()
-  }
+  })
 })
