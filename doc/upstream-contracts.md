@@ -357,6 +357,40 @@ the pane is dropped.
 
 ---
 
+## Workspace display order
+
+**Provider:** `@deepseek-ai/dsh-client-ui-workspace` (the injectable `workspaces`
+client service) over `@deepseek-ai/dsh-api-workspace-controller`.
+
+**Semantics:** `workspaces.insertBefore(workspaceId, beforeWorkspaceId?)` moves
+one workspace in the registry's durable display order. The positional
+`beforeWorkspaceId` is the workspace the moved one must precede; omitting it (or
+passing `undefined`) appends to the end. The remote request is the object
+`{ workspaceId, beforeWorkspaceId? }` and its result is the complete resulting
+order as `{ workspaceIds }`. The client model installs the optimistic order
+immediately, then reconciles it with the returned complete order; on failure it
+reinstalls its `committedOrder` **before** rejecting, and the rejection is a
+plain `Error` whose message is `workspace reorder failed: <code>: <message>`.
+`workspaces.list().items` is already in display order and is the only order the
+plugin renders — the plugin keeps no order of its own, so a failed write needs
+no local rollback.
+
+**Why we rely on it:** pointer drag reordering (ticket 04) only decides an
+anchor from the row under the pointer and its upper/lower half; persistence,
+optimism and rollback belong to the host. The sidebar therefore never sorts or
+caches an order: it writes through this call and re-renders `workspaces.list`,
+which is why "drop back into place" is detected before the call (no meaningless
+write) and a failure simply shows the host's committed order again.
+
+**Verified:** the positional client signature, the object-shaped remote request,
+the `workspaceIds` result, the optimistic install / `committedOrder` restore and
+the `commandError("reorder", …)` message were read in the workspace-controller
+and ui-workspace bundles (0.2.1-rc.5). Runtime probe: drag a row past 6px, drop
+it before/after another, restart dsh and confirm the order survived; then force a
+failure and confirm the row snaps back while the error is shown.
+
+---
+
 ## Split panel hides the native right bar
 
 **Provider:** `@deepseek-ai/dsh-client-ui-sidebar-right` (the `rightbar` slot

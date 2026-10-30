@@ -157,6 +157,7 @@ function apply(ctx) {
           inject: () => ({
             openWorkspace: actions.openWorkspace,
             addWorkspace: actions.addWorkspace,
+            reorderWorkspace: actions.reorderWorkspace,
           }),
         },
         WorkspaceSection,
