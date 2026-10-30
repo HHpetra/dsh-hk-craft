@@ -587,6 +587,8 @@ test('deleting the visible workspace drops its layout and key, releases its pane
   assert.deepEqual(state.layouts.w2, layouts.w2, 'the neighbour tree is shown')
   assert.equal(state.sessionId, 's3')
   assert.equal(storage.has('w1'), false, 'the persisted key is cleared')
+  assert.equal(controller.isWorkspaceEnabled('w1'), false, 'a deleted workspace is not enabled any more')
+  assert.equal(controller.isWorkspaceEnabled('w2'), true, 'the neighbour it moved to is enabled')
   assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId), ['s3'])
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
   // Deleting a registration is not closing panes: no interrupt, no panel nav.
@@ -665,6 +667,7 @@ test('deleting a workspace that was never opened here only clears its stored key
   assert.equal(controller.forgetWorkspace('w1', { order: ['w1', 'w2'] }), true)
 
   assert.equal(storage.has('w1'), false)
+  assert.equal(controller.isWorkspaceEnabled('w1'), false, 'the ghost row cannot come back gray')
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.deepEqual(controller.getSnapshot().layouts, before.layouts)
   assert.deepEqual(fake.calls.interrupt, [])
