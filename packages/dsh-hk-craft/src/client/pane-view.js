@@ -41,6 +41,7 @@ const { EMPTY_STATE_LIMITS, buildResumeRows } = require('./resume-list.js')
 const { absentHook } = require('./shared.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const { STRIP_STATUS_IDLE, projectStrip } = require('./pane-strip.js')
+const { stripSeatEntries, stripSeatMaxWidth } = require('./pane-toolbar.js')
 const {
   buttonStyle,
   paneStyle,
@@ -50,6 +51,9 @@ const {
   hiddenWorkspaceStyle,
   paneStripStyle,
   stripViewportStyle,
+  stripTablistStyle,
+  stripActionsStyle,
+  stripSeatStyle,
   stripItemStyle,
   stripTitleStyle,
   stripDotStyle,
@@ -624,8 +628,54 @@ function stripPaneIdAt(clientX, clientY) {
 }
 
 /**
+ * The strip's pinned native-action group (ticket 06).
+ *
+ * Layout only: it renders the filled seats in `STRIP_SEAT_ORDER` and gives each
+ * its width cap, so the two seats are independent — ticket 07 fills `mode`,
+ * ticket 08 fills `subagents`, and neither edits this function or the strip
+ * around it. The group sits outside the scrollport and never shrinks
+ * (`stripActionsStyle`); an empty group takes no tab room.
+ *
+ * Each seat receives `seatContext`: the visible layout snapshot, the focused
+ * strip entry (or null), the `sessions` / `sessionStatus` snapshots the strip
+ * already subscribes to, the host kit and the translator. Nothing here reads
+ * dsh data.
+ *
+ * @param {{ seats: Record<string, Function>|null|undefined, context: object }} props
+ */
+function PaneStripActions({ seats, context }) {
+  const React = react()
+  const h = React.createElement
+  const entries = stripSeatEntries(seats)
+  return h(
+    'div',
+    {
+      'data-hkcraft-strip-actions': '',
+      style: entries.length === 0 ? { ...stripActionsStyle, padding: 0 } : stripActionsStyle,
+    },
+    entries.map((entry) =>
+      h(
+        'div',
+        {
+          key: entry.key,
+          'data-hkcraft-strip-seat': entry.key,
+          style: { ...stripSeatStyle, maxWidth: stripSeatMaxWidth(entry.key) ?? undefined },
+        },
+        h(entry.component, context),
+      ),
+    ),
+  )
+}
+
+/**
  * The pane strip: the current workspace's open conversations, in `leaves()`
- * order (ticket 06, spec §5).
+ * order, plus the pinned native-action group (ticket 06, spec §5).
+ *
+ * Structure, outermost first: the bar; a horizontally scrolling viewport
+ * holding the `tablist` and then `+` immediately after the last tab; and the
+ * action group outside the scrollport, so it never scrolls or shrinks. The tab
+ * viewport gives way first (`flex: 1 1 auto`, `minWidth: 0`) and titles
+ * truncate, so the group stays complete when the bar is narrow.
  *
  * Every entry is a pane — clicking it focuses that pane, its × closes the pane
  * (after a confirmation when the session is live), and `+` adds a conversation
@@ -639,9 +689,9 @@ function stripPaneIdAt(clientX, clientY) {
  * The ARIA roles stay `tablist`/`tab` because the strip is a list of selectable
  * views of the same main region; the domain vocabulary is not "tab".
  *
- * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string }} props
+ * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneStrip({ controller, state, kit, t }) {
+function PaneStrip({ controller, state, kit, t, seats }) {
   const React = react()
   const h = React.createElement
   const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
@@ -748,6 +798,18 @@ function PaneStrip({ controller, state, kit, t }) {
 
   const hint = paneShortcutHint(t)
 
+  // The seats act on the focused pane's conversation only; they follow focus
+  // because this context is rebuilt from the same snapshot the tabs read.
+  const seatContext = {
+    controller,
+    layout: state,
+    focused: entries.find((entry) => entry.focused) ?? null,
+    sessions,
+    statuses,
+    kit,
+    t,
+  }
+
   const entryElements = entries.map((entry) => {
     const statusLabel = t(`strip.status.${entry.status}`)
     const label = entry.shortcut === undefined ? entry.title : `${entry.title} (${entry.shortcut})`
@@ -839,30 +901,41 @@ function PaneStrip({ controller, state, kit, t }) {
   return h(
     'div',
     {
-      role: 'tablist',
-      'aria-label': t('strip.aria'),
       'data-hkcraft-pane-strip': '',
       // The full key table lives here and in the empty state, built from the
       // same labels the listener accepts.
       title: hint,
       style: paneStripStyle,
     },
-    h('div', { style: stripViewportStyle }, entryElements),
     h(
-      'button',
-      {
-        type: 'button',
-        // `+` adds a pane; `Ctrl+Shift+N` creates a conversation in the focused
-        // pane instead, so this button must not advertise that chord.
-        title: t('strip.new'),
-        'aria-label': t('strip.new'),
-        'data-hkcraft-strip-new': '',
-        disabled: creating,
-        style: { ...stripNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
-        onClick: createEntry,
-      },
-      '＋',
+      'div',
+      { style: stripViewportStyle, 'data-hkcraft-strip-viewport': '' },
+      h(
+        'div',
+        {
+          role: 'tablist',
+          'aria-label': t('strip.aria'),
+          style: stripTablistStyle,
+        },
+        entryElements,
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          // `+` adds a pane; `Ctrl+Shift+N` creates a conversation in the focused
+          // pane instead, so this button must not advertise that chord.
+          title: t('strip.new'),
+          'aria-label': t('strip.new'),
+          'data-hkcraft-strip-new': '',
+          disabled: creating,
+          style: { ...stripNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
+          onClick: createEntry,
+        },
+        '＋',
+      ),
     ),
+    h(PaneStripActions, { seats, context: seatContext }),
   )
 }
 
@@ -944,9 +1017,9 @@ function PaneCloseConfirm({ controller, t }) {
  * One workspace's tree. Every loaded workspace gets one of these and stays
  * mounted; `visible` only flips `display` (ticket 08, spec D5).
  *
- * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, kit: any, t: (key: string) => string }} props
+ * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
+function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t, seats }) {
   const React = react()
   const h = React.createElement
   const attributes = {
@@ -978,7 +1051,7 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
     // Only the visible workspace owns a strip: hidden strips would render a
     // second row over an invisible tree. The pane bodies below stay mounted
     // regardless, which is what D5 actually protects.
-    visible ? h(PaneStrip, { controller, state: layout, kit, t }) : null,
+    visible ? h(PaneStrip, { controller, state: layout, kit, t, seats }) : null,
     h(
       'div',
       { style: layoutStyle, 'data-hkcraft-layout': '' },
@@ -1039,8 +1112,17 @@ function workspaceGroups(state) {
  * The `main` keyed-slot entry. dsh hands it `SessionProvider` and the
  * authorized `renderSlot` for a session-scoped child because the registration
  * declares one non-root child.
+ *
+ * `options.seats` is the strip's native-action extension point (ticket 06):
+ * `{ mode?: Component, subagents?: Component }` from `pane-toolbar.js`. Tickets
+ * 07 (current mode) and 08 (subagent viewer) fill one seat each through this
+ * option; both are optional, so the strip works with no seats at all.
+ *
+ * @param {any} controller
+ * @param {{ seats?: Record<string, Function>|null }} [options]
  */
-function createPaneHost(controller) {
+function createPaneHost(controller, options = {}) {
+  const seats = options?.seats ?? null
   return function PaneHost(props) {
     const React = react()
     const h = React.createElement
@@ -1073,6 +1155,7 @@ function createPaneHost(controller) {
             visible: group.visible,
             kit: props,
             t,
+            seats,
           }),
         ),
       ),

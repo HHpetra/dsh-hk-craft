@@ -356,6 +356,37 @@ the pane is dropped.
 
 ---
 
+## Split panel hides the native right bar
+
+**Provider:** `@deepseek-ai/dsh-client-ui-sidebar-right` (the `rightbar` slot
+occupant and `ctx.sidebarRight`) and the layout service's `panelInfo`.
+
+**Semantics:** the shell frame always renders the `rightbar` slot for the main
+column, but the occupant decides what is visible. Its `RightbarRoot` treats the
+Session views as `visible` only while `panelInfo.activePanelId === null`, and
+the same effect publishes the on-screen Session to `ctx.sidebarRight` as
+`activePanelId === null ? selected?.sessionId : undefined`. With a plugin panel
+selected — the pane workspace — native dsh hides the right bar and the public
+face has no "current session" to act on. Its navigation calls (`openResource`,
+`openTab`) act on that on-screen Session, and there is no public "open this
+Session's right bar" call.
+
+**Why we rely on it:** the pane strip's pinned native-action group therefore
+ships no "open right sidebar" button in this version (spec §5): it could not
+open the native right bar for a split pane, and falling back to the native
+conversation would silently leave the split. The group is the reserved home for
+native header tools that can work inside a pane — the read-only mode badge
+(ticket 07) and the subagent viewer (ticket 08) — and any future native tool
+needs an explicit seat there.
+
+**Verified:** `RightbarRoot`'s `activePanelId === null` visibility and the
+`show(activePanelId === null ? selected?.sessionId : undefined)` sync were read
+in `dsh-client-ui-sidebar-right` 0.2.1-rc.5 (the installed Desktop bundle).
+Runtime probe: enter split view, confirm the native right bar is hidden and the
+strip offers no right-bar button.
+
+---
+
 ## `sidebar.workspaces` slot
 
 **Provider:** `@deepseek-ai/dsh-client-ui-workspace` and

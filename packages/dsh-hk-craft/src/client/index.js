@@ -64,7 +64,15 @@ function apply(ctx) {
   // The View adapter is optional: without `uiConversation` (or the
   // developer-tools gate) the panes stay chat-only instead of failing to mount.
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
-  const PaneHost = createPaneHost(controller)
+
+  /**
+   * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
+   * Each later ticket fills its own key — `mode` (ticket 07) and `subagents`
+   * (ticket 08) — without touching the strip or the group; an empty object
+   * keeps the group invisible and leaves the tabs all the room.
+   */
+  const stripSeats = {}
+  const PaneHost = createPaneHost(controller, { seats: stripSeats })
   const PaneBody = createPaneBody(controller)
   const PaneToggle = createPaneToggle(controller)
 
