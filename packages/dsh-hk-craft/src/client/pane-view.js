@@ -64,6 +64,18 @@ const layoutStyle = {
   overflow: 'hidden',
 }
 
+/** One workspace's layer; the hidden ones stay mounted with `display: none`. */
+const workspaceStyle = {
+  position: 'absolute',
+  inset: 0,
+  display: 'block',
+  minWidth: 0,
+  minHeight: 0,
+  overflow: 'hidden',
+}
+
+const hiddenWorkspaceStyle = { ...workspaceStyle, display: 'none' }
+
 const headerStyle = {
   display: 'flex',
   alignItems: 'center',
@@ -413,6 +425,97 @@ function PaneSeparator({ controller, separator }) {
 }
 
 /**
+ * One workspace's tree. Every loaded workspace gets one of these and stays
+ * mounted: switching workspace flips `display`, never unmounts, so streaming
+ * output, scroll position and composer drafts of the hidden workspaces survive
+ * (spec D5 / §4.3, ticket 08).
+ *
+ * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, kit: any, t: (key: string) => string }} props
+ */
+function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t }) {
+  const React = react()
+  const h = React.createElement
+  const style = visible ? workspaceStyle : hiddenWorkspaceStyle
+  const attributes = {
+    style,
+    'data-hkcraft-workspace': workspaceId ?? '',
+    'data-hkcraft-workspace-active': visible ? 'true' : 'false',
+    'aria-hidden': visible ? undefined : 'true',
+  }
+
+  if (layout.root === null) {
+    return h(
+      'div',
+      attributes,
+      h(PaneEmptyState, {
+        t,
+        onNew: () => {
+          const attempt = controller.newInFocused(workspaceId ?? undefined)
+          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+            attempt.catch(() => {})
+          }
+        },
+      }),
+    )
+  }
+
+  const geometry = computeLayout(layout.root)
+  return h(
+    'div',
+    attributes,
+    geometry.panes.map((paneRect) => {
+      const pane = layout.panes[paneRect.paneId]
+      if (pane === undefined) return null
+      return h(PaneFrame, {
+        key: paneRect.paneId,
+        controller,
+        pane,
+        rect: paneRect,
+        focused: visible && paneRect.paneId === layout.activePaneId,
+        kit,
+        t,
+      })
+    }),
+    geometry.separators.map((separator) =>
+      h(PaneSeparator, {
+        key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
+        controller,
+        separator,
+      }),
+    ),
+  )
+}
+
+/**
+ * The workspace trees to render, active first in visibility but not in order:
+ * `display` decides. `layouts` is the authoritative map; the unscoped layout
+ * (a shell with no workspaces service) is not in it and is appended by hand.
+ *
+ * @param {any} state controller snapshot
+ * @returns {Array<{workspaceId: string|null, layout: object, visible: boolean}>}
+ */
+function workspaceGroups(state) {
+  const entries = Object.entries(state.layouts ?? {})
+  const visibleWorkspaceId =
+    state.workspaceId !== null && state.layouts?.[state.workspaceId] !== undefined
+      ? state.workspaceId
+      : (entries[0]?.[0] ?? state.workspaceId)
+  const groups = entries.map(([workspaceId, layout]) => ({
+    workspaceId,
+    layout,
+    visible: workspaceId === visibleWorkspaceId,
+  }))
+  if (state.workspaceId === null && (state.root !== null || groups.length === 0)) {
+    groups.push({
+      workspaceId: null,
+      layout: { root: state.root, panes: state.panes, activePaneId: state.activePaneId },
+      visible: state.root !== null || groups.length === 0,
+    })
+  }
+  return groups
+}
+
+/**
  * The `main` keyed-slot entry. dsh hands it `SessionProvider` and the
  * authorized `renderSlot` for a session-scoped child because the registration
  * declares one non-root child.
@@ -431,40 +534,18 @@ function createPaneHost(controller) {
 
     if (!state.active) return null
 
-    if (state.root === null) {
-      return h(PaneEmptyState, {
-        t,
-        onNew: () => {
-          const attempt = controller.newInFocused()
-          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
-            attempt.catch(() => {})
-          }
-        },
-      })
-    }
-
-    const geometry = computeLayout(state.root)
     return h(
       'div',
       { style: layoutStyle, 'data-hkcraft-layout': '' },
-      geometry.panes.map((paneRect) => {
-        const pane = state.panes[paneRect.paneId]
-        if (pane === undefined) return null
-        return h(PaneFrame, {
-          key: paneRect.paneId,
+      workspaceGroups(state).map((group) =>
+        h(PaneWorkspace, {
+          key: group.workspaceId ?? '\u0000unscoped',
           controller,
-          pane,
-          rect: paneRect,
-          focused: paneRect.paneId === state.activePaneId,
+          workspaceId: group.workspaceId,
+          layout: group.layout,
+          visible: group.visible,
           kit: props,
           t,
-        })
-      }),
-      geometry.separators.map((separator) =>
-        h(PaneSeparator, {
-          key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
-          controller,
-          separator,
         }),
       ),
     )
@@ -581,6 +662,8 @@ module.exports = {
   PaneFrame,
   PaneSeparator,
   PaneEmptyState,
+  PaneWorkspace,
+  workspaceGroups,
   createPaneHost,
   createPaneBody,
   createPaneToggle,

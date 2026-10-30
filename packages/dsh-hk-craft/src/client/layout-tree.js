@@ -199,7 +199,7 @@ function close(layout, paneId) {
     }
   }
 
-  const root = normalizeNode(layout.root, panes)
+  const root = normalizeNode(layout.root, panes, new Set())
   const ordered = leaves(root)
   const activePaneId =
     layout.activePaneId === paneId || !ordered.includes(layout.activePaneId)
@@ -277,19 +277,23 @@ function resize(layout, path, ratio) {
 
 /**
  * Re-validate a layout that came from storage or from a caller: clamp every
- * ratio, drop leaves whose pane record is gone (the sibling promotes), drop
- * orphan pane records, and repair the focus. This is the decode seam for the
- * per-workspace store (ticket 08).
+ * ratio, drop leaves whose pane record is gone (the sibling promotes), keep one
+ * leaf per pane id, drop orphan pane records, and repair the focus. This is the
+ * decode seam for the per-workspace store (ticket 08).
+ *
+ * The pane map key is authoritative: a pane record may omit `paneId` (the
+ * persisted payload keys it), and its `paneId` is rebuilt from the key so the
+ * tree, the record and the renderer's keyed elements cannot disagree.
  *
  * @param {object} layout
  * @returns {object}
  */
 function normalizeLayout(layout) {
   const panes = layout !== null && typeof layout.panes === 'object' && layout.panes !== null ? layout.panes : {}
-  const root = normalizeNode(layout?.root ?? null, panes)
+  const root = normalizeNode(layout?.root ?? null, panes, new Set())
   const ordered = leaves(root)
   const kept = {}
-  for (const paneId of ordered) kept[paneId] = normalizePane(panes[paneId])
+  for (const paneId of ordered) kept[paneId] = normalizePane(panes[paneId], paneId)
   const activePaneId = ordered.includes(layout?.activePaneId) ? layout.activePaneId : (ordered[0] ?? null)
   return {
     version: LAYOUT_VERSION,
@@ -303,16 +307,23 @@ function normalizeLayout(layout) {
 /**
  * @param {object|null} node
  * @param {Record<string, object>} panes
+ * @param {Set<string>} seen pane ids already claimed by an earlier leaf
  * @returns {object|null}
  */
-function normalizeNode(node, panes) {
+function normalizeNode(node, panes, seen) {
   if (node === null || node === undefined || typeof node !== 'object') return null
   if (node.kind === 'leaf') {
-    return panes[node.paneId] === undefined ? null : { kind: 'leaf', paneId: node.paneId }
+    if (typeof node.paneId !== 'string' || node.paneId === '') return null
+    if (panes[node.paneId] === undefined) return null
+    // Two leaves cannot share one pane: the second would render a duplicate,
+    // doubly-retained conversation. The first occurrence wins.
+    if (seen.has(node.paneId)) return null
+    seen.add(node.paneId)
+    return { kind: 'leaf', paneId: node.paneId }
   }
   if (node.kind !== 'split') return null
-  const a = normalizeNode(node.a, panes)
-  const b = normalizeNode(node.b, panes)
+  const a = normalizeNode(node.a, panes, seen)
+  const b = normalizeNode(node.b, panes, seen)
   if (a === null) return b
   if (b === null) return a
   return {
@@ -423,13 +434,60 @@ function paneOfSession(layout, sessionId) {
   return undefined
 }
 
-/** @param {{paneId: string, sessionId: string, view?: string}} pane */
-function normalizePane(pane) {
+/**
+ * @param {{paneId?: string, sessionId: string, view?: string}} pane
+ * @param {string} [paneId] the authoritative map key, when the payload omitted it
+ */
+function normalizePane(pane, paneId = pane.paneId) {
   return {
-    paneId: pane.paneId,
+    paneId,
     sessionId: pane.sessionId,
     view: pane.view === 'trajectory' ? 'trajectory' : DEFAULT_VIEW,
   }
+}
+
+/**
+ * Rename pane ids without touching the tree shape, the ratios, the sessions or
+ * the views. Restore uses it to keep pane ids globally unique when two stored
+ * workspaces independently generated the same id (ticket 08). An id absent from
+ * `mapping` keeps its name, and an empty mapping returns the same object.
+ *
+ * @param {object} layout
+ * @param {Map<string, string>} mapping old pane id → new pane id
+ * @returns {object}
+ */
+function renamePanes(layout, mapping) {
+  if (layout === null || typeof layout !== 'object' || !(mapping instanceof Map) || mapping.size === 0) {
+    return layout
+  }
+  const rename = (paneId) => {
+    const next = mapping.get(paneId)
+    return typeof next === 'string' && next !== '' ? next : paneId
+  }
+  let changed = false
+  const walk = (node) => {
+    if (node === null || node === undefined) return node
+    if (node.kind === 'leaf') {
+      const paneId = rename(node.paneId)
+      if (paneId !== node.paneId) changed = true
+      return paneId === node.paneId ? node : { ...node, paneId }
+    }
+    if (node.kind !== 'split') return node
+    const a = walk(node.a)
+    const b = walk(node.b)
+    return a === node.a && b === node.b ? node : { ...node, a, b }
+  }
+  const root = walk(layout.root)
+  const panes = {}
+  for (const [oldId, pane] of Object.entries(layout.panes ?? {})) {
+    const newId = rename(oldId)
+    if (newId !== oldId) changed = true
+    panes[newId] = pane.paneId === newId ? pane : { ...pane, paneId: newId }
+  }
+  const activePaneId = layout.activePaneId === null ? null : rename(layout.activePaneId)
+  if (activePaneId !== layout.activePaneId) changed = true
+  if (!changed) return layout
+  return { ...layout, root, panes, activePaneId }
 }
 
 module.exports = {
@@ -454,4 +512,5 @@ module.exports = {
   replaceSession,
   setView,
   paneOfSession,
+  renamePanes,
 }

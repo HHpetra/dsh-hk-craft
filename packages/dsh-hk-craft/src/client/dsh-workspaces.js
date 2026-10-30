@@ -97,19 +97,35 @@ async function pickDirectory(ctx) {
 /**
  * The section's two behaviors, over public client services only.
  *
+ * `options.panes` is the pane controller face (ticket 08). While the plugin
+ * pane workspace is showing, clicking a workspace must not call the native
+ * `startSession`: that path reveals the session through
+ * `replaceMain(..., "reveal")`, which calls `selectPanel(null)` and dismisses
+ * the pane workspace, unmounting every pane (the exact loss D5 forbids). In
+ * pane mode the click only switches which workspace tree is visible; the
+ * native reveal stays the behavior when the pane workspace is not showing, and
+ * remains the fallback when the pane controller refuses the switch.
+ *
  * @param {any} ctx client Cordis context (already injected with `uiWorkspace`
  *   and `workspaces` by the plugin entry)
+ * @param {{panes?: {active?: () => boolean, switchWorkspace?: (workspaceId: string) => boolean}}} [options]
  */
-function createSectionActions(ctx) {
+function createSectionActions(ctx, options = {}) {
+  const panes = options?.panes
+
+  /**
+   * Switch to a workspace: show its pane tree when the pane workspace is
+   * active, otherwise start (or reuse) its blank session natively.
+   *
+   * @param {string} workspaceId
+   */
+  function openWorkspace(workspaceId) {
+    if (panes?.active?.() === true && panes?.switchWorkspace?.(workspaceId) === true) return
+    return ctx.get('uiWorkspace').startSession(workspaceId, { clearPreviousDraft: false })
+  }
+
   return {
-    /**
-     * Switch to a workspace by starting (or reusing) its blank session.
-     *
-     * @param {string} workspaceId
-     */
-    openWorkspace(workspaceId) {
-      ctx.get('uiWorkspace').startSession(workspaceId, { clearPreviousDraft: false })
-    },
+    openWorkspace,
 
     /**
      * Add a workspace through dsh's own picking and creation path, then select
@@ -122,7 +138,7 @@ function createSectionActions(ctx) {
       const path = await pickDirectory(ctx)
       if (path === null || path === undefined || path === '') return
       const workspace = await ctx.get('workspaces').create({ path })
-      ctx.get('uiWorkspace').startSession(workspace.workspaceId, { clearPreviousDraft: false })
+      openWorkspace(workspace.workspaceId)
     },
   }
 }

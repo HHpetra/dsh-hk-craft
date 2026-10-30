@@ -137,3 +137,66 @@ test('without the bridge the public workspace picker is used', async () => {
     if (previous !== undefined) globalThis.__DSH_DIRECTORY_PICKER__ = previous
   }
 })
+
+// ---------------------------------------------------------------------------
+// Pane mode (ticket 08): switching workspace must not go through the native
+// reveal, because that would dismiss the pane workspace and remount every pane.
+// ---------------------------------------------------------------------------
+
+/** The pane face the section talks to in pane mode. */
+function fakePanes({ active = true, switched = true } = {}) {
+  const calls = { switchWorkspace: [] }
+  return {
+    calls,
+    panes: {
+      active: () => active,
+      switchWorkspace(workspaceId) {
+        calls.switchWorkspace.push(workspaceId)
+        return switched
+      },
+    },
+  }
+}
+
+test('in pane mode a workspace click switches the pane layout instead of revealing a native session', () => {
+  const { ctx, calls } = fakeCtx()
+  const { panes, calls: paneCalls } = fakePanes()
+  const actions = createSectionActions(ctx, { panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(paneCalls.switchWorkspace, ['w2'])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('outside pane mode the native workspace reveal is unchanged', () => {
+  const { ctx, calls } = fakeCtx()
+  const { panes } = fakePanes({ active: false })
+  const actions = createSectionActions(ctx, { panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.startSession, [['w2', { clearPreviousDraft: false }]])
+})
+
+test('a workspace the pane layout cannot show falls back to the native reveal', () => {
+  const { ctx, calls } = fakeCtx()
+  const { panes } = fakePanes({ switched: false })
+  const actions = createSectionActions(ctx, { panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.startSession, [['w2', { clearPreviousDraft: false }]])
+})
+
+test('a workspace added in pane mode is selected without a native reveal', async () => {
+  const { ctx, calls } = fakeCtx({ pickPath: 'C:\\projects\\new' })
+  const { panes, calls: paneCalls } = fakePanes()
+  const actions = createSectionActions(ctx, { panes })
+
+  await actions.addWorkspace()
+
+  assert.deepEqual(calls.create, [{ path: 'C:\\projects\\new' }])
+  assert.deepEqual(paneCalls.switchWorkspace, ['w-new'])
+  assert.deepEqual(calls.startSession, [])
+})
