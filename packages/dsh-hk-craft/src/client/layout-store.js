@@ -248,6 +248,30 @@ function writeLayout(storage, layout) {
   }
 }
 
+/**
+ * Remove one workspace's persisted layout. Used when the workspace itself is
+ * deleted: the key must not outlive its workspace, or the "enabled" inference
+ * (`hasLayout`) would resurrect a ghost workspace on the next boot.
+ *
+ * Failures (no store, no `removeItem`, a locked-down store) are reported as
+ * `false` and never thrown: cleanup is best-effort, exactly like writing.
+ *
+ * @param {{removeItem?: (key: string) => unknown}|undefined|null} storage
+ * @param {unknown} workspaceId
+ * @returns {boolean} whether a removal was attempted without throwing
+ */
+function removeLayout(storage, workspaceId) {
+  const key = layoutKey(workspaceId)
+  if (key === null) return false
+  if (typeof storage?.removeItem !== 'function') return false
+  try {
+    storage.removeItem(key)
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
 module.exports = {
   LAYOUT_KEY_PREFIX,
   LAYOUT_PAYLOAD_VERSION,
@@ -259,4 +283,5 @@ module.exports = {
   hasLayoutKey,
   readLayout,
   writeLayout,
+  removeLayout,
 }

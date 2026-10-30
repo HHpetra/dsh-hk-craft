@@ -22,9 +22,14 @@ const { CONTENT_FACTORY, PANEL_KEY, PANE_SLOT } = require('./dsh-pane-host.js')
 
 /** @returns {object} one fake workspace snapshot store */
 function workspaceService(items = []) {
+  const deletes = []
   return {
+    deletes,
     list: {
       getSnapshot: () => ({ items, archivedSessionIds: [], pinnedSessionIds: [], phase: 'ready' }),
+    },
+    async delete(workspaceId) {
+      deletes.push(workspaceId)
     },
   }
 }
@@ -62,6 +67,7 @@ function fakeCtx({ services = workspaceServices(), absentSlots = [] } = {}) {
   const ctx = {
     calls,
     panel,
+    services,
     effect(fn, label) {
       calls.effect.push(label)
       const dispose = fn()
@@ -299,12 +305,14 @@ test('the workspace entry injects the callbacks, the reorder callback and the pa
   const injected = options.inject()
   assert.deepEqual(Object.keys(injected).sort(), [
     'addWorkspace',
+    'deleteWorkspace',
     'openWorkspace',
     'panes',
     'reorderWorkspace',
   ])
   assert.equal(typeof injected.openWorkspace, 'function')
   assert.equal(typeof injected.addWorkspace, 'function')
+  assert.equal(typeof injected.deleteWorkspace, 'function')
   assert.equal(typeof injected.reorderWorkspace, 'function')
 
   // The row light reads enablement and follows the controller snapshot; nothing
@@ -314,6 +322,17 @@ test('the workspace entry injects the callbacks, the reorder callback and the pa
   assert.equal(typeof injected.panes.subscribe, 'function')
   assert.equal(injected.panes.isWorkspaceEnabled('w1'), false, 'nothing opened in split yet')
   assert.equal(typeof injected.panes.subscribe(() => {}), 'function')
+})
+
+test('the workspaces entry deletes through the public service and the pane controller', async () => {
+  const services = workspaceServices()
+  const ctx = fakeCtx({ services })
+  apply(ctx)
+  const { options } = entryNamed(ctx, 'sidebar.workspaces')
+
+  await options.inject().deleteWorkspace('w1')
+
+  assert.deepEqual(services.workspaces.deletes, ['w1'])
 })
 
 test('the workspace entry declares no child slots and no store', () => {

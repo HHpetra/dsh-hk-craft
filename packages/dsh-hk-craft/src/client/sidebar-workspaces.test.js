@@ -33,8 +33,9 @@ function installFakeReact() {
   const fake = {
     Fragment: Symbol('Fragment'),
     createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
-    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+    useEffect: () => {},
     useRef: (value) => ({ current: value }),
+    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
     useSyncExternalStore: (subscribe, getSnapshot) => {
       calls.subscribe += 1
       subscribe(() => {})
@@ -153,6 +154,7 @@ function renderSection({
   started = true,
   panes,
   openWorkspace = () => {},
+  deleteWorkspace = () => {},
   reorderWorkspace = () => {},
 } = {}) {
   const { workspaces, sessions, statuses } = snapshots({ current, started })
@@ -163,6 +165,7 @@ function renderSection({
     useSessionStatus: (selector) => selector(statuses),
     panes,
     openWorkspace,
+    deleteWorkspace,
     reorderWorkspace,
   })
 }
@@ -190,16 +193,51 @@ test('a workspace row is a container with a separate select button and an action
       (child) => child.props?.['data-hkcraft-workspace-action'] !== undefined,
     )
     assert.notEqual(action, undefined, 'the row must reserve an inline action slot')
-    assert.equal(
-      childrenOf(action).length,
-      0,
-      'ticket 01 leaves the action slot empty; later tickets fill it',
-    )
+    // Ticket 03 fills the slot with the delete entry; ticket 04 relies on the
+    // marker to ignore presses that belong to a row action.
+    const actionButtons = descendants(action).filter((element) => element.type === 'button')
+    assert.equal(actionButtons.length, 1, 'the action slot holds exactly the delete entry')
+    assert.equal(actionButtons[0].props['data-hkcraft-workspace-delete'], 'w1')
     assert.equal(
       descendants(select).includes(action),
       false,
       'the action slot must be a sibling of the select control, never nested inside it',
     )
+  } finally {
+    fakeReact.restore()
+  }
+})
+
+test('the delete entry has its own accessible name and never opens the workspace', () => {
+  const fakeReact = installFakeReact()
+  try {
+    const opened = []
+    const tree = renderSection({ openWorkspace: (workspaceId) => opened.push(workspaceId) })
+
+    const rows = descendants(tree).filter(
+      (element) => element.props?.['data-hkcraft-workspace-row'] !== undefined,
+    )
+    assert.equal(rows.length, 2)
+
+    for (const row of rows) {
+      const workspaceId = row.props['data-hkcraft-workspace-row']
+      const action = childrenOf(row).find(
+        (child) => child.props?.['data-hkcraft-workspace-action'] !== undefined,
+      )
+      const del = descendants(action).find((element) => element.type === 'button')
+      assert.notEqual(del, undefined, 'every row keeps a delete entry in the action slot')
+      assert.equal(del.props.type, 'button')
+      assert.equal(del.props['data-hkcraft-workspace-delete'], workspaceId)
+      // Independent accessible name: it says both what it does and which row.
+      assert.match(del.props['aria-label'], /删除工作区/)
+      assert.match(del.props['aria-label'], /Project A|默认工作区/)
+      assert.equal(del.props.title, del.props['aria-label'])
+      let stopped = 0
+      del.props.onClick({ stopPropagation: () => (stopped += 1) })
+      assert.equal(stopped, 1, 'a row action must not bubble into a row gesture')
+    }
+
+    assert.deepEqual(opened, [], 'pressing delete must not open the workspace')
   } finally {
     fakeReact.restore()
   }
@@ -495,5 +533,3 @@ test('only one reorder request may be in flight at a time', () => {
     fakeReact.restore()
   }
 })
-
-

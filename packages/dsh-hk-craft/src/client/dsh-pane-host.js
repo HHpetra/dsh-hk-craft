@@ -291,6 +291,23 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
+   * Release the references of panes that no layout owns any more.
+   *
+   * Used when a whole workspace is deleted: the workspace's panes disappear
+   * from `book.allLayouts()` at once, and releasing their `hkcraftPane`
+   * generation is what unmounts the client side. It never touches the Host
+   * session, so a running turn keeps running (spec §2, Further Notes 4) — the
+   * interrupt route belongs to closing a pane, not to deleting a registration.
+   */
+  function releaseOrphanedPanes() {
+    for (const [paneId, held] of [...refs]) {
+      if (book.locatePane(paneId) !== null) continue
+      releaseHeld(held)
+      refs.delete(paneId)
+    }
+  }
+
+  /**
    * Make the retained references match every loaded layout and return the first
    * failure (or null). Panes of hidden workspaces stay retained under
    * `hkcraftPane` only.
@@ -531,6 +548,26 @@ function createPaneController(ctx, options = {}) {
 
   function refreshProbe() {
     emit({ probe: probeConversationContent(slots) })
+  }
+
+  /**
+   * The host's workspace ids in display order. Used to pick the neighbour a
+   * deleted workspace hands the view to, and as the fallback when the caller
+   * did not capture the order before deleting.
+   *
+   * @returns {string[]}
+   */
+  function hostWorkspaceOrder() {
+    try {
+      const items = workspacesFace()?.list?.getSnapshot?.()?.items
+      return Array.isArray(items)
+        ? items
+            .map((item) => item?.workspaceId)
+            .filter((workspaceId) => typeof workspaceId === 'string' && workspaceId !== '')
+        : []
+    } catch {
+      return []
+    }
   }
 
   /**
@@ -1002,6 +1039,91 @@ function createPaneController(ctx, options = {}) {
     return apply(next, first.workspaceId)
   }
 
+  /**
+   * The workspace that inherits the view when `deletedId` goes away: the next
+   * one in host order, else the previous one, else none.
+   *
+   * @param {string} deletedId
+   * @param {string[]} order host display order, captured *before* the delete
+   * @returns {string|null}
+   */
+  function neighbourWorkspaceId(deletedId, order) {
+    const index = order.indexOf(deletedId)
+    if (index !== -1) {
+      for (let i = index + 1; i < order.length; i += 1) {
+        if (order[i] !== deletedId) return order[i]
+      }
+      for (let i = index - 1; i >= 0; i -= 1) {
+        if (order[i] !== deletedId) return order[i]
+      }
+      return null
+    }
+    // No order reached us (older shell, or the catalog already dropped the row):
+    // fall back to the remaining loaded workspaces, in load order.
+    const loaded = book.workspaceIds().filter((workspaceId) => workspaceId !== deletedId)
+    return loaded.length === 0 ? null : loaded[0]
+  }
+
+  /**
+   * Forget a deleted workspace (ticket 03, spec §2).
+   *
+   * The adapter calls this only after the public `workspaces.delete(id)` has
+   * resolved, so the registration is already gone. Here the local state follows:
+   * - the workspace's layout is dropped and its persisted key removed, so the
+   *   "enabled" inference cannot resurrect a ghost workspace;
+   * - its panes' client references are released, unmounting them without ever
+   *   interrupting the Host sessions (a running turn keeps running);
+   * - if it was the visible workspace, the view moves to the next host-order
+   *   workspace, else the previous one, else the empty no-workspace state;
+   * - a new snapshot is published so the sidebar and the panes update together.
+   *
+   * An id that is neither loaded nor in the host order is a no-op, so a stale
+   * click cannot clear somebody else's layout.
+   *
+   * @param {string} workspaceId
+   * @param {{order?: string[]}} [options] host order captured before the delete
+   * @returns {boolean} whether a known workspace was forgotten
+   */
+  function forgetWorkspaceValue(workspaceId, options = {}) {
+    if (disposed) return false
+    if (typeof workspaceId !== 'string' || workspaceId === '') return false
+    const order = Array.isArray(options?.order)
+      ? options.order.filter((item) => typeof item === 'string' && item !== '')
+      : hostWorkspaceOrder()
+    const wasLoaded = book.hasWorkspace(workspaceId)
+    if (!wasLoaded && !order.includes(workspaceId)) return false
+
+    const wasActive = book.getActiveWorkspaceId() === workspaceId
+    const target = wasActive ? neighbourWorkspaceId(workspaceId, order) : null
+
+    book.forget(workspaceId)
+    releaseOrphanedPanes()
+
+    if (wasActive) {
+      // While the pane panel is showing, the neighbour has to be loaded before
+      // the reconcile can retain its panes and take the single mainView. While it
+      // is hidden, no reference exists; remembering the id is enough, and the
+      // next activation restores the layout from its key.
+      book.setActiveWorkspace(
+        target !== null && snapshot.active ? (ensureWorkspace(target) ? target : null) : target,
+      )
+    }
+
+    let failure = null
+    if (snapshot.active) {
+      const reconciled = reconcileAll(book.allLayouts())
+      failure = reconciled.failure
+    }
+    emit({
+      ...statePatch(snapshot.active),
+      error: failure,
+      pendingClose: null,
+      closeBusy: false,
+      closeError: null,
+    })
+    return true
+  }
+
   return {
     getSnapshot: () => snapshot,
     subscribe(listener) {
@@ -1144,6 +1266,19 @@ function createPaneController(ctx, options = {}) {
      */
     switchWorkspace(workspaceId) {
       return switchWorkspaceValue(workspaceId)
+    },
+    /**
+     * Forget a workspace whose registration was just deleted (ticket 03).
+     * Drops its layout, clears its persisted key, releases its pane references
+     * (without interrupting the Host sessions) and moves a visible workspace to
+     * its host-order neighbour. `options.order` is the pre-delete host order.
+     *
+     * @param {string} workspaceId
+     * @param {{order?: string[]}} [options]
+     * @returns {boolean}
+     */
+    forgetWorkspace(workspaceId, options) {
+      return forgetWorkspaceValue(workspaceId, options)
     },
     /**
      * Re-select the plugin panel without changing any layout. The sidebar calls

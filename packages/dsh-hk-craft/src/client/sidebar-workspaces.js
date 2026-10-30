@@ -2,7 +2,8 @@
 
 /**
  * The sidebar workspace section: one four-state status light plus one name per
- * workspace, and the one "Add workspace" entry (spec §1, tickets 01/02).
+ * workspace, the inline delete entry and the one "Add workspace" entry
+ * (spec §1/§7, tickets 01/02/03).
  *
  * This component is deliberately dumb. It receives plain rows from
  * `dsh-workspaces.js` and renders them; nothing here knows what a dsh workspace
@@ -12,10 +13,11 @@
  * changes.
  *
  * A row is a container holding the primary select button (light + name) and a
- * sibling inline action slot, which ticket 01 reserves empty for the delete
- * entry. The row container is also the pointer target for drag reordering:
- * pressing in the action slot never starts a drag, so a row action keeps its
- * own click.
+ * sibling inline action slot, which holds the delete entry. The slot is a
+ * sibling — never a child — of the select button, so the two controls stay real
+ * buttons instead of nesting (ticket 01). The row container is also the pointer
+ * target for drag reordering: pressing in the action slot never starts a drag,
+ * so a row action keeps its own click (ticket 04).
  *
  * Written with `React.createElement` and a lazy `require('react')` for the same
  * reason as `diagnostics.js`: the repository links client modules itself and the
@@ -23,7 +25,8 @@
  */
 
 const { createTranslator, react } = require('./diagnostics.js')
-const { sectionModel } = require('./dsh-workspaces.js')
+const { sectionModel, workspaceRunningCount } = require('./dsh-workspaces.js')
+const { WorkspaceDeleteDialog } = require('./workspace-delete-dialog.js')
 const { absentHook, messageOf } = require('./shared.js')
 const { LIGHT_COLORS } = require('./status-colors.js')
 const { displayWorkspaceName } = require('./workspace-status.js')
@@ -58,6 +61,9 @@ function usePaneSnapshot(React, panes) {
     noSnapshot,
   )
 }
+
+/** Focus-restoration sentinel for the "Add workspace" entry (not a workspace id). */
+const ADD_FOCUS = '\u0000add'
 
 /** The insertion line's colour: the shell's business accent, themed per palette. */
 const DROP_LINE_COLOR = 'var(--dsw-alias-state-business-primary, Highlight)'
@@ -197,6 +203,20 @@ const iconButtonStyle = {
   cursor: 'pointer',
 }
 
+/**
+ * The delete entry lives inside the reserved action slot. It keeps its own
+ * width so rows with and without the action stay aligned, and its own spacing
+ * so it never touches the workspace name or the row edge.
+ */
+const deleteEntryStyle = {
+  ...iconButtonStyle,
+  width: 20,
+  height: 20,
+  marginRight: 6,
+  fontSize: 14,
+  transition: 'opacity 120ms ease',
+}
+
 const railStyle = {
   display: 'flex',
   justifyContent: 'center',
@@ -268,6 +288,7 @@ function workspaceRowAt(clientX, clientY) {
  *   },
  *   openWorkspace?: (workspaceId: string) => void,
  *   addWorkspace?: () => Promise<void>,
+ *   deleteWorkspace?: (workspaceId: string) => Promise<void>,
  *   reorderWorkspace?: (workspaceId: string, beforeWorkspaceId?: string) => Promise<void>,
  *   t?: (key: string) => string,
  * }} props
@@ -289,6 +310,12 @@ function WorkspaceSection(props) {
   const [busy, setBusy] = React.useState(false)
   const [failure, setFailure] = React.useState(null)
   const [hovered, setHovered] = React.useState(null)
+  const [focusedRow, setFocusedRow] = React.useState(null)
+  const [pendingDelete, setPendingDelete] = React.useState(null)
+  const [deleteBusy, setDeleteBusy] = React.useState(false)
+  const [deleteError, setDeleteError] = React.useState(null)
+  const [focusTarget, setFocusTarget] = React.useState(null)
+  const focusTargets = React.useRef({})
   const [drag, setDrag] = React.useState(null)
   const [reordering, setReordering] = React.useState(false)
   /** The in-flight press; `drag` state above only drives the visible feedback. */
@@ -316,6 +343,68 @@ function WorkspaceSection(props) {
         setBusy(false)
       })
   }
+
+  /**
+   * Open the confirmation. The name and the running count are captured now, so
+   * the dialog keeps reading the truth even if the host snapshot changes while it
+   * is open; the focus fallback is the next row, else the previous one, else the
+   * add entry (spec §2, user story 25).
+   */
+  const openDelete = (row) => {
+    const index = rows.findIndex((candidate) => candidate.workspaceId === row.workspaceId)
+    const neighbour =
+      index === -1 ? null : (rows[index + 1]?.workspaceId ?? rows[index - 1]?.workspaceId ?? null)
+    setPendingDelete({
+      workspaceId: row.workspaceId,
+      name: displayWorkspaceName(row.title, defaultName),
+      runningCount: workspaceRunningCount(workspaces, sessions, statuses, row.workspaceId),
+      focusFallback: neighbour,
+    })
+    setDeleteBusy(false)
+    setDeleteError(null)
+  }
+
+  /** Submit the delete; the dialog stays open (with the reason) on a rejection. */
+  const confirmDelete = () => {
+    if (pendingDelete === null || deleteBusy) return
+    const target = pendingDelete
+    setDeleteBusy(true)
+    setDeleteError(null)
+    Promise.resolve()
+      .then(() => props?.deleteWorkspace?.(target.workspaceId))
+      .then(() => {
+        setPendingDelete(null)
+        setDeleteBusy(false)
+        setFocusTarget(target.focusFallback ?? ADD_FOCUS)
+      })
+      .catch((reason) => {
+        setDeleteBusy(false)
+        setDeleteError(messageOf(reason))
+      })
+  }
+
+  /** Dismiss without writing and put the focus back on the row that owned it. */
+  const cancelDelete = () => {
+    if (pendingDelete === null || deleteBusy) return
+    setFocusTarget(pendingDelete.workspaceId)
+    setPendingDelete(null)
+    setDeleteError(null)
+  }
+
+  // Focus restoration waits for the post-delete rows, so a host that publishes
+  // the new order asynchronously still lands on the right control. If the
+  // preferred row is gone, fall back to the add entry instead of dropping focus.
+  React.useEffect(() => {
+    if (focusTarget === null) return
+    const node =
+      focusTarget === ADD_FOCUS ? focusTargets.current.add : focusTargets.current[focusTarget]
+    if (node === undefined && focusTarget !== ADD_FOCUS) {
+      setFocusTarget(ADD_FOCUS)
+      return
+    }
+    setFocusTarget(null)
+    if (node !== null && node !== undefined && typeof node.focus === 'function') node.focus()
+  }, [focusTarget, rows])
 
   const clearDrag = () => {
     dragRef.current = null
@@ -435,6 +524,9 @@ function WorkspaceSection(props) {
     'button',
     {
       type: 'button',
+      ref: (node) => {
+        focusTargets.current.add = node
+      },
       onClick: add,
       disabled: busy,
       title: t('workspace.add'),
@@ -457,6 +549,9 @@ function WorkspaceSection(props) {
     const name = displayWorkspaceName(row.title, defaultName)
     const lightLabel = t(`workspace.light.${row.light}`)
     const highlighted = row.current || hovered === row.workspaceId
+    // Visible on row hover or while focus is anywhere inside the row, but always
+    // present in the DOM so a screen reader can find the delete entry.
+    const actionShown = hovered === row.workspaceId || focusedRow === row.workspaceId
     const source = drag !== null && drag.sourceId === row.workspaceId
     const dropSide = drag !== null && drag.targetId === row.workspaceId ? drag.side : null
     return h(
@@ -468,6 +563,14 @@ function WorkspaceSection(props) {
         title: t('workspace.dragHint'),
         onMouseEnter: () => setHovered(row.workspaceId),
         onMouseLeave: () => setHovered(null),
+        onFocus: () => setFocusedRow(row.workspaceId),
+        onBlur: (event) => {
+          const next = event?.relatedTarget
+          if (next !== null && next !== undefined && event?.currentTarget?.contains?.(next) === true) {
+            return
+          }
+          setFocusedRow(null)
+        },
         onPointerDown: onRowPointerDown(row),
         onPointerMove: onRowPointerMove,
         onPointerUp: onRowPointerUp,
@@ -493,6 +596,9 @@ function WorkspaceSection(props) {
         'button',
         {
           type: 'button',
+          ref: (node) => {
+            focusTargets.current[row.workspaceId] = node
+          },
           'aria-current': row.current ? 'true' : undefined,
           'aria-label': `${name} — ${lightLabel}`,
           title: `${name} — ${lightLabel}`,
@@ -508,9 +614,32 @@ function WorkspaceSection(props) {
         }),
         h('span', { style: nameStyle }, name),
       ),
-      // Empty until ticket 03 fills it; the marker is the stable handle for
-      // row gestures that must not start on a row action.
-      h('span', { 'data-hkcraft-workspace-action': '', style: actionSlotStyle }),
+      // Sibling of the select button: a real delete button, never nested. The
+      // stable marker is the handle row gestures use to ignore a press that
+      // belongs to a row action (ticket 04).
+      h(
+        'span',
+        { 'data-hkcraft-workspace-action': '', style: actionSlotStyle },
+        h(
+          'button',
+          {
+            type: 'button',
+            'data-hkcraft-workspace-delete': row.workspaceId,
+            'aria-label': `${t('workspace.delete')}: ${name}`,
+            title: `${t('workspace.delete')}: ${name}`,
+            onClick: (event) => {
+              event?.stopPropagation?.()
+              openDelete(row)
+            },
+            style: {
+              ...deleteEntryStyle,
+              opacity: actionShown ? 1 : 0,
+              pointerEvents: actionShown ? 'auto' : 'none',
+            },
+          },
+          '×',
+        ),
+      ),
     )
   })
 
@@ -519,12 +648,26 @@ function WorkspaceSection(props) {
       ? null
       : h('div', { role: 'alert', style: errorStyle }, `${t(failure.key)} — ${failure.message}`)
 
+  const deleteDialog =
+    pendingDelete === null
+      ? null
+      : h(WorkspaceDeleteDialog, {
+          workspaceId: pendingDelete.workspaceId,
+          workspaceName: pendingDelete.name,
+          runningCount: pendingDelete.runningCount,
+          busy: deleteBusy,
+          error: deleteError,
+          onCancel: cancelDelete,
+          onConfirm: confirmDelete,
+        })
+
   if (!wide) {
     return h(
       'div',
       { style: rootStyle, 'data-hkcraft': 'workspaces' },
       h('div', { style: railStyle }, addButton),
       errorLine,
+      deleteDialog,
     )
   }
 
@@ -534,6 +677,7 @@ function WorkspaceSection(props) {
     { style: rootStyle, 'data-hkcraft': 'workspaces', role: 'group', 'aria-label': t('workspace.section') },
     h('div', { style: listStyle }, [...list, addButton]),
     errorLine,
+    deleteDialog,
   )
 }
 
