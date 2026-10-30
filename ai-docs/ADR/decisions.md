@@ -51,7 +51,7 @@
 
 **决策**：
 
-- 当前目标运行时为 `@deepseek-ai/dsh@0.2.0-rc.2`（本机已安装 CLI），记录在 `deps/VERSIONS.md`。
+- 目标运行时以 `desktop` profile 实际加载的 dsh 为准（Desktop 应用内置，当前 `0.2.1-rc.5`），记录在 `deps/VERSIONS.md`；全局 `dsh` CLI 与它可能不是同一列车，不能拿 CLI 的版本判断 `desktop`。
 - bundle 用 `engines.dsh` 声明兼容范围；需要 `@deepseek-ai/dsh*` 类型或运行期包时，peer 依赖与 devDependency 使用同一列车版本。
 - 升级 dsh 时同步更新版本表、`engines.dsh`、peer 依赖，并重跑安装/启动/卸载冒烟。
 

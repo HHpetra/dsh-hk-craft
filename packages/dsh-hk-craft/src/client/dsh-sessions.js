@@ -5,7 +5,8 @@
  *
  * Components and command handlers only ever see the plain rows this module
  * returns; if one of the assumed shapes changes upstream, this is the only file
- * that needs to change. Verified against dsh 0.2.0-rc.2; the durable record is
+ * that needs to change. Verified against the 0.2.0-rc.2 bundles; the pinned
+ * train is 0.2.1-rc.5 (`deps/VERSIONS.md`), and the durable record is
  * `doc/upstream-contracts.md`:
  *
  * - `sessions.list` snapshot shape (`ids`, `byId`, `phase`), the per-row

@@ -14,7 +14,8 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 | :--- | :--- | :--- |
 | Node.js | `^22.19.0 \|\| >=24.0.0` | 根 `package.json` `engines.node` |
 | pnpm | `12.5.1` | 由 `packageManager` 钉死；拒绝 npm/yarn |
-| `@deepseek-ai/dsh` | `0.2.0-rc.2` | 当前机器上安装的 CLI；本插件作为其 profile bundle 安装 |
+| `@deepseek-ai/dsh`（Desktop 运行时） | `0.2.1-rc.5` | `desktop` profile 实际加载的运行时；本插件作为其 profile bundle 安装 |
+| 全局 `dsh` CLI | `0.2.0-rc.2`（本机） | 只用于非 `desktop` 试验 profile；与上一行不是同一列车 |
 | dsh profile | `desktop` | 默认安装目标；沿用其 home、端口与 Web UI |
 
 版本真源见 [`deps/VERSIONS.md`](deps/VERSIONS.md)。
@@ -35,6 +36,8 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 ```powershell
 dsh plugin --profile craft-smoke add ./packages/dsh-hk-craft
 ```
+
+注意 `dsh` 指向的是全局 npm CLI，不一定和 Desktop 内置运行时同一列车（本机 CLI 为 `0.2.0-rc.2`，Desktop 为 `0.2.1-rc.5`）。CLI 版本不满足 `engines.dsh` 时先按同一列车升级，这条冒烟才成立；`desktop` 的安装与冒烟不受影响。
 
 开发命令：
 

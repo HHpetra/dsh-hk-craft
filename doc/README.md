@@ -7,7 +7,7 @@
 本项目没有自己的运行时。插件由**用户已安装的 dsh** 装载，默认 profile 为 `desktop`：
 
 ```text
-用户现有 dsh (0.2.0-rc.2)
+用户现有 dsh（Desktop 内置运行时 0.2.1-rc.5）
   └─ profile desktop
        ├─ bundle: @deepseek-ai/dsh-base
        ├─ bundle: @deepseek-ai/dsh-web-app

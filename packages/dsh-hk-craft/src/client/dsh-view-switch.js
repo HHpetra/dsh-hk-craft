@@ -3,8 +3,9 @@
 /**
  * The one place this plugin touches dsh's conversation View API.
  *
- * Verified against dsh 0.2.0-rc.2 (durable record:
- * `doc/upstream-contracts.md#conversation-view-switch`):
+ * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
+ * (`deps/VERSIONS.md`). Durable record:
+ * `doc/upstream-contracts.md#conversation-view-switch`.
  *
  * - `uiConversation.binding(sessionId)` resolves the stable per-session binding
  *   and throws for an unknown or inactive session.

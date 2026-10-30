@@ -156,6 +156,39 @@ test('pane phase follows the native Conversation phase derivation', () => {
   )
 })
 
+test('a pane derives the live phase without ui-conversation own hook', () => {
+  // A pane gets the Session standard props only; `conversation` is
+  // ui-conversation's private hook. Treating its absence as "no Session" made
+  // every pane read as blank and therefore as the Factory's `hero` (or
+  // `settling`) state, whose composer stack is not the pinned seat.
+  assert.deepEqual(
+    derivePanePhase({
+      sessionId: 's1',
+      session: { blank: false, awaitingFirstTurn: false, running: false, openState: 'open' },
+      summaryBlank: false,
+    }),
+    { phase: 'active', hero: false },
+  )
+
+  assert.deepEqual(
+    derivePanePhase({
+      sessionId: 's1',
+      session: { blank: true, awaitingFirstTurn: false, running: false, promptAttempted: false, openState: 'open' },
+      summaryBlank: true,
+    }),
+    { phase: 'hero', hero: true },
+  )
+
+  assert.deepEqual(
+    derivePanePhase({
+      sessionId: 's1',
+      session: { blank: true, awaitingFirstTurn: false, running: false, openState: 'loading' },
+      summaryBlank: false,
+    }),
+    { phase: 'settling', hero: false },
+  )
+})
+
 /** Minimal `ctx` for the controller: sessions, layout, slots and workspaces. */
 function fakeControllerCtx({
   rows = {},

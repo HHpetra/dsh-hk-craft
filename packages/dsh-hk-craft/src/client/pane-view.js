@@ -79,6 +79,21 @@ const {
 
 let reactModule = null
 
+/**
+ * The `conversation.content` occurrence a pane mounts.
+ *
+ * ui-conversation ships two occurrences of that Factory. The `main` one is
+ * rendered inside `main.conversation`, whose `.root[data-phase]` element pins
+ * the composer (`position: sticky; bottom: 0`), centres the hero and lets the
+ * transcript own the scrollport. The `embedded` one is the supported non-root
+ * occurrence: the same rules hang off its own `[data-content-phase]` body
+ * (`ConversationRoot.module.css` in `@deepseek-ai/dsh-client-ui-conversation`
+ * 0.2.1-rc.5). A pane has no `.root`, so `main` left the composer seat in normal
+ * flow at the end of the transcript — the split view showed the messages and no
+ * input box.
+ */
+const PANE_CONTENT_OCCURRENCE = 'embedded'
+
 /** @returns {any} the platform React instance */
 function react() {
   if (reactModule === null) reactModule = require('react')
@@ -1197,7 +1212,7 @@ function createPaneBody(controller) {
       },
       props.renderFactorySlot(
         CONTENT_FACTORY,
-        { variant: 'main', phase, hero },
+        { variant: PANE_CONTENT_OCCURRENCE, phase, hero },
         { fallback: missing() },
       ),
     )
@@ -1227,6 +1242,7 @@ function createPaneToggle(controller) {
 }
 
 module.exports = {
+  PANE_CONTENT_OCCURRENCE,
   PaneFrame,
   PaneSeparator,
   PaneEmptyState,

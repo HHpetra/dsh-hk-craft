@@ -2,13 +2,20 @@
 
 | 依赖 | 版本 | 获取方式 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `@deepseek-ai/dsh` | `0.2.0-rc.2` | 用户已安装的全局 CLI | 插件目标运行时；不 vendor 到本仓库 |
+| `@deepseek-ai/dsh`（Desktop 运行时） | `0.2.1-rc.5` | Desktop 应用内置（`resources/app.asar`） | **插件目标运行时**：`desktop` profile 实际加载的列车 |
+| 全局 `dsh` CLI | `0.2.0-rc.2`（本机） | `%APPDATA%\npm`（npm 全局安装） | 只用于非 `desktop` 试验 profile；与上一行**不是同一列车**，不要混用 |
 | Node.js | `^22.19.0 \|\| >=24.0.0` | 系统 / nvm | 见根 `engines`；本机验证版本 24.18.1 |
 | pnpm | `12.5.1` | `packageManager` | 拒绝 npm/yarn |
 | dsh profile | `desktop` | 用户 `$DSH_HOME/profiles/desktop` | 默认安装目标；不新建产品 profile |
 | esbuild | `0.28.2` | 包 devDependency | 产出 `lib/client.js`；仅构建期使用，运行期零依赖 |
 
-当前 `engines.dsh` 为 `>=0.2.0-rc.2 <0.3.0`。SemVer 不会自动接纳更高补丁位的预发布版（例如 `0.2.1-rc.1`）；dsh 升到新的预发布列车时，必须按下面的步骤显式更新范围。
+`desktop` 的 dsh 版本只能看 Desktop 应用自带的运行时：读
+`<安装目录>/resources/app.asar` 中 `dsh/node_modules/@deepseek-ai/dsh/package.json`
+的 `version`（或启动后看 dsh 的“关于/诊断”）。**`dsh --version` 回答的是全局 CLI
+的版本，不是 `desktop` 的版本**；本机两者相差一个列车（CLI `0.2.0-rc.2`、
+Desktop `0.2.1-rc.5`），所以不能拿 CLI 的版本判断 `desktop` profile 跑的是什么。
+
+当前 `engines.dsh` 为 `>=0.2.1-rc.5 <0.3.0`，跟随 Desktop 运行时。SemVer 不会自动接纳更高补丁位的预发布版（例如 `0.2.2-rc.1`）；dsh 升到新的预发布列车时，必须按下面的步骤显式更新范围。若要用 CLI 跑 `craft-smoke` 等试验 profile，先把全局 CLI 升到同一列车（例如 `npm i -g @deepseek-ai/dsh@0.2.1-rc.5`），否则它不满足 `engines.dsh`。
 
 ## 升级 dsh 列车
 

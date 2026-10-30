@@ -2,8 +2,9 @@
 
 /**
  * Every dsh assumption this plugin makes about mounting a Session into the
- * central `main` area is recorded in `doc/upstream-contracts.md` (verified
- * against dsh 0.2.0-rc.2). The parts relevant here:
+ * central `main` area is recorded in `doc/upstream-contracts.md` (read against
+ * the 0.2.0-rc.2 bundles; the `conversation.content` occurrence contract was
+ * re-checked on the pinned 0.2.1-rc.5 train). The parts relevant here:
  *
  * - `main` is a keyed root slot; the frame renders `activePanelId ??
  *   "conversation"`, so selecting a different key unmounts the native
@@ -88,14 +89,21 @@ function probeConversationContent(slots) {
  * the same props the official main panel passes to `conversation.content`
  * (`doc/upstream-contracts.md#sessionprovider-and-conversationcontent`).
  *
+ * `conversation` is optional: it is ui-conversation's own standard hook and a
+ * pane is not one of its children, so the pane only has the Session summary.
+ * A missing `conversation` must therefore mean "no active targets", not "no
+ * Session" — treating it as a blank Session made every pane render the
+ * Factory's `hero`/`settling` state instead of the live conversation (the
+ * composer moved into the hero stack and lost its pinned seat).
+ *
  * @param {{ sessionId?: string, session?: any, conversation?: any, summaryBlank?: boolean }} input
  * @returns {{ phase: 'blank'|'engaging'|'active'|'settling'|'hero', hero: boolean }}
  */
 function derivePanePhase({ sessionId, session, conversation, summaryBlank }) {
   const shellPhase =
-    session === undefined || conversation === undefined
+    session === undefined
       ? 'blank'
-      : conversation.activeTargets?.size > 0 ||
+      : conversation?.activeTargets?.size > 0 ||
           (!session.blank && !session.awaitingFirstTurn) ||
           session.running
         ? 'active'

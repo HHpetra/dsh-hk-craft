@@ -6,8 +6,14 @@ a checkout or a temporary extraction directory, because `.scratch/` is a
 short-lived working area (`AGENTS.md` §3.2) and upstream line numbers drift
 between releases.
 
-**Verified version:** `@deepseek-ai/dsh` **0.2.0-rc.2** — the train pinned in
-`deps/VERSIONS.md` and `packages/dsh-hk-craft/package.json` (`engines.dsh`).
+**Verified version:** `@deepseek-ai/dsh` **0.2.1-rc.5** — the train pinned in
+`deps/VERSIONS.md` and `packages/dsh-hk-craft/package.json` (`engines.dsh`), and
+the runtime shipped with the installed Desktop application
+(`resources/app.asar` → `dsh/node_modules/@deepseek-ai/dsh*`).
+The items below were originally read in the 0.2.0-rc.2 bundles. The
+conversation-occurrence and phase rules were re-read in 0.2.1-rc.5 (that is the
+delta the composer regression came from); the remaining items still carry their
+0.2.0-rc.2 reading and need the manual smoke pass on this train.
 
 **Verification method:** read-only inspection of the unpacked client plugin
 bundles shipped with that version (`@deepseek-ai/dsh-client-ui-*` and
@@ -60,9 +66,33 @@ The official Conversation mounts its body through
 real conversation UI (composer, streaming, tool calls) for a chosen session
 without forking or copying it and without a second React tree.
 
+**Occurrence: a pane must pass `variant: "embedded"`.** The Factory is rendered
+by two kinds of caller and the caller has to say which one it is. `main`
+assumes it sits inside `main.conversation`, whose `.root[data-phase]` element
+owns the phase-scoped rules that pin the composer (`position: sticky;
+bottom: 0`), centre the hero and hand the scrollport to the transcript.
+`embedded` is the supported non-root occurrence: the same rules hang off the
+body's own `[data-content-phase]`, the content column is derived from the
+occurrence width, and the main header and width handles are omitted. A pane has
+no `.root`, so `main` leaves the composer seat in normal flow at the end of the
+scrolling transcript: the pane shows the messages and no input box
+(`ConversationRoot.module.css` in `@deepseek-ai/dsh-client-ui-conversation`
+0.2.1-rc.5).
+
+**Phase: `hero` must be false for a live Session.** `phase`/`hero` are supplied
+by the caller, not derived by the Factory. The native derivation ORs
+`conversation.activeTargets` with the Session summary, but a pane only receives
+the Session standard props — `conversation` is ui-conversation's own hook and
+is absent — so its absence must mean "no active targets", not "no Session".
+Reading it as blank selects the Factory's `hero` (or `settling`) state, whose
+composer stack is not the pinned conversation seat.
+
 **Verified:** factory name, props and the ownership rule were read in the
 renderer and ui-conversation bundles; `slots.snapshot("factory:<name>")` was
-used as a feature probe. Runtime probe: split into two panes and drive both.
+used as a feature probe. The two occurrences and their phase-scoped CSS were
+read in 0.2.1-rc.5. Runtime probe: split into two panes, open a live Session in
+one, and confirm its composer stays pinned at the pane bottom while the
+transcript scrolls behind it.
 
 ---
 

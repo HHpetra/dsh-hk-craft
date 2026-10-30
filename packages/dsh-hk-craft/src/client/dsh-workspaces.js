@@ -7,7 +7,8 @@
  * a one-file fix. The component (`sidebar-workspaces.js`) consumes only the
  * plain rows and callbacks this module produces.
  *
- * Verified against dsh 0.2.0-rc.2. The durable contract record lives in
+ * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
+ * (`deps/VERSIONS.md`). The durable contract record lives in
  * `doc/upstream-contracts.md`; this module is the one place that adapts it:
  *
  * - The slot: `sidebar.workspaces` is a `single` root slot rendered by the
