@@ -23,15 +23,52 @@ const {
 } = require('./dsh-sessions.js')
 
 /**
+ * Whether the plugin's pane workspace is currently showing. When it is, both
+ * commands stay inside it instead of calling the shell's session navigation,
+ * which would reset the active panel.
+ *
+ * @param {object} [panes] pane host face
+ * @returns {boolean}
+ */
+function panePanelActive(panes) {
+  try {
+    return panes?.active?.() === true
+  } catch (_error) {
+    return false
+  }
+}
+
+/**
+ * The focused pane, or null when there is no pane host or no pane is focused.
+ *
+ * @param {object} [panes] pane host face
+ * @returns {object|null}
+ */
+function focusedPane(panes) {
+  try {
+    return panes?.focused?.() ?? null
+  } catch (_error) {
+    return null
+  }
+}
+
+/**
  * Build the `/clear` contribution.
+ *
+ * When the pane workspace is showing, the new conversation must land in the
+ * focused pane. The pane host creates it through `sessions.create`, because the
+ * native `uiWorkspace.startSession` path reveals the session with
+ * `replaceMain(..., "reveal")` → `selectPanel(null)`, which would dismiss the
+ * split layout (ui-workspace:1500-1530, 1652-1676; see `dsh-pane-host.js`).
  *
  * @param {object} deps
  * @param {(key: string, params?: Record<string, unknown>) => string} deps.t translator
  * @param {(sessionId: string|undefined) => string|undefined} deps.workspaceIdFor workspace lookup
  * @param {(workspaceId: string|undefined) => void} deps.start new-conversation action
+ * @param {object} [deps.panes] pane host face (optional: commands work without panes)
  * @returns {object} command contribution
  */
-function buildClearCommand({ t, workspaceIdFor, start }) {
+function buildClearCommand({ t, workspaceIdFor, start, panes }) {
   return {
     name: 'clear',
     label: () => t('command.clear.label'),
@@ -40,7 +77,17 @@ function buildClearCommand({ t, workspaceIdFor, start }) {
     ui: {
       kind: 'action',
       run: (session) => {
-        start(workspaceIdFor(session?.sessionId))
+        const workspaceId = workspaceIdFor(session?.sessionId)
+        if (panePanelActive(panes)) {
+          const attempt = panes.newConversation(workspaceId)
+          // The pane host owns its own error state; never let a rejected
+          // creation escape as an unhandled rejection.
+          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+            attempt.catch(() => {})
+          }
+          return
+        }
+        start(workspaceId)
       },
     },
   }
@@ -59,9 +106,10 @@ function buildClearCommand({ t, workspaceIdFor, start }) {
  * @param {(triggerSessionId: string, signal?: AbortSignal) => Promise<object[]>} deps.conversations raw list loader
  * @param {(sessionId: string) => void} deps.open reveal action
  * @param {() => number} deps.now clock used for the age label
+ * @param {object} [deps.panes] pane host face (optional: commands work without panes)
  * @returns {object} command contribution
  */
-function buildResumeCommand({ t, workspaceIdFor, conversations, open, now }) {
+function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes }) {
   return {
     name: 'resume',
     label: () => t('command.resume.label'),
@@ -84,6 +132,13 @@ function buildResumeCommand({ t, workspaceIdFor, conversations, open, now }) {
         })
       },
       onSelect: async (option) => {
+        // Pane-aware `/resume`: with a focused pane the conversation replaces
+        // that pane's content; the tree, the focus and the panel stay put. The
+        // shell-level reveal would otherwise call selectPanel(null).
+        if (focusedPane(panes) !== null) {
+          panes.replaceFocused(option.sessionId)
+          return
+        }
         open(option.sessionId)
       },
     },
@@ -103,10 +158,11 @@ function buildResumeCommand({ t, workspaceIdFor, conversations, open, now }) {
  * @param {(triggerSessionId: string, signal?: AbortSignal) => Promise<object[]>} [services.conversationsFor] list loader override
  * @param {(sessionId: string) => void} [services.openConversation] reveal override
  * @param {(workspaceId: string|undefined) => void} [services.startConversation] new-conversation override
+ * @param {object} [services.panes] pane host face; when present the commands act on the pane workspace
  * @returns {(() => void)[]} registration disposers
  */
 function registerCommands(services) {
-  const { commandUi, workspaces, t } = services
+  const { commandUi, workspaces, t, panes } = services
   const now = services.now ?? (() => Date.now())
   const workspaceIdFor = (sessionId) => workspaceIdOf(workspaces?.list?.getSnapshot?.(), sessionId)
   const conversations =
@@ -117,9 +173,9 @@ function registerCommands(services) {
   const start = services.startConversation ?? ((workspaceId) => startConversation(services.uiWorkspace, workspaceId))
 
   return [
-    commandUi.register(buildClearCommand({ t, workspaceIdFor, start })),
+    commandUi.register(buildClearCommand({ t, workspaceIdFor, start, panes })),
     commandUi.register(
-      buildResumeCommand({ t, workspaceIdFor, conversations, open, now }),
+      buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes }),
     ),
   ]
 }

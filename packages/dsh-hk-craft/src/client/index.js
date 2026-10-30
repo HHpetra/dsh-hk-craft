@@ -65,6 +65,19 @@ function apply(ctx) {
   const PaneBody = createPaneBody(controller)
   const PaneToggle = createPaneToggle(controller)
 
+  /**
+   * The pane face the slash commands see (ticket 05): enough to keep `/resume`
+   * and `/clear` inside the split workspace instead of calling the native
+   * session navigation, which resets the active panel. `split` is deliberately
+   * absent — Ctrl+Enter opening a new pane is ticket 06.
+   */
+  const paneCommands = {
+    active: () => controller.getSnapshot().active,
+    focused: () => controller.focusedPane(),
+    replaceFocused: (sessionId) => controller.replaceFocusedSession(sessionId),
+    newConversation: (workspaceId) => controller.newInFocused(workspaceId),
+  }
+
   ctx.slots.inject('sidebar.footer.action', () =>
     ctx.slots.register(
       {
@@ -131,6 +144,7 @@ function apply(ctx) {
         sessions: scope.get('sessions'),
         workspaces: scope.get('workspaces'),
         uiWorkspace: scope.get('uiWorkspace'),
+        panes: paneCommands,
         t,
       })
       return () => {

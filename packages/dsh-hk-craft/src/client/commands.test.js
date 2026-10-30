@@ -185,3 +185,70 @@ test('registerCommands never talks to the model', () => {
   assert.equal('execute' in resume.ui, false)
   assert.equal('run' in resume.ui, false)
 })
+
+// ---------------------------------------------------------------------------
+// Pane-aware handoff (ticket 05, extending ticket 03's commands)
+// ---------------------------------------------------------------------------
+
+/** A stand-in for the pane host face the commands call. */
+function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' } } = {}) {
+  const calls = { replaced: [], newConversation: [] }
+  return {
+    calls,
+    active: () => active,
+    focused: () => focused,
+    replaceFocused: (sessionId) => {
+      calls.replaced.push(sessionId)
+      return true
+    },
+    newConversation: (workspaceId) => {
+      calls.newConversation.push(workspaceId)
+      return Promise.resolve(true)
+    },
+  }
+}
+
+test('/clear puts a new conversation in the focused pane instead of closing the split view', () => {
+  const panes = fakePanes()
+  const h = harness({ panes })
+  command(h, 'clear').ui.run({ sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.newConversation, ['w1'])
+  assert.deepEqual(h.calls.started, [])
+})
+
+test('/clear still uses the native path when the pane workspace is not showing', () => {
+  const panes = fakePanes({ active: false })
+  const h = harness({ panes })
+  command(h, 'clear').ui.run({ sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.newConversation, [])
+  assert.deepEqual(h.calls.started, ['w1'])
+})
+
+test('/resume replaces the focused pane session rather than navigating the shell', async () => {
+  const panes = fakePanes()
+  const h = harness({ panes })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.replaced, ['s2'])
+  assert.deepEqual(h.calls.opened, [])
+})
+
+test('/resume uses the native reveal when no pane is focused', async () => {
+  const panes = fakePanes({ active: false, focused: null })
+  const h = harness({ panes })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(h.calls.opened, ['s2'])
+})
+
+test('/resume uses the native reveal when the pane workspace is showing but empty', async () => {
+  const panes = fakePanes({ active: true, focused: null })
+  const h = harness({ panes })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(h.calls.opened, ['s2'])
+})
