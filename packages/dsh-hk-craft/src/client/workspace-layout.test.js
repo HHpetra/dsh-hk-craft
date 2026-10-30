@@ -544,3 +544,84 @@ test('switching to an unknown workspace id is refused', () => {
   assert.equal(controller.getSnapshot().workspaceId, null)
   controller.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// "Enabled" (ticket 02): ever opened in split
+// ---------------------------------------------------------------------------
+
+test('a workspace nobody opened in split is not enabled', () => {
+  const { controller } = readyController({ storage: memoryStorage() })
+
+  assert.equal(controller.isWorkspaceEnabled('w1'), false)
+  assert.equal(controller.isWorkspaceEnabled('w2'), false)
+  assert.equal(controller.isWorkspaceEnabled(''), false)
+  assert.equal(controller.isWorkspaceEnabled(undefined), false)
+  assert.equal(controller.isWorkspaceEnabled(null), false)
+  controller.dispose()
+})
+
+test('opening a workspace in the pane view enables it and notifies the sidebar', () => {
+  const storage = memoryStorage()
+  const { controller } = readyController({ storage })
+  const seen = []
+  const unsubscribe = controller.subscribe(() => seen.push(controller.isWorkspaceEnabled('w1')))
+
+  assert.equal(controller.activate('s1'), true)
+
+  assert.equal(controller.isWorkspaceEnabled('w1'), true)
+  assert.ok(seen.length > 0, 'the sidebar is notified so the light changes without a reload')
+  assert.equal(seen[seen.length - 1], true, 'the last notification already sees the workspace enabled')
+  assert.equal(controller.isWorkspaceEnabled('w2'), false, 'other workspaces are untouched')
+  assert.notEqual(storage.raw('w1'), null, 'the first split write is what proves enablement')
+  unsubscribe()
+  controller.dispose()
+})
+
+test('switching to a workspace in split enables it even before a pane is opened', () => {
+  const storage = memoryStorage()
+  const { controller } = readyController({ storage })
+
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.isWorkspaceEnabled('w2'), true)
+  assert.notEqual(storage.raw('w2'), null)
+  controller.dispose()
+})
+
+test('a persisted layout key keeps a workspace enabled after a restart', () => {
+  const layouts = twoWorkspaces()
+  const storage = memoryStorage(layouts)
+  const { controller } = readyController({ storage })
+
+  // Nothing is loaded in this fresh controller yet; the key alone is the proof.
+  assert.equal(controller.isWorkspaceEnabled('w1'), true)
+  assert.equal(controller.isWorkspaceEnabled('w2'), true)
+  assert.equal(controller.isWorkspaceEnabled('w3'), false)
+  controller.dispose()
+})
+
+test('a corrupt persisted key still counts as a workspace that was opened in split', () => {
+  const storage = memoryStorage()
+  storage.setItem(layoutKey('w1'), '{not json')
+  const { controller } = readyController({ storage })
+
+  assert.equal(controller.isWorkspaceEnabled('w1'), true)
+  controller.dispose()
+})
+
+test('a broken storage backend never makes the enablement check throw', () => {
+  const throwing = {
+    getItem() {
+      throw new Error('storage disabled')
+    },
+    setItem() {
+      throw new Error('quota exceeded')
+    },
+  }
+  const { controller } = readyController({ storage: throwing, paneIds: ['p1'] })
+
+  assert.equal(controller.isWorkspaceEnabled('w2'), false)
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.isWorkspaceEnabled('w1'), true, 'a loaded layout is enough')
+  controller.dispose()
+})

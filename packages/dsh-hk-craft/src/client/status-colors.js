@@ -7,6 +7,10 @@
  * aggregate vs. one conversation), but they share the same three colour roles,
  * so the literal fills live here once. Token-backed entries follow the shell's
  * palette and fall back to the literal on a shell without the token.
+ *
+ * The sidebar's fourth state, gray, is a deliberately neutral fill that does not
+ * follow the theme's accent: it means "not enabled / no conversation finished",
+ * not "disabled by the shell" (spec §1, §10).
  */
 
 const {
@@ -15,11 +19,12 @@ const {
   STRIP_STATUS_IDLE,
 } = require('./pane-strip.js')
 
-/** Dot fills for the sidebar workspace lights (red > yellow > green). */
+/** Dot fills for the sidebar workspace lights (red > yellow > green > gray). */
 const LIGHT_COLORS = Object.freeze({
   red: '#e5484d',
   yellow: '#d9a400',
   green: '#30a46c',
+  gray: '#8b8d98',
 })
 
 /** Dot fills per strip status; running/waiting follow the shell's tokens. */

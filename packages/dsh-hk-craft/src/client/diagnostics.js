@@ -12,12 +12,19 @@
 
 const { dictionaries } = require('./locale.js')
 
-let reactModule = null
-
-/** @returns {any} the platform React instance */
+/**
+ * The platform React instance, resolved lazily and on every call.
+ *
+ * `require` itself caches the module in the shell, so repeated calls are cheap.
+ * Not memoizing in this file matters for the Node tests: the runner shares one
+ * module registry (`--test-isolation=none`) and each test file installs its own
+ * React stand-in through `Module._load`; a memoized instance would pin whichever
+ * stand-in happened to be installed first.
+ *
+ * @returns {any} the platform React instance
+ */
 function react() {
-  if (reactModule === null) reactModule = require('react')
-  return reactModule
+  return require('react')
 }
 
 /**
