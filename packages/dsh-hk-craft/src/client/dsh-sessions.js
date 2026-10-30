@@ -162,26 +162,16 @@ async function firstPromptOf(sessions, sessionId, signal, options = {}) {
 }
 
 /**
- * Build the raw conversation list for `/resume`: the triggering session's
- * workspace, in catalog order, with first prompts filled in for the handful of
- * titleless conversations that need the fallback.
+ * Fill the first-prompt fallback for the titleless, non-blank, non-archived
+ * rows of a list. Shared by `/resume` and the pane empty state so both lists
+ * read the same durable data through the same bounded lookup.
  *
- * @param {{sessions: object, workspaces: object}} services client services
- * @param {string} triggerSessionId session the command was invoked from
+ * @param {object} sessions ClientSessions service
+ * @param {object[]} rows conversation rows, mutated in place
  * @param {{signal?: AbortSignal, promptLookups?: number, promptPages?: number}} [options]
- * @returns {Promise<object[]>} plain conversation rows
+ * @returns {Promise<void>}
  */
-async function listConversations(services, triggerSessionId, options = {}) {
-  const sessions = services?.sessions
-  const workspaces = services?.workspaces
-  const sessionsSnapshot = sessions?.list?.getSnapshot?.()
-  const workspacesSnapshot = workspaces?.list?.getSnapshot?.()
-  if (sessionsSnapshot === undefined || workspacesSnapshot === undefined) return []
-
-  const workspaceId = workspaceIdOf(workspacesSnapshot, triggerSessionId)
-  if (workspaceId === undefined) return []
-
-  const rows = conversationsOf({ sessions: sessionsSnapshot, workspaces: workspacesSnapshot, workspaceId })
+async function fillFirstPrompts(sessions, rows, options = {}) {
   const lookupLimit = Number.isInteger(options.promptLookups) ? options.promptLookups : MAX_PROMPT_LOOKUPS
   const pending = rows
     .filter((row) => row.blank !== true && row.archived !== true && normalizeText(row.title) === '')
@@ -194,7 +184,48 @@ async function listConversations(services, triggerSessionId, options = {}) {
       })
     }),
   )
+}
+
+/**
+ * Build one workspace's raw conversation list without needing a triggering
+ * session. This is the empty state's data source (ticket 10): it reuses the
+ * exact `/resume` projection (`conversationsOf`) and prompt fallback
+ * (`fillFirstPrompts`) instead of inventing a second list.
+ *
+ * @param {{sessions: object, workspaces: object}} services client services
+ * @param {string} workspaceId workspace to project
+ * @param {{signal?: AbortSignal, promptLookups?: number, promptPages?: number}} [options]
+ * @returns {Promise<object[]>} plain conversation rows
+ */
+async function listWorkspaceConversations(services, workspaceId, options = {}) {
+  if (typeof workspaceId !== 'string' || workspaceId === '') return []
+  const sessions = services?.sessions
+  const workspaces = services?.workspaces
+  const sessionsSnapshot = sessions?.list?.getSnapshot?.()
+  const workspacesSnapshot = workspaces?.list?.getSnapshot?.()
+  if (sessionsSnapshot === undefined || workspacesSnapshot === undefined) return []
+
+  const rows = conversationsOf({ sessions: sessionsSnapshot, workspaces: workspacesSnapshot, workspaceId })
+  await fillFirstPrompts(sessions, rows, options)
   return rows
+}
+
+/**
+ * Build the raw conversation list for `/resume`: the triggering session's
+ * workspace, in catalog order, with first prompts filled in for the handful of
+ * titleless conversations that need the fallback.
+ *
+ * @param {{sessions: object, workspaces: object}} services client services
+ * @param {string} triggerSessionId session the command was invoked from
+ * @param {{signal?: AbortSignal, promptLookups?: number, promptPages?: number}} [options]
+ * @returns {Promise<object[]>} plain conversation rows
+ */
+async function listConversations(services, triggerSessionId, options = {}) {
+  const workspacesSnapshot = services?.workspaces?.list?.getSnapshot?.()
+  if (workspacesSnapshot === undefined) return []
+  const workspaceId = workspaceIdOf(workspacesSnapshot, triggerSessionId)
+  if (workspaceId === undefined) return []
+  return listWorkspaceConversations(services, workspaceId, options)
 }
 
 /**
@@ -229,6 +260,8 @@ module.exports = {
   conversationsOf,
   firstUserPromptOf,
   firstPromptOf,
+  fillFirstPrompts,
+  listWorkspaceConversations,
   listConversations,
   openConversation,
   startConversation,

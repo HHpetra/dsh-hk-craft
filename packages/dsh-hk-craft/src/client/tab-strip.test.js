@@ -167,6 +167,29 @@ test('an empty layout has no tabs', () => {
   assert.deepEqual(projectTabs({ root: null, panes: {}, activePaneId: null }, {}, undefined, 'Untitled'), [])
 })
 
+test('a status change never reorders tabs or moves their shortcut numbers', () => {
+  const idle = projectTabs(fixtureLayout(), fixtureSessions(), undefined, 'Untitled')
+  const busy = projectTabs(fixtureLayout(), fixtureSessions(), fixtureStatuses(), 'Untitled')
+
+  assert.deepEqual(
+    busy.map((tab) => [tab.paneId, tab.sessionId, tab.index, tab.shortcut]),
+    idle.map((tab) => [tab.paneId, tab.sessionId, tab.index, tab.shortcut]),
+  )
+  // Only the dot kind changed; titles and focus are untouched.
+  assert.deepEqual(
+    busy.map((tab) => tab.status),
+    ['running', 'waiting', 'idle'],
+  )
+  assert.deepEqual(
+    idle.map((tab) => tab.status),
+    ['idle', 'idle', 'idle'],
+  )
+  assert.deepEqual(
+    busy.map((tab) => [tab.title, tab.focused]),
+    idle.map((tab) => [tab.title, tab.focused]),
+  )
+})
+
 test('Ctrl+1..4 map to the Nth tab; other chords are ignored', () => {
   assert.equal(tabShortcutIndex({ key: '1', ctrlKey: true }), 1)
   assert.equal(tabShortcutIndex({ key: '4', ctrlKey: true }), 4)

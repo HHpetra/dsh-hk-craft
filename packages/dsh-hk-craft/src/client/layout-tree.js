@@ -402,6 +402,36 @@ function replaceSession(layout, paneId, sessionId) {
 }
 
 /**
+ * Swap the contents of two panes (spec §4.2 `swap`, ticket 10).
+ *
+ * A pane's identity is its leaf and its `paneId`; its content is the session
+ * plus the remembered view. Dropping one tab on another therefore moves both
+ * records between the same two leaf positions: the tree, every ratio, the
+ * focus and the rendered element keys stay untouched, only what each pane
+ * shows changes. Same-pane and unknown-pane requests are no-ops that return
+ * the input object, so a caller can skip a render/persist cycle.
+ *
+ * @param {object} layout
+ * @param {string} a
+ * @param {string} b
+ * @returns {object}
+ */
+function swap(layout, a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a === b) return layout
+  const first = layout.panes[a]
+  const second = layout.panes[b]
+  if (first === undefined || second === undefined) return layout
+  return {
+    ...layout,
+    panes: {
+      ...layout.panes,
+      [a]: { ...second, paneId: a },
+      [b]: { ...first, paneId: b },
+    },
+  }
+}
+
+/**
  * Remember which conversation view a pane shows (ticket 07 drives this; the
  * state lives here so it is per pane and persists with the layout).
  *
@@ -511,6 +541,7 @@ module.exports = {
   normalizeLayout,
   replaceSession,
   setView,
+  swap,
   paneOfSession,
   renamePanes,
 }

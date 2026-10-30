@@ -1119,3 +1119,130 @@ test('Ctrl+Enter on a conversation already open focuses its pane instead of dupl
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
   controller.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// Dragging a tab onto another tab swaps the pane contents (ticket 10)
+// ---------------------------------------------------------------------------
+
+test('swapping two panes exchanges sessions and views, keeping the tree and the focus', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  assert.equal(controller.setView('p1', 'trajectory'), true)
+  const rootBefore = controller.getSnapshot().root
+
+  assert.equal(controller.swapPanes('p1', 'p2'), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.panes.p1, { paneId: 'p1', sessionId: 's2', view: 'chat' })
+  assert.deepEqual(state.panes.p2, { paneId: 'p2', sessionId: 's1', view: 'trajectory' })
+  // Pane ids, leaf positions, ratios and focus are untouched; only contents move.
+  assert.equal(state.root, rootBefore)
+  assert.equal(state.activePaneId, 'p2')
+  assert.equal(state.sessionId, 's1')
+  assert.equal(state.workspaceId, 'w1')
+  // dsh's derived "current session" follows the focused pane's new content.
+  assert.equal(liveMainView(fake).length, 1)
+  assert.equal(liveMainView(fake)[0].sessionId, 's1')
+  assert.equal(livePaneRefs(fake).length, 2)
+  controller.dispose()
+})
+
+test('a swap acquires both pane references before releasing either session', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+
+  // Record every retain/release from now on, including the releases of the
+  // references the split created above.
+  const events = []
+  const observe = (reference) => {
+    const release = reference.release.bind(reference)
+    reference.release = () => {
+      events.push(`release:${reference.sessionId}:${reference.options.source}`)
+      release()
+    }
+    return reference
+  }
+  for (const reference of fake.references) observe(reference)
+  const retain = fake.ctx.sessions.retain
+  fake.ctx.sessions.retain = (sessionId, options) => {
+    events.push(`retain:${sessionId}:${options.source}`)
+    return observe(retain(sessionId, options))
+  }
+
+  assert.equal(controller.swapPanes('p1', 'p2'), true)
+
+  // A session must never hit a zero retain count between its old and new pane:
+  // releasing first would tear down dsh's client generation and lose the
+  // scroll position / composer draft the split view exists to preserve.
+  assert.ok(events.indexOf('retain:s2:hkcraftPane') < events.indexOf('release:s1:hkcraftPane'))
+  assert.ok(events.indexOf('retain:s1:hkcraftPane') < events.indexOf('release:s2:hkcraftPane'))
+  assert.equal(livePaneRefs(fake).length, 2)
+  assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+test('swapping a pane with itself or an unknown pane is a no-op', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  const before = controller.getSnapshot()
+  const retains = fake.calls.retain.length
+
+  assert.equal(controller.swapPanes('p1', 'p1'), false)
+  assert.equal(controller.swapPanes('p1', 'missing'), false)
+  assert.equal(controller.swapPanes('missing', 'p1'), false)
+
+  assert.equal(controller.getSnapshot(), before)
+  assert.equal(fake.calls.retain.length, retains)
+  controller.dispose()
+})
+
+test('swapping panes of two different workspaces is refused', async () => {
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: TWO_WORKSPACES,
+    created: ['s3'],
+  })
+  const ids = ['p1', 'p2']
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
+  controller.markRegistered()
+  controller.activate('s1')
+  assert.equal(await controller.newInFocused('w2'), true)
+  assert.deepEqual(Object.keys(controller.getSnapshot().layouts).sort(), ['w1', 'w2'])
+
+  const before = controller.getSnapshot()
+  assert.equal(controller.swapPanes('p1', 'p2'), false)
+
+  assert.equal(controller.getSnapshot(), before)
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Empty-state recent conversations (ticket 10)
+// ---------------------------------------------------------------------------
+
+test('recentConversations projects the current workspace through the /resume data path', async () => {
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: WORKSPACE,
+    rows: {
+      s1: { id: 's1', title: 'Alpha', updatedAt: 2 },
+      s2: { id: 's2', title: 'Beta', updatedAt: 1 },
+    },
+  })
+  const controller = createPaneController(fake.ctx)
+  controller.markRegistered()
+
+  const rows = await controller.recentConversations('w1')
+  assert.deepEqual(
+    rows.map((row) => [row.sessionId, row.title, row.workspaceId]),
+    [
+      ['s1', 'Alpha', 'w1'],
+      ['s2', 'Beta', 'w1'],
+    ],
+  )
+  // No explicit workspace: the empty state has no focused pane, so the same
+  // first-catalog-workspace fallback the new-conversation button uses applies.
+  assert.deepEqual(await controller.recentConversations(), rows)
+  assert.deepEqual(await controller.recentConversations('missing'), [])
+  controller.dispose()
+})
