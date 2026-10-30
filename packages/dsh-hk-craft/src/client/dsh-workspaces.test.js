@@ -9,7 +9,12 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { sectionModel, createSectionActions, workspaceRunningCount } = require('./dsh-workspaces.js')
+const {
+  sectionModel,
+  createSectionActions,
+  nativeConversationId,
+  workspaceRunningCount,
+} = require('./dsh-workspaces.js')
 
 /**
  * A client context with the two services the section touches.
@@ -19,6 +24,7 @@ const { sectionModel, createSectionActions, workspaceRunningCount } = require('.
 function fakeCtx(options = {}) {
   const calls = {
     startSession: [],
+    openSession: [],
     create: [],
     pickDirectory: 0,
     delete: [],
@@ -28,6 +34,9 @@ function fakeCtx(options = {}) {
   const uiWorkspace = {
     startSession(workspaceId, opts) {
       calls.startSession.push([workspaceId, opts])
+    },
+    openSession(sessionId) {
+      calls.openSession.push(sessionId)
     },
     async pickDirectory() {
       calls.pickDirectory += 1
@@ -53,15 +62,22 @@ function fakeCtx(options = {}) {
       if (options.reorderError !== undefined) throw options.reorderError
     },
     list: {
-      getSnapshot: () => ({ phase: 'ready', items, archivedSessionIds: [] }),
+      getSnapshot: () => ({
+        phase: options.workspacesPhase ?? 'ready',
+        items,
+        archivedSessionIds: options.archivedSessionIds ?? [],
+      }),
     },
   }
+  const sessions =
+    options.sessionsList === undefined ? undefined : { list: { getSnapshot: () => options.sessionsList } }
   return {
     calls,
     ctx: {
       get(name) {
         if (name === 'uiWorkspace') return uiWorkspace
         if (name === 'workspaces') return workspaces
+        if (name === 'sessions') return sessions
         return undefined
       },
     },
@@ -314,17 +330,134 @@ test('in pane mode a workspace click switches the pane layout instead of reveali
   actions.openWorkspace('w2')
 
   assert.deepEqual(paneCalls.switchWorkspace, ['w2'])
+  assert.deepEqual(calls.openSession, [])
   assert.deepEqual(calls.startSession, [])
 })
 
-test('outside pane mode the native workspace reveal is unchanged', () => {
+test('outside pane mode a workspace with no conversation still starts its blank session', () => {
   const { ctx, calls } = fakeCtx()
   const { panes } = fakePanes({ active: false })
   const actions = createSectionActions(ctx, { panes })
 
   actions.openWorkspace('w2')
 
+  assert.deepEqual(calls.openSession, [])
   assert.deepEqual(calls.startSession, [['w2', { clearPreviousDraft: false }]])
+})
+
+test('outside pane mode a workspace click reveals its latest conversation', () => {
+  const { ctx, calls } = fakeCtx({
+    workspaces: [
+      { workspaceId: 'w1', sessionIds: ['shown'] },
+      { workspaceId: 'w2', sessionIds: ['older', 'newer', 'blank'] },
+    ],
+    sessionsList: {
+      phase: 'ready',
+      byId: {
+        shown: { id: 'shown', blank: false, updatedAt: 1, retainedBy: { mainView: 1 } },
+        older: { id: 'older', blank: false, updatedAt: 10, retainedBy: {} },
+        newer: { id: 'newer', blank: false, updatedAt: 20, retainedBy: {} },
+        blank: { id: 'blank', blank: true, updatedAt: 99, retainedBy: {} },
+      },
+    },
+  })
+  const { panes } = fakePanes({ active: false })
+  const actions = createSectionActions(ctx, { panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.openSession, ['newer'])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('outside pane mode a click keeps the conversation already showing in that workspace', () => {
+  const { ctx, calls } = fakeCtx({
+    workspaces: [{ workspaceId: 'w2', sessionIds: ['older', 'shown'] }],
+    sessionsList: {
+      phase: 'ready',
+      byId: {
+        older: { id: 'older', blank: false, updatedAt: 50, retainedBy: {} },
+        shown: { id: 'shown', blank: false, updatedAt: 10, retainedBy: { mainView: 1 } },
+      },
+    },
+  })
+  const actions = createSectionActions(ctx, { panes: fakePanes({ active: false }).panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.openSession, ['shown'])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('outside pane mode a blank on screen does not hide the workspace conversation', () => {
+  const { ctx, calls } = fakeCtx({
+    workspaces: [{ workspaceId: 'w2', sessionIds: ['draft', 'talk'] }],
+    sessionsList: {
+      phase: 'ready',
+      byId: {
+        draft: { id: 'draft', blank: true, updatedAt: 5, retainedBy: { mainView: 1 } },
+        talk: { id: 'talk', blank: false, updatedAt: 1, retainedBy: {} },
+      },
+    },
+  })
+  const actions = createSectionActions(ctx, { panes: fakePanes({ active: false }).panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.openSession, ['talk'])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('outside pane mode an archived conversation is not revealed', () => {
+  const { ctx, calls } = fakeCtx({
+    workspaces: [{ workspaceId: 'w2', sessionIds: ['gone', 'blank'] }],
+    archivedSessionIds: ['gone'],
+    sessionsList: {
+      phase: 'ready',
+      byId: {
+        gone: { id: 'gone', blank: false, updatedAt: 40, retainedBy: {} },
+        blank: { id: 'blank', blank: true, updatedAt: 1, retainedBy: {} },
+      },
+    },
+  })
+  const actions = createSectionActions(ctx, { panes: fakePanes({ active: false }).panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.openSession, [])
+  assert.deepEqual(calls.startSession, [['w2', { clearPreviousDraft: false }]])
+})
+
+test('outside pane mode a loading session catalog still starts the blank session', () => {
+  const { ctx, calls } = fakeCtx({
+    workspaces: [{ workspaceId: 'w2', sessionIds: ['s1'] }],
+    sessionsList: { phase: 'loading', byId: { s1: { id: 's1', blank: false, updatedAt: 1 } } },
+  })
+  const actions = createSectionActions(ctx, { panes: fakePanes({ active: false }).panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.openSession, [])
+  assert.deepEqual(calls.startSession, [['w2', { clearPreviousDraft: false }]])
+})
+
+test('nativeConversationId ignores a conversation that belongs to another workspace', () => {
+  const sessionId = nativeConversationId(
+    {
+      phase: 'ready',
+      items: [{ workspaceId: 'w2', sessionIds: ['blank'] }],
+      archivedSessionIds: [],
+    },
+    {
+      phase: 'ready',
+      byId: {
+        elsewhere: { id: 'elsewhere', blank: false, updatedAt: 9, retainedBy: { mainView: 1 } },
+        blank: { id: 'blank', blank: true, updatedAt: 1, retainedBy: {} },
+      },
+    },
+    'w2',
+  )
+  assert.equal(sessionId, undefined)
 })
 
 test('a workspace the pane layout cannot show falls back to the native reveal', () => {
@@ -334,7 +467,25 @@ test('a workspace the pane layout cannot show falls back to the native reveal', 
 
   actions.openWorkspace('w2')
 
+  assert.deepEqual(calls.openSession, [])
   assert.deepEqual(calls.startSession, [['w2', { clearPreviousDraft: false }]])
+})
+
+test('a refused pane switch still reveals the workspace conversation', () => {
+  const { ctx, calls } = fakeCtx({
+    workspaces: [{ workspaceId: 'w2', sessionIds: ['s9'] }],
+    sessionsList: {
+      phase: 'ready',
+      byId: { s9: { id: 's9', blank: false, updatedAt: 3, retainedBy: {} } },
+    },
+  })
+  const { panes } = fakePanes({ switched: false })
+  const actions = createSectionActions(ctx, { panes })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.openSession, ['s9'])
+  assert.deepEqual(calls.startSession, [])
 })
 
 test('a workspace added in pane mode is selected without a native reveal', async () => {

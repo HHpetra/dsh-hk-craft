@@ -17,10 +17,14 @@
  *   is ui-workspace's `WorkspaceBrowser`, registered with no `priority`, i.e.
  *   0; the slot core sorts entries ascending by `priority ?? 0` and renders the
  *   first, so a negative priority shadows it.
- * - Switching workspaces: `uiWorkspace.startSession(workspaceId, {
- *   clearPreviousDraft: false })` reuses the workspace's blank session or
- *   creates one and makes it the main view — the same call the shipped picker
- *   makes after adding (`doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`).
+ * - Switching workspaces outside the pane view: reveal an existing conversation
+ *   with `uiWorkspace.openSession(sessionId)`. `startSession` only connects a
+ *   blank, so a sidebar that no longer lists conversations cannot land on the
+ *   one the workspace already has. The blank path
+ *   (`startSession(workspaceId, { clearPreviousDraft: false })`) remains the
+ *   fallback when the workspace has no revealable conversation, and the path
+ *   the add flow uses for a workspace that was just created
+ *   (`doc/upstream-contracts.md#native-start-session-reveal`).
  * - Adding a workspace: dsh's own add flow picks a directory, calls
  *   `workspaces.create({ path })` and then selects the returned workspace. The
  *   picking half is either the Electron preload bridge
@@ -50,7 +54,7 @@
  * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
-const { projectWorkspaceSection, readStatus, sessionSignal } = require('./workspace-status.js')
+const { mainSessionId, projectWorkspaceSection, readStatus, sessionSignal } = require('./workspace-status.js')
 const { workspaceOrderOf } = require('./workspace-order.js')
 
 /**
@@ -178,18 +182,101 @@ async function pickDirectory(ctx) {
 }
 
 /**
+ * Read one client service's list snapshot, or `undefined` when the service is
+ * absent or the read throws. A missing catalog must not turn a workspace click
+ * into an exception; the caller falls back to the blank-session path.
+ *
+ * @param {any} ctx client Cordis context
+ * @param {string} name service name
+ * @returns {any}
+ */
+function readListSnapshot(ctx, name) {
+  try {
+    return ctx.get(name)?.list?.getSnapshot?.()
+  } catch (_error) {
+    return undefined
+  }
+}
+
+/**
+ * The conversation a native workspace click should reveal.
+ *
+ * Outside the pane view the sidebar has no conversation list, so the click is
+ * the only way to change which conversation is on screen. `startSession`
+ * always connects a blank and therefore cannot do that. This picks a member
+ * that has actually started:
+ *
+ * - the conversation already on screen, when it belongs to this workspace
+ *   (clicking the current workspace must not jump to a sibling);
+ * - otherwise the most recently updated non-blank member.
+ *
+ * Archived sessions are not openable. A blank is left for `startSession`,
+ * which is the call that reuses or creates one. `undefined` means there is
+ * nothing to reveal: the catalog is not ready, the workspace is unknown, or
+ * every member is blank or archived.
+ *
+ * @param {any} workspacesSnapshot `workspaces.list` snapshot
+ * @param {any} sessionsSnapshot `sessions.list` snapshot
+ * @param {string} workspaceId
+ * @returns {string|undefined}
+ */
+function nativeConversationId(workspacesSnapshot, sessionsSnapshot, workspaceId) {
+  if (typeof workspaceId !== 'string' || workspaceId === '') return undefined
+  if (workspacesSnapshot?.phase !== 'ready') return undefined
+  if (sessionsSnapshot == null) return undefined
+  if (sessionsSnapshot.phase !== undefined && sessionsSnapshot.phase !== 'ready') return undefined
+  const items = Array.isArray(workspacesSnapshot.items) ? workspacesSnapshot.items : []
+  const item = items.find((candidate) => candidate?.workspaceId === workspaceId)
+  if (item === undefined) return undefined
+  const memberIds = Array.isArray(item.sessionIds) ? item.sessionIds : []
+  const archived = new Set(workspacesSnapshot.archivedSessionIds ?? [])
+  const byId = sessionsSnapshot.byId ?? {}
+
+  /**
+   * A member that can be revealed: present, not archived, and not a blank.
+   *
+   * @param {unknown} sessionId
+   * @returns {boolean}
+   */
+  const revealable = (sessionId) => {
+    if (typeof sessionId !== 'string' || sessionId === '' || archived.has(sessionId)) return false
+    if (!memberIds.includes(sessionId)) return false
+    const summary = byId[sessionId]
+    if (summary === undefined || summary === null) return false
+    return summary.blank !== true
+  }
+
+  const current = mainSessionId(sessionsSnapshot)
+  if (revealable(current)) return current
+
+  let bestId
+  let bestTime = Number.NEGATIVE_INFINITY
+  for (const sessionId of memberIds) {
+    if (!revealable(sessionId)) continue
+    const updated = byId[sessionId].updatedAt
+    const time = typeof updated === 'number' && Number.isFinite(updated) ? updated : 0
+    if (time > bestTime) {
+      bestTime = time
+      bestId = sessionId
+    }
+  }
+  return bestId
+}
+
+/**
  * The section's behaviors, over public client services only.
  *
  * `options.panes` is the pane controller face. While the plugin
  * pane workspace is showing, clicking a workspace must not call the native
- * `startSession`: that path reveals the session through
- * `replaceMain(..., "reveal")`, which calls `selectPanel(null)` and dismisses
- * the pane workspace, unmounting every pane (the exact loss D5 forbids). In
- * pane mode the click only switches which workspace tree is visible; the
- * native reveal stays the behavior when the pane workspace is not showing, and
- * remains the fallback when the pane controller refuses the switch. Deleting is
- * the mirror image: the public registration goes first and the pane controller
- * cleans up locally afterwards.
+ * reveal: that path goes through `replaceMain(..., "reveal")`, which calls
+ * `selectPanel(null)` and dismisses the pane workspace, unmounting every pane
+ * (the exact loss D5 forbids). In pane mode the click only switches which
+ * workspace tree is visible. When the pane workspace is not showing, the click
+ * reveals that workspace's existing conversation; a workspace with nothing to
+ * reveal falls back to the native blank session, which is also the fallback
+ * when the pane controller refuses the switch. Deleting is the mirror image:
+ * the public registration goes first and the pane controller cleans up locally
+ * afterwards.
  *
  * @param {any} ctx client Cordis context (already injected with `uiWorkspace`
  *   and `workspaces` by the plugin entry)
@@ -199,14 +286,27 @@ function createSectionActions(ctx, options = {}) {
   const panes = options?.panes
 
   /**
-   * Switch to a workspace: show its pane tree when the pane workspace is
-   * active, otherwise start (or reuse) its blank session natively.
+   * Switch to a workspace.
+   *
+   * While the pane workspace is showing, show that workspace's pane tree.
+   * Otherwise reveal its existing conversation in the native view. A workspace
+   * with no revealable conversation starts (or reuses) its blank session —
+   * the same call the add flow needs for a workspace that has no history yet.
    *
    * @param {string} workspaceId
    */
   function openWorkspace(workspaceId) {
     if (panes?.active?.() === true && panes?.switchWorkspace?.(workspaceId) === true) return
-    return ctx.get('uiWorkspace').startSession(workspaceId, { clearPreviousDraft: false })
+    const uiWorkspace = ctx.get('uiWorkspace')
+    const sessionId = nativeConversationId(
+      readListSnapshot(ctx, 'workspaces'),
+      readListSnapshot(ctx, 'sessions'),
+      workspaceId,
+    )
+    if (sessionId !== undefined && typeof uiWorkspace?.openSession === 'function') {
+      return uiWorkspace.openSession(sessionId)
+    }
+    return uiWorkspace.startSession(workspaceId, { clearPreviousDraft: false })
   }
 
   return {
@@ -288,6 +388,7 @@ function createSectionActions(ctx, options = {}) {
 module.exports = {
   sectionModel,
   workspaceRunningCount,
+  nativeConversationId,
   createSectionActions,
   pickDirectory,
 }

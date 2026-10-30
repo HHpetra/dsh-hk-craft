@@ -210,7 +210,8 @@ function apply(ctx) {
   // The workspace section replaces a slot declared by ui-workspace and drives its
   // public service, so both services must exist before the entry is registered.
   // In pane mode the click switches the visible workspace tree instead of
-  // letting a native reveal dismiss the pane workspace. The same face
+  // letting a native reveal dismiss the pane workspace. Outside that mode the
+  // same click reveals the workspace's existing conversation. The same face
   // answers "was this workspace ever opened in split" and lets the row light
   // follow the controller snapshot, and it lets a deleted workspace
   // drop its local layout after the public delete.
