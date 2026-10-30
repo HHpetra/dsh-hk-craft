@@ -17,7 +17,7 @@ const { sectionModel, createSectionActions } = require('./dsh-workspaces.js')
  * @param {{ create?: (input: any) => Promise<any>, pickDirectory?: () => Promise<string> }} [options]
  */
 function fakeCtx(options = {}) {
-  const calls = { startSession: [], create: [], pickDirectory: 0 }
+  const calls = { startSession: [], create: [], pickDirectory: 0, insertBefore: [] }
   const uiWorkspace = {
     startSession(workspaceId, opts) {
       calls.startSession.push([workspaceId, opts])
@@ -32,6 +32,10 @@ function fakeCtx(options = {}) {
       calls.create.push(input)
       if (options.createError !== undefined) throw options.createError
       return { workspaceId: options.createdId ?? 'w-new', path: input.path, title: 'New' }
+    },
+    async insertBefore(workspaceId, beforeWorkspaceId) {
+      calls.insertBefore.push([workspaceId, beforeWorkspaceId])
+      if (options.reorderError !== undefined) throw options.reorderError
     },
   }
   return {
@@ -127,6 +131,38 @@ test('without the bridge the public workspace picker is used', async () => {
   } finally {
     if (previous !== undefined) globalThis.__DSH_DIRECTORY_PICKER__ = previous
   }
+})
+
+// ---------------------------------------------------------------------------
+// Reordering (ticket 04): the adapter forwards the anchor the drop math chose.
+// ---------------------------------------------------------------------------
+
+test('reordering moves the source before the chosen host anchor', async () => {
+  const { ctx, calls } = fakeCtx()
+  await createSectionActions(ctx).reorderWorkspace('b', 'a')
+  assert.deepEqual(calls.insertBefore, [['b', 'a']])
+  assert.deepEqual(calls.startSession, [], 'reordering must not open or switch a workspace')
+})
+
+test('reordering without an anchor appends to the end', async () => {
+  const { ctx, calls } = fakeCtx()
+  await createSectionActions(ctx).reorderWorkspace('b', undefined)
+  assert.deepEqual(calls.insertBefore, [['b', undefined]])
+})
+
+test('reordering in pane mode touches neither the pane tree nor the native view', async () => {
+  const { ctx, calls } = fakeCtx()
+  const { panes, calls: paneCalls } = fakePanes()
+  await createSectionActions(ctx, { panes }).reorderWorkspace('b', 'c')
+  assert.deepEqual(calls.insertBefore, [['b', 'c']])
+  assert.deepEqual(paneCalls.switchWorkspace, [], 'the current workspace must not change')
+  assert.deepEqual(calls.startSession, [], 'focus must not change')
+})
+
+test('a failed reorder rejects with the host error so the section can report it', async () => {
+  const failure = new Error('workspace reorder failed: workspace/not-found: missing')
+  const { ctx } = fakeCtx({ reorderError: failure })
+  await assert.rejects(createSectionActions(ctx).reorderWorkspace('b', 'a'), failure)
 })
 
 // ---------------------------------------------------------------------------
