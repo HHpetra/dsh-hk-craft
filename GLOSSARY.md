@@ -32,7 +32,7 @@ _Avoid_: 前端应用、第二套 UI。
 dsh 会话绑定的工作目录；本插件若涉及文件能力，以 dsh workspace 为准，不自建目录根。
 
 **能力（capability）**:
-本插件对 dsh 用户提供的具体功能。首个能力：**多会话分屏 + 侧栏精简**（见 `.scratch/pane-workspace/spec.md`）。
+本插件对 dsh 用户提供的具体功能。首个能力：**多会话分屏 + 侧栏精简**（决策见 [ADR-0005](ai-docs/ADR/decisions.md)，依赖的上游契约见 [doc/upstream-contracts.md](doc/upstream-contracts.md)）。
 
 **会话（session）**:
 一段持久的对话历史，有唯一 id，存在磁盘上；它的生命周期不取决于界面上看不看得见它。

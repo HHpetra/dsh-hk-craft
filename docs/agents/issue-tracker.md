@@ -12,7 +12,6 @@
 
 当前在用的 effort：
 
-- `.scratch/pane-workspace/`（多会话分屏 + 侧栏精简：`spec.md` 与 `issues/01`–`10`）
 - `.scratch/inception/`（`spec.md` 范围与边界、`roadmap.md` 里程碑与验收）
 
 ## 当 skill 说“发布到 issue 跟踪器”
