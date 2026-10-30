@@ -42,8 +42,9 @@ the plugin does not have to clean it up by hand.
 `selectPanel(null)` is the clean way back to native dsh.
 
 **Verified:** slot key fallback, `selectPanel` validation, and the
-unregistration reset were read in the ui-layout bundle. Runtime probe: toggle
-the footer action and confirm the native conversation unmounts.
+unregistration reset were read in the ui-layout bundle. Runtime probe: enter the
+split panes from the HK Craft settings page and confirm the native conversation
+unmounts.
 
 ---
 
@@ -390,6 +391,37 @@ failure and confirm the row snaps back while the error is shown.
 
 ---
 
+## Split panel hides the native right bar
+
+**Provider:** `@deepseek-ai/dsh-client-ui-sidebar-right` (the `rightbar` slot
+occupant and `ctx.sidebarRight`) and the layout service's `panelInfo`.
+
+**Semantics:** the shell frame always renders the `rightbar` slot for the main
+column, but the occupant decides what is visible. Its `RightbarRoot` treats the
+Session views as `visible` only while `panelInfo.activePanelId === null`, and
+the same effect publishes the on-screen Session to `ctx.sidebarRight` as
+`activePanelId === null ? selected?.sessionId : undefined`. With a plugin panel
+selected — the pane workspace — native dsh hides the right bar and the public
+face has no "current session" to act on. Its navigation calls (`openResource`,
+`openTab`) act on that on-screen Session, and there is no public "open this
+Session's right bar" call.
+
+**Why we rely on it:** the pane strip's pinned native-action group therefore
+ships no "open right sidebar" button in this version (spec §5): it could not
+open the native right bar for a split pane, and falling back to the native
+conversation would silently leave the split. The group is the reserved home for
+native header tools that can work inside a pane — the read-only mode badge
+(ticket 07) and the subagent viewer (ticket 08) — and any future native tool
+needs an explicit seat there.
+
+**Verified:** `RightbarRoot`'s `activePanelId === null` visibility and the
+`show(activePanelId === null ? selected?.sessionId : undefined)` sync were read
+in `dsh-client-ui-sidebar-right` 0.2.1-rc.5 (the installed Desktop bundle).
+Runtime probe: enter split view, confirm the native right bar is hidden and the
+strip offers no right-bar button.
+
+---
+
 ## `sidebar.workspaces` slot
 
 **Provider:** `@deepseek-ai/dsh-client-ui-workspace` and
@@ -408,6 +440,42 @@ not a fork.
 **Verified:** slot render, shipped registration and the priority sort were read
 in the sidebar and ui-workspace bundles. Runtime probe: install, confirm the
 section is slim and uninstall restores the native one.
+
+---
+
+## `settings.section` slot
+
+**Provider:** `@deepseek-ai/dsh-client-ui-settings-general` (the settings shell).
+
+**Semantics:** the shell declares `settings.section` as a `list` root slot and
+renders the active page with
+`renderSlot("settings.section", { close }, { only: active })`. A contribution
+registers `{ name, id, order, label, locale }` (plus optional
+`children` / `inject`) through `ctx.slots.inject` followed by
+`ctx.slots.register`; a list entry requires an `id`. The navigation projects
+every entry as `{ id, order, label }` and sorts by `order` ascending. The
+official top-level sections use `account -10` (when signed in), `general 0`,
+`models 10`, `plugins 15` and `agent-presets 20`, so a page that wants the end of
+the nav registers a larger order. `label` is a thunk resolved with
+`resolveSlotLabel` and re-read whenever the slot version or the locale revision
+changes, which is how a nav label follows a live language switch. The section
+component receives the standard slot props (including the `t` bound by its
+`locale`) plus `close`, the callback that dismisses the settings panel.
+
+**Why we rely on it:** the diagnostics panel and the native ⇄ pane switch used
+to be two `sidebar.footer.action` buttons; ticket 05 moves them into one
+dedicated HK Craft settings page. The page consumes only the slot's `t` / `close`
+and the pane controller closure, so it needs neither `configForms` nor a
+settings data namespace. Because the entry is registered inside
+`ctx.slots.inject`, a shell without the settings slot never runs the callback
+and the page simply stays absent.
+
+**Verified:** the root slot declaration, the ordered nav projection, the
+`{ close }` render props and the thunk refresh were read in the
+ui-settings-general bundle 0.2.1-rc.5; the account and agent-preset
+registrations were read in their own bundles. Runtime probe: open Settings,
+confirm the HK Craft row is last, the diagnostics match the shell, and entering
+split view from the page closes Settings and selects the pane panel.
 
 ---
 
