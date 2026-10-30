@@ -16,7 +16,7 @@
  * the platform module graph does not exist.
  */
 
-const { createTranslator } = require('./diagnostics.js')
+const { createTranslator } = require('./react-and-translator.js')
 const {
   CONTENT_FACTORY,
   PANE_SLOT,
@@ -628,18 +628,19 @@ function stripPaneIdAt(clientX, clientY) {
 }
 
 /**
- * The strip's pinned native-action group (ticket 06).
+ * The strip's pinned native-action group.
  *
  * Layout only: it renders the filled seats in `STRIP_SEAT_ORDER` and gives each
- * its width cap, so the two seats are independent — ticket 07 fills `mode`,
- * ticket 08 fills `subagents`, and neither edits this function or the strip
- * around it. The group sits outside the scrollport and never shrinks
- * (`stripActionsStyle`); an empty group takes no tab room.
+ * its width cap, so the two seats are independent. The group sits outside the
+ * scrollport and never shrinks (`stripActionsStyle`), but it carries no padding
+ * or gap itself: the wrapper is `display: contents` and each seat spreads the
+ * `seatStyle` box onto its own root, so a seat that renders null contributes no
+ * box and the group is 0px wide when both are empty.
  *
- * Each seat receives `seatContext`: the visible layout snapshot, the focused
- * strip entry (or null), the `sessions` / `sessionStatus` snapshots the strip
- * already subscribes to, the host kit and the translator. Nothing here reads
- * dsh data.
+ * Each seat receives the seat context plus `seatStyle`: the visible layout
+ * snapshot, the focused strip entry (or null), the `sessions` / `sessionStatus`
+ * snapshots the strip already subscribes to, the host kit, the translator and the
+ * seat box. Nothing here reads dsh data.
  *
  * @param {{ seats: Record<string, Function>|null|undefined, context: object }} props
  */
@@ -649,19 +650,19 @@ function PaneStripActions({ seats, context }) {
   const entries = stripSeatEntries(seats)
   return h(
     'div',
-    {
-      'data-hkcraft-strip-actions': '',
-      style: entries.length === 0 ? { ...stripActionsStyle, padding: 0 } : stripActionsStyle,
-    },
+    { 'data-hkcraft-strip-actions': '', style: stripActionsStyle },
     entries.map((entry) =>
       h(
         'div',
         {
           key: entry.key,
           'data-hkcraft-strip-seat': entry.key,
-          style: { ...stripSeatStyle, maxWidth: stripSeatMaxWidth(entry.key) ?? undefined },
+          style: { display: 'contents' },
         },
-        h(entry.component, context),
+        h(entry.component, {
+          ...context,
+          seatStyle: { ...stripSeatStyle, maxWidth: stripSeatMaxWidth(entry.key) ?? undefined },
+        }),
       ),
     ),
   )
@@ -669,7 +670,7 @@ function PaneStripActions({ seats, context }) {
 
 /**
  * The pane strip: the current workspace's open conversations, in `leaves()`
- * order, plus the pinned native-action group (ticket 06, spec §5).
+ * order, plus the pinned native-action group.
  *
  * Structure, outermost first: the bar; a horizontally scrolling viewport
  * holding the `tablist` and then `+` immediately after the last tab; and the
@@ -1113,9 +1114,9 @@ function workspaceGroups(state) {
  * authorized `renderSlot` for a session-scoped child because the registration
  * declares one non-root child.
  *
- * `options.seats` is the strip's native-action extension point (ticket 06):
- * `{ mode?: Component, subagents?: Component }` from `pane-toolbar.js`. Tickets
- * 07 (current mode) and 08 (subagent viewer) fill one seat each through this
+ * `options.seats` is the strip's native-action extension point:
+ * `{ mode?: Component, subagents?: Component }` from `pane-toolbar.js`. The
+ * current-mode badge and the subagent viewer fill one seat each through this
  * option; both are optional, so the strip works with no seats at all.
  *
  * @param {any} controller
@@ -1346,6 +1347,7 @@ module.exports = {
   PaneViewToggle,
   PaneCloseConfirm,
   PaneStrip,
+  PaneStripActions,
   paneViewOfSession,
   createPaneConversationViews,
   createPaneHost,

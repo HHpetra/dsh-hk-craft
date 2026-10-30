@@ -15,7 +15,7 @@
        └─ bundle: dsh-hk-craft        ← 本项目
             └─ cordis.patch.yml → insert row id/name = dsh-hk-craft
                  └─ host: src/index.js
-                 └─ client: lib/client.js（后续，经 dsh.client 声明）
+                 └─ client: lib/client.js（经 dsh.client 声明）
 ```
 
 dsh 的端口、`DSH_HOME`、会话存储与登录态都不归本项目管理。安装与卸载只改变 profile 的 bundle 依赖和 `dsh.profile.bundles`。
@@ -49,13 +49,39 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
 
 模板默认的 launcher + 产品 profile + 桌面壳会引入第二个启动入口、独立 home 与端口，和“完全在 dsh 中使用”冲突。ADR-0001 已明确取代该形态。需要新的宿主进程能力时，应优先使用 dsh 的插件服务与工具接口，而不是新建应用入口。
 
-## 5. 当前状态与待定
+## 5. 工作区状态与四态灯
 
-- 当前 host 行只做无副作用装载；没有业务服务、工具或 UI。
-- 数据流、配置 schema、客户端面板位置均待插件能力确定后补充。
-- 插件能力收口后，本节应增加“关键数据流”与“生命周期”两小节。
+这是**插件内部的 UI 定义**，不是上游契约；dsh 侧的布局键归属、`blank` 字段与会话汇总形状见
+[`upstream-contracts.md`](upstream-contracts.md)。
 
-## 6. 验证
+- **启用（工作区）**：该工作区在分屏里打开过。判据只有两条——窗格控制器里有已加载的布局，
+  或插件自己的布局键 `dsh.hkcraft.layout.v1.<workspaceId>` 存在。原生视图里打开工作区不算启用：
+  它走 `uiWorkspace.startSession`/`openSession`，从不经过窗格控制器，也不会写键。
+  删除工作区后插件清掉该键，避免重启后出现“幽灵”灰灯行。
+- **四态灯**：灰 = 未启用，或已启用但还没有对话真正结束（会话全是空白）；绿 = 至少一段对话结束
+  且当前空闲；黄 = 有会话运行中；红 = 有会话等你操作（审批 / 提问 / 计划确认）。
+  优先级红 > 黄 > 绿 > 灰。灰灯是“无法证明对话结束”的兜底，不是“最近没活动”；
+  会话列表未就绪（`phase` 不是 `ready`）时也全部按灰处理。
+- **计算位置**：`workspace-status.js` 只吃纯信号（`running` / `waiting` / `started`）与“启用集合”，
+  不读 dsh 记录；`dsh-workspaces.js` 把快照转成这些信号，侧栏与窗格控制器通过公开服务提供
+  “是否启用”。没有错误灯：dsh 没有可靠的“上一回合失败”字段。
+
+## 6. 当前状态
+
+插件已交付首个能力 **多会话分屏 + 侧栏精简**（ADR-0005/0006），并在其上补齐本轮管理功能（ADR-0007）：
+
+- **分屏**：`main` 键控槽接管主区域，每个窗格承载恰好一个会话；`+` 按会话数量均分横排。
+- **窗格条工具栏**：标签条左侧是标签与紧贴的 `+`；右侧是原生功能组，本版提供只读的**当前模式**
+  与**子代理查看**。右侧边栏按钮不做，因为上游在分屏面板激活时隐藏原生右侧栏
+  （[`upstream-contracts.md`](upstream-contracts.md#split-panel-hides-the-native-right-bar)）。
+- **侧栏工作区**：四态灯、行内删除（二次确认，不中断会话）、指针拖动排序（Host 持久化顺序），
+  以及“添加工作区”。
+- **HK Craft 设置页**：诊断信息内联展示，并提供临时的“进入 / 退出分屏”开关；侧栏 footer 不再
+  注入按钮。这两个开关是过渡入口，长期入口确定后会移走。
+- **兼容与降级**：新增的可选能力（Agent 预设名册、子代理目录、设置分区）在服务缺失时安静降级；
+  上游契约集中在 [`upstream-contracts.md`](upstream-contracts.md)，升级时按该清单复验。
+
+## 7. 验证
 
 ```powershell
 pnpm check     # manifest / patch / 入口一致性

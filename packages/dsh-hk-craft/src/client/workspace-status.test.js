@@ -165,7 +165,7 @@ const statuses = new Map([
   ['s2', { running: false, pendingInteraction: { kind: 'question' }, completionUnread: false }],
 ])
 
-/** Every workspace enabled: the pre-ticket shape used by the row tests. */
+/** Every workspace enabled: the shape the row tests use. */
 const ALL_ENABLED = new Set(['w1', 'w2', 'w3'])
 
 test('each workspace becomes one row with its id and stored title', () => {
@@ -382,6 +382,33 @@ test('an unready session list cannot prove a conversation finished, so it is all
   assert.deepEqual(
     rows.map((row) => row.light),
     [LIGHT_GRAY, LIGHT_GRAY, LIGHT_GRAY],
+  )
+})
+
+test('a loading or pending session list stays gray even while it retains rows', () => {
+  // A reload keeps the previous `byId` around; those rows prove nothing until the
+  // catalog says it is ready, so they must not light yellow/green/red.
+  for (const phase of ['loading', 'pending']) {
+    const rows = projectWorkspaceSection(
+      workspaces,
+      { phase, ids: sessionList.ids, byId: sessionList.byId },
+      statuses,
+      ALL_ENABLED,
+    )
+    assert.deepEqual(
+      rows.map((row) => row.light),
+      [LIGHT_GRAY, LIGHT_GRAY, LIGHT_GRAY],
+      `phase ${phase} must not light a workspace from retained rows`,
+    )
+  }
+})
+
+test('an absent session phase is treated as ready', () => {
+  const { phase: _phase, ...unphased } = sessionList
+  const rows = projectWorkspaceSection(workspaces, unphased, statuses, ALL_ENABLED)
+  assert.deepEqual(
+    rows.map((row) => row.light),
+    [LIGHT_RED, LIGHT_GRAY, LIGHT_GREEN],
   )
 })
 

@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * Workspace drag reordering (ticket 04) is decided by two pure rules: how far a
+ * Workspace drag reordering is decided by two pure rules: how far a
  * pointer must travel before a press becomes a drag, and where a drop lands in
  * the host's workspace order.
  *
@@ -21,20 +21,22 @@ const {
   dropAnchor,
 } = require('./workspace-reorder.js')
 
-test('a press becomes a workspace drag only after six pixels', () => {
+test('a press becomes a workspace drag only after it moves more than six pixels', () => {
   assert.equal(REORDER_DRAG_THRESHOLD_PX, 6)
   assert.equal(crossedDragThreshold(10, 10, 15, 10), false, '5px is still a click')
   assert.equal(crossedDragThreshold(10, 10, 10, 15), false)
-  assert.equal(crossedDragThreshold(10, 10, 16, 10), true, 'exactly 6px starts the drag')
-  assert.equal(crossedDragThreshold(10, 10, 10, 16), true)
+  assert.equal(crossedDragThreshold(10, 10, 16, 10), false, 'exactly 6px is still a click')
+  assert.equal(crossedDragThreshold(10, 10, 10, 16), false)
+  assert.equal(crossedDragThreshold(10, 10, 16.01, 10), true, 'more than 6px starts the drag')
   assert.equal(crossedDragThreshold(10, 10, 16, 18), true, 'distance, not per-axis travel')
 })
 
 test('the threshold is a distance and accepts an explicit value', () => {
   assert.equal(crossedDragThreshold(0, 0, 3, 4), false, 'a 5px diagonal stays a click')
-  assert.equal(crossedDragThreshold(0, 0, 0, 9, 10), false, 'at a custom 10px threshold')
-  assert.equal(crossedDragThreshold(0, 0, 0, 10, 10), true, 'the threshold is inclusive')
-  assert.equal(crossedDragThreshold(0, 0, 0, 10), true, 'at the default 6px threshold')
+  assert.equal(crossedDragThreshold(0, 0, 0, 9, 10), false, 'under a custom 10px threshold')
+  assert.equal(crossedDragThreshold(0, 0, 0, 10, 10), false, 'the threshold itself is still a click')
+  assert.equal(crossedDragThreshold(0, 0, 0, 10.01, 10), true, 'just past the custom threshold starts it')
+  assert.equal(crossedDragThreshold(0, 0, 0, 7), true, 'just past the default 6px threshold')
 })
 
 test('a malformed pointer sample never starts a drag', () => {

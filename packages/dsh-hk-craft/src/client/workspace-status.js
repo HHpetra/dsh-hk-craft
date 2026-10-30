@@ -8,7 +8,7 @@
  * turns live snapshots into the plain shapes below, so an upstream rename is a
  * one-file fix and every rule here stays unit-testable in Node.
  *
- * Light precedence (ticket 02, spec §1): red > yellow > green > gray.
+ * Light precedence: red > yellow > green > gray.
  *   red    a session in this workspace is waiting for the user (approval,
  *          question, plan review)
  *   yellow a session is running
@@ -26,7 +26,7 @@
  * There is no error light. dsh exposes no "this turn failed" bit in the client
  * status map or the session summary, and reading a failure would mean opening
  * every session's history — which the sidebar must not do. See
- * `doc/upstream-contracts.md#session-summary-fields` and spec §1.
+ * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
 /** @typedef {'gray' | 'green' | 'yellow' | 'red'} WorkspaceLight */
@@ -125,7 +125,7 @@ function mainSessionId(sessions) {
  * - a Set (or anything with `has`) is used as-is;
  * - an array of ids becomes a Set;
  * - `null`/`undefined`/anything else means "unknown", and every workspace counts
- *   as enabled (spec §1: degrade to deriving green/yellow/red/gray from the
+ *   as enabled: degrade to deriving green/yellow/red/gray from the
  *   sessions rather than painting the whole column gray).
  *
  * @param {unknown} enabledWorkspaces
@@ -169,12 +169,17 @@ function projectWorkspaceSection(workspaces, sessions, statuses, enabledWorkspac
   const items = Array.isArray(workspaces.items) ? workspaces.items : []
   const archived = new Set(workspaces.archivedSessionIds ?? [])
   const byId = sessions?.byId ?? {}
+  // A snapshot that is still loading may keep the previous `byId` around; those
+  // rows cannot prove that a conversation finished, so they contribute no
+  // signals. An absent `phase` is the plain test/fake shape and counts as ready.
+  const sessionsReady =
+    sessions !== undefined && sessions !== null && (sessions.phase === undefined || sessions.phase === 'ready')
   const current = mainSessionId(sessions)
   const isEnabled = enabledLookup(enabledWorkspaces)
   return items.map((item) => {
     const memberIds = Array.isArray(item?.sessionIds) ? item.sessionIds : []
     const signals = []
-    for (const sessionId of memberIds) {
+    for (const sessionId of sessionsReady ? memberIds : []) {
       if (archived.has(sessionId)) continue
       const summary = byId[sessionId]
       if (summary === undefined || summary === null) continue

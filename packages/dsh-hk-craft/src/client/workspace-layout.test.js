@@ -562,7 +562,7 @@ test('switching to an unknown workspace id is refused', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Deleting a workspace (ticket 03, spec §2)
+// Deleting a workspace
 //
 // A delete only removes the registration: its layout and persisted key go, its
 // pane references are released, and a visible workspace hands the view to its
@@ -691,7 +691,7 @@ test('an unknown workspace id is a no-op', () => {
 })
 
 // ---------------------------------------------------------------------------
-// "Enabled" (ticket 02): ever opened in split
+// "Enabled": ever opened in split
 // ---------------------------------------------------------------------------
 
 test('a workspace nobody opened in split is not enabled', () => {

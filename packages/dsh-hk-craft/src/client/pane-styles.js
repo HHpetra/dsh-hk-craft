@@ -96,10 +96,14 @@ const paneStripStyle = {
   minWidth: 0,
   borderBottom: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
   background: 'var(--dsw-alias-bg-base, Canvas)',
+  // The action group owns its spacing per seat, so an empty group leaves no box;
+  // this keeps a visible last seat clear of the window edge without reserving a
+  // group-sized gap when both seats render null.
+  paddingRight: 8,
 }
 
 /**
- * The strip's scrollport (ticket 06). The tabs and `+` live inside it, so `+`
+ * The strip's scrollport. The tabs and `+` live inside it, so `+`
  * follows the last tab and scrolls away with the tabs when they overflow; the
  * pinned action group sits outside. The viewport gives way before the group:
  * `flex: 1 1 auto` + `minWidth: 0` here, `flex: none` on the group.
@@ -123,27 +127,31 @@ const stripTablistStyle = {
 }
 
 /**
- * The pinned native-action group (ticket 06): outside the scrollport, at its
- * content width, never shrinking. It only arranges the seats supplied by
- * `pane-toolbar.js`; when no seat is filled it takes no tab room.
+ * The pinned native-action group: outside the scrollport, never shrinking. It
+ * only arranges the seats supplied by `pane-toolbar.js`. The group carries no
+ * padding, gap or fixed width: each seat's root owns its own spacing and width
+ * cap, so a seat that renders null takes no room at all.
  */
 const stripActionsStyle = {
   display: 'flex',
   alignItems: 'center',
   flex: 'none',
-  gap: 8,
   minWidth: 0,
-  padding: '0 8px',
   whiteSpace: 'nowrap',
 }
 
-/** One seat: content-sized and capped by `stripSeatMaxWidth`, clipped by itself. */
+/**
+ * One seat's box, merged onto the seat's own root by the seat component. Spacing
+ * lives here rather than on the group so a null seat has no box; the group's
+ * wrappers are `display: contents` and contribute nothing.
+ */
 const stripSeatStyle = {
   display: 'inline-flex',
   alignItems: 'center',
   flex: 'none',
   minWidth: 0,
   overflow: 'hidden',
+  marginLeft: 8,
 }
 
 const stripItemStyle = {
@@ -214,7 +222,7 @@ const stripCloseStyle = {
 }
 
 /**
- * `+` follows the last tab inside the scrollport (ticket 06): it is an ordinary
+ * `+` follows the last tab inside the scrollport: it is an ordinary
  * inline button, no longer a full-height, right-aligned slab with a left border.
  */
 const stripNewStyle = {

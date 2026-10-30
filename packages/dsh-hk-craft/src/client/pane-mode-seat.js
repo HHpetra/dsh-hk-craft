@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The strip's read-only current-mode seat (ticket 07, spec §6).
+ * The strip's read-only current-mode seat.
  *
  * This is the dumb half of the mode badge: it takes the seat props
  * `pane-toolbar.js` documents — the visible layout snapshot, the focused strip
@@ -17,14 +17,7 @@
  */
 
 const { focusedPresetId, resolveModeLabel } = require('./pane-mode.js')
-
-let reactModule = null
-
-/** The platform React instance; resolved lazily so Node tests can load this module. */
-function react() {
-  if (reactModule === null) reactModule = require('react')
-  return reactModule
-}
+const { react } = require('./react-and-translator.js')
 
 /** The chip: content-sized, capped by the seat wrapper, never a control. */
 const modeBadgeStyle = {
@@ -95,7 +88,9 @@ function createModeSeat(options = {}) {
       {
         title: mode.title,
         'data-hkcraft-strip-mode': mode.id,
-        style: modeBadgeStyle,
+        // The group's seat box (width cap + spacing) rides on the root the seat
+        // actually renders, so an empty seat takes no room.
+        style: { ...modeBadgeStyle, ...props?.seatStyle },
       },
       h('span', { style: modeLabelStyle }, mode.label),
     )

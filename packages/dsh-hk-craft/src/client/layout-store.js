@@ -186,7 +186,7 @@ function decodeLayout(raw, options = {}) {
  * Whether a workspace has ever been opened in split, judged by the mere
  * existence of its layout key. The value is deliberately not parsed: the sidebar
  * light only needs "there is a record", and a corrupt payload still proves the
- * workspace was opened (spec §1). A broken store reports `false` instead of
+ * workspace was opened. A broken store reports `false` instead of
  * throwing, which degrades to "not enabled" only for that one workspace.
  *
  * @param {{getItem?: (key: string) => unknown}|undefined|null} storage

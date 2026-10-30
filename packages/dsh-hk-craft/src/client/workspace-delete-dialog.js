@@ -1,8 +1,7 @@
 'use strict'
 
 /**
- * The second confirmation before a workspace registration is deleted (ticket
- * 03, spec §2).
+ * The second confirmation before a workspace registration is deleted.
  *
  * It exists because deleting a workspace is easy to misread: the row goes away,
  * so the user needs to be told that the directory and the conversations stay, and
@@ -19,7 +18,7 @@
  * load this module in Node, where the platform module graph does not exist.
  */
 
-const { createTranslator, react } = require('./diagnostics.js')
+const { createTranslator, react } = require('./react-and-translator.js')
 const {
   buttonStyle,
   closeOverlayStyle,
@@ -50,12 +49,6 @@ const runningStyle = {
   whiteSpace: 'normal',
 }
 
-/** Localize a `{name}` / `{n}` placeholder without relying on translator params. */
-function fill(template, placeholder, value) {
-  // A function replacement keeps `$&`-style sequences in a workspace name literal.
-  return template.replace(placeholder, () => value)
-}
-
 /**
  * @param {{
  *   workspaceId?: string,
@@ -65,7 +58,7 @@ function fill(template, placeholder, value) {
  *   error?: string|null,
  *   onCancel?: () => void,
  *   onConfirm?: () => void,
- *   t?: (key: string) => string,
+ *   t?: (key: string, params?: Record<string, unknown>) => string,
  * }} props
  */
 function WorkspaceDeleteDialog(props) {
@@ -78,7 +71,7 @@ function WorkspaceDeleteDialog(props) {
       ? props.workspaceName
       : t('workspace.defaultName')
   const runningCount = Number.isInteger(props?.runningCount) ? props.runningCount : 0
-  const title = fill(t('workspace.delete.title'), '{name}', name)
+  const title = t('workspace.delete.title', { name })
 
   const cancel = () => {
     if (!busy) props?.onCancel?.()
@@ -131,7 +124,7 @@ function WorkspaceDeleteDialog(props) {
         ? h(
             'div',
             { style: runningStyle, 'data-hkcraft-delete-running': String(runningCount) },
-            fill(t('workspace.delete.running'), '{n}', String(runningCount)),
+            t('workspace.delete.running', { n: runningCount }),
           )
         : null,
       props?.error === null || props?.error === undefined || props?.error === ''

@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The strip's read-only current-mode seat (ticket 07).
+ * The strip's read-only current-mode seat.
  *
  * The seat is a thin React component: the pure projection lives in
  * `pane-mode.js`, and the optional roster loader is injected by `index.js`, so
@@ -13,8 +13,8 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const Module = require('node:module')
 
+const { installFakeReact } = require('./fake-react.js')
 const { createModeSeat } = require('./pane-mode-seat.js')
 
 let stateSlots = []
@@ -39,22 +39,20 @@ const fakeReact = {
 
 /**
  * A minimal hook-capable React stand-in. `pane-mode-seat.js` resolves `react`
- * lazily, so installing this through `Module._load` reaches the same instance.
+ * lazily through the shared helper, so installing this through `Module._load`
+ * reaches the same instance.
  *
- * The module caches the React instance for its lifetime, so the fake itself is
- * file-level and every install only resets its state slots and effect sink.
+ * The fake itself is file-level and every install only resets its state slots
+ * and effect sink; the shared accessor is deliberately non-memoized, so a fresh
+ * stand-in is picked up per test.
  *
  * @returns {{render: Function, flush: Function, restore: Function}}
  */
-function installFakeReact() {
-  const originalLoad = Module._load
+function installHarness() {
   stateSlots = []
   cursor = 0
   activeEffects = null
-  Module._load = function load(request, parent, isMain) {
-    if (request === 'react') return fakeReact
-    return originalLoad.call(this, request, parent, isMain)
-  }
+  const restore = installFakeReact(fakeReact)
 
   /**
    * Render the seat once and collect the effects of that render.
@@ -80,13 +78,7 @@ function installFakeReact() {
     await new Promise((resolve) => setTimeout(resolve, 0))
   }
 
-  return {
-    render,
-    flush,
-    restore() {
-      Module._load = originalLoad
-    },
-  }
+  return { render, flush, restore }
 }
 
 /** Seat props as `PaneStripActions` builds them; only the mode inputs matter. */
@@ -108,7 +100,7 @@ function labelOf(element) {
 }
 
 test('a focused session with a shipped preset renders a read-only, localized badge', () => {
-  const harness = installFakeReact()
+  const harness = installHarness()
   try {
     const ModeSeat = createModeSeat({ loadRoster: async () => [] })
     const { element } = harness.render(ModeSeat, seatProps({ preset: 'ptc' }))
@@ -128,7 +120,7 @@ test('a focused session with a shipped preset renders a read-only, localized bad
 })
 
 test('the badge is absent when there is no focused session or no preset', () => {
-  const harness = installFakeReact()
+  const harness = installHarness()
   try {
     const calls = []
     const loadRoster = async (id) => {
@@ -152,7 +144,7 @@ test('the badge is absent when there is no focused session or no preset', () => 
 })
 
 test('a custom preset uses the roster name and description once loaded', async () => {
-  const harness = installFakeReact()
+  const harness = installHarness()
   try {
     const calls = []
     const loadRoster = async (id) => {
@@ -176,7 +168,7 @@ test('a custom preset uses the roster name and description once loaded', async (
 })
 
 test('changing the focused preset retries the roster for the new id', async () => {
-  const harness = installFakeReact()
+  const harness = installHarness()
   try {
     const calls = []
     const loadRoster = async (id) => {
@@ -198,7 +190,7 @@ test('changing the focused preset retries the roster for the new id', async () =
 })
 
 test('a failing or absent roster still renders the built-in name or the id', async () => {
-  const harness = installFakeReact()
+  const harness = installHarness()
   try {
     const failing = createModeSeat({
       loadRoster: async () => {

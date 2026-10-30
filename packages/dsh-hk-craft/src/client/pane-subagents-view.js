@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * The subagent viewer seat's React half (ticket 08).
+ * The subagent viewer seat's React half.
  *
  * `pane-subagents.js` owns the catalog projection and every dsh shape; this file
  * only paints the count trigger and the flat dropdown, and routes a pick to the
@@ -9,17 +9,17 @@
  * through the seat props built by `pane-view.js`.
  *
  * The dropdown is a flat menu of direct children: nested expansion, hover-open,
- * retry and breadcrumbs are out of this ticket (spec §7).
+ * retry and breadcrumbs are out of scope for this seat.
  *
- * Static styles stay in this file rather than `pane-styles.js`: tickets 07 and 08
- * run in parallel and neither is allowed to extend the shared style module for
+ * Static styles stay in this file rather than `pane-styles.js`: the two seats
+ * are independent and neither extends the shared style module for
  * its own seat. The menu is `position: fixed` because a seat clips its content
  * (`stripSeatStyle`), so a portal-free dropdown has to escape the seat box.
  * `react` is resolved lazily because unit tests load this module in Node, where
  * the platform module graph does not exist.
  */
 
-const { react } = require('./diagnostics.js')
+const { react } = require('./react-and-translator.js')
 const { buttonStyle } = require('./pane-styles.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const {
@@ -177,7 +177,7 @@ function createSubagentSeat(options = {}) {
           return
         }
         setOpen(false)
-        // Focus returns to the trigger on every close path (spec §7).
+        // Focus returns to the trigger on every close path.
         if (typeof queueMicrotask === 'function') {
           queueMicrotask(() => triggerRef.current?.focus?.())
         }
@@ -307,7 +307,9 @@ function createSubagentSeat(options = {}) {
       {
         ref: rootRef,
         'data-hkcraft-subagent-seat': '',
-        style: rootStyle,
+        // The group's seat box (width cap + spacing) rides on the root the seat
+        // actually renders, so an empty seat takes no room.
+        style: { ...rootStyle, ...props?.seatStyle },
         onKeyDown: (event) => {
           if (event.key !== 'Escape' || !open) return
           event.preventDefault()

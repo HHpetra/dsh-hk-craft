@@ -2,7 +2,8 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const Module = require('node:module')
+
+const { withFakeReact } = require('./fake-react.js')
 
 const {
   ENTRY_NAME,
@@ -18,29 +19,19 @@ const t = (key) => zh[key] ?? key
 
 /**
  * A React stand-in for the settings render: only the calls the component makes.
- * `settings-view.js` resolves `react` lazily, so installing this through
- * `Module._load` reaches the same module instance the component uses.
+ * `settings-view.js` resolves `react` lazily, so the shared installer routes it to
+ * this instance.
  */
-function installFakeReact() {
-  const originalLoad = Module._load
-  const fake = {
-    Fragment: Symbol('Fragment'),
-    createElement: (type, props, ...children) => ({
-      type,
-      props: { ...(props ?? {}), children },
-    }),
-    useEffect: () => {},
-    useRef: (value) => ({ current: value }),
-    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
-    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
-  }
-  Module._load = function load(request, parent, isMain) {
-    if (request === 'react') return fake
-    return originalLoad.call(this, request, parent, isMain)
-  }
-  return () => {
-    Module._load = originalLoad
-  }
+const fakeReact = {
+  Fragment: Symbol('Fragment'),
+  createElement: (type, props, ...children) => ({
+    type,
+    props: { ...(props ?? {}), children },
+  }),
+  useEffect: () => {},
+  useRef: (value) => ({ current: value }),
+  useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
 }
 
 /** @returns {string} every text node under an element tree, joined by spaces */
@@ -233,8 +224,7 @@ test('a throwing controller becomes a displayed error instead of an unhandled re
 })
 
 test('the settings page renders the diagnostics inline and the transition note', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const Section = createSettingsSection(fakeController())
     const view = Section({ t, close: () => {} })
     const text = textOf(view)
@@ -247,14 +237,11 @@ test('the settings page renders the diagnostics inline and the transition note',
     assert.ok(text.includes(zh['settings.view.native']))
     assert.ok(text.includes(zh['settings.pane.note']))
     assert.notEqual(buttonWithText(view, zh['settings.pane.enter']), undefined)
-  } finally {
-    restore()
-  }
+  })
 })
 
 test('an active pane workspace offers the way back to the native view', () => {
-  const restore = installFakeReact()
-  try {
+  withFakeReact(fakeReact, () => {
     const Section = createSettingsSection(fakeController({ active: true }))
     const view = Section({ t, close: () => {} })
     const text = textOf(view)
@@ -262,7 +249,5 @@ test('an active pane workspace offers the way back to the native view', () => {
     assert.ok(text.includes(zh['settings.view.split']))
     assert.ok(text.includes(zh['settings.pane.current']))
     assert.notEqual(buttonWithText(view, zh['settings.pane.exit']), undefined)
-  } finally {
-    restore()
-  }
+  })
 })

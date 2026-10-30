@@ -1,36 +1,35 @@
 'use strict'
 
 /**
- * The workspace row is the sidebar's one interactive control. Ticket 01 splits
+ * The workspace row is the sidebar's one interactive control. It splits
  * it into a row container, a primary select control and an inline action slot
  * without changing what the user sees or can do.
  *
  * These tests render the component with a React stand-in — the same approach as
- * `pane-view.test.js` — and assert what a user (or the next ticket) can observe:
+ * `pane-view.test.js` — and assert what a user can observe:
  * the click target, the accessible name, the current marker and the action
  * slot's stable marker. Styles and hover feedback stay on the manual smoke list.
  */
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const Module = require('node:module')
 
+const { withFakeReact } = require('./fake-react.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { zh } = require('./locale.js')
 
 /**
- * A React stand-in covering only the calls the section makes. The component
- * resolves `react` lazily, so installing this through `Module._load` reaches the
- * same module instance it uses.
+ * A React stand-in covering only the calls the section makes. The shared
+ * installer routes the component's lazy `require('react')` here.
  *
  * `useSyncExternalStore` is present because the section subscribes to the pane
- * controller's snapshot (ticket 02); the stand-in runs the subscription once and
- * reads the current snapshot, which is all a static render needs.
+ * controller's snapshot; the stand-in runs the subscription once and reads the
+ * current snapshot, which is all a static render needs.
  */
-function installFakeReact() {
-  const originalLoad = Module._load
+function createFakeReact() {
   const calls = { subscribe: 0 }
-  const fake = {
+  return {
+    calls,
     Fragment: Symbol('Fragment'),
     createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
     useEffect: () => {},
@@ -40,16 +39,6 @@ function installFakeReact() {
       calls.subscribe += 1
       subscribe(() => {})
       return getSnapshot()
-    },
-  }
-  Module._load = function load(request, parent, isMain) {
-    if (request === 'react') return fake
-    return originalLoad.call(this, request, parent, isMain)
-  }
-  return {
-    calls,
-    restore() {
-      Module._load = originalLoad
     },
   }
 }
@@ -128,7 +117,7 @@ function snapshots({ current = false, started = true } = {}) {
   }
 }
 
-/** The pane controller face the section reads enablement from (ticket 02). */
+/** The pane controller face the section reads enablement from. */
 function paneFace(enabledIds) {
   const enabled = new Set(enabledIds)
   const calls = { subscribe: 0, getSnapshot: 0 }
@@ -171,8 +160,8 @@ function renderSection({
 }
 
 test('a workspace row is a container with a separate select button and an action slot', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const tree = renderSection()
     const row = findByAttribute(tree, 'data-hkcraft-workspace-row')
 
@@ -193,7 +182,7 @@ test('a workspace row is a container with a separate select button and an action
       (child) => child.props?.['data-hkcraft-workspace-action'] !== undefined,
     )
     assert.notEqual(action, undefined, 'the row must reserve an inline action slot')
-    // Ticket 03 fills the slot with the delete entry; ticket 04 relies on the
+    // The delete entry fills the slot; the drag gesture relies on the
     // marker to ignore presses that belong to a row action.
     const actionButtons = descendants(action).filter((element) => element.type === 'button')
     assert.equal(actionButtons.length, 1, 'the action slot holds exactly the delete entry')
@@ -203,14 +192,12 @@ test('a workspace row is a container with a separate select button and an action
       false,
       'the action slot must be a sibling of the select control, never nested inside it',
     )
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('the delete entry has its own accessible name and never opens the workspace', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const opened = []
     const tree = renderSection({ openWorkspace: (workspaceId) => opened.push(workspaceId) })
 
@@ -238,14 +225,12 @@ test('the delete entry has its own accessible name and never opens the workspace
     }
 
     assert.deepEqual(opened, [], 'pressing delete must not open the workspace')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('the select control keeps the workspace name, light and click target', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const opened = []
     const tree = renderSection({ openWorkspace: (workspaceId) => opened.push(workspaceId) })
 
@@ -258,14 +243,12 @@ test('the select control keeps the workspace name, light and click target', () =
 
     select.props.onClick()
     assert.deepEqual(opened, ['w1'], 'clicking still opens or switches that workspace')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('a workspace that was never opened in split reads as gray, not as finished', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     // No pane controller: the degraded projection assumes every workspace is
     // enabled, and this workspace has a started conversation — so it is green.
     const degraded = renderSection()
@@ -283,53 +266,45 @@ test('a workspace that was never opened in split reads as gray, not as finished'
       .find((button) => button.props['aria-label']?.startsWith('Project A'))
     assert.equal(select.props['aria-label'], 'Project A — 未启用 / 还没有对话结束')
     assert.equal(select.props.title, 'Project A — 未启用 / 还没有对话结束')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('an enabled workspace full of blank conversations still reads gray', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const { panes } = paneFace(['w1'])
     const tree = renderSection({ panes, started: false })
     const select = descendants(tree)
       .filter((element) => element.type === 'button')
       .find((button) => button.props['aria-label']?.startsWith('Project A'))
     assert.equal(select.props['aria-label'], 'Project A — 未启用 / 还没有对话结束')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('the section subscribes to the pane controller so the light follows an open', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const { panes, calls } = paneFace(['w1'])
     renderSection({ panes })
 
     assert.equal(calls.subscribe, 1, 'the section must follow the controller snapshot')
     assert.equal(calls.getSnapshot, 1)
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('the current workspace still marks its select control', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const tree = renderSection({ current: true })
     const buttons = descendants(tree).filter((element) => element.type === 'button')
     const current = buttons.find((button) => button.props['aria-label']?.startsWith('Project A'))
 
     assert.equal(current.props['aria-current'], 'true')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 // ---------------------------------------------------------------------------
-// Drag to reorder (ticket 04). The row container is the pointer target; a press
+// Drag to reorder. The row container is the pointer target; a press
 // only becomes a drag after 6px, and the drop row is hit-tested because pointer
 // capture keeps the move events on the source row.
 // ---------------------------------------------------------------------------
@@ -377,8 +352,8 @@ function selectOf(row) {
 }
 
 test('a press shorter than six pixels still opens the workspace', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const opened = []
     const reorders = []
     const tree = renderSection({
@@ -394,14 +369,12 @@ test('a press shorter than six pixels still opens the workspace', () => {
 
     assert.deepEqual(reorders, [], 'a click must not write an order')
     assert.deepEqual(opened, ['w2'], 'the click still opens the workspace')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('a drag past six pixels reorders and swallows the click that follows', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const opened = []
     const reorders = []
     const tree = renderSection({
@@ -424,14 +397,12 @@ test('a drag past six pixels reorders and swallows the click that follows', () =
 
     assert.deepEqual(reorders, [['w2', 'w1']])
     assert.deepEqual(opened, [], 'the click after a drag must be swallowed')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('the lower half of the last row appends the dragged workspace', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const reorders = []
     const tree = renderSection({
       reorderWorkspace: (sourceId, beforeId) => {
@@ -447,14 +418,12 @@ test('the lower half of the last row appends the dragged workspace', () => {
     })
 
     assert.deepEqual(reorders, [['w1', undefined]], 'an undefined anchor means append')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('dropping a row back where it already is writes nothing', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const opened = []
     const reorders = []
     const tree = renderSection({
@@ -473,14 +442,12 @@ test('dropping a row back where it already is writes nothing', () => {
 
     assert.deepEqual(reorders, [], 'a no-op drop must not write an order')
     assert.deepEqual(opened, [], 'the drag still swallowed the click')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('a press on the row action slot never starts a drag', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const opened = []
     const reorders = []
     const tree = renderSection({
@@ -501,14 +468,12 @@ test('a press on the row action slot never starts a drag', () => {
 
     assert.deepEqual(reorders, [], 'a row action press must not reorder')
     assert.deepEqual(opened, ['w2'], 'and it must not swallow the click either')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })
 
 test('only one reorder request may be in flight at a time', () => {
-  const fakeReact = installFakeReact()
-  try {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
     const reorders = []
     const tree = renderSection({
       reorderWorkspace: (sourceId, beforeId) => {
@@ -529,7 +494,5 @@ test('only one reorder request may be in flight at a time', () => {
     drag()
 
     assert.equal(reorders.length, 1, 'a second drag must not race the first request')
-  } finally {
-    fakeReact.restore()
-  }
+  })
 })

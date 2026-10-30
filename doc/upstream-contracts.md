@@ -259,7 +259,7 @@ is a `Map<sessionId, { running, pendingInteraction, completionUnread }>`, where
 failure bit** in either projection: a failed turn is a conversation node, not a
 summary field. `blank` is true while the conversation has never sent a message;
 the sidebar inverts it into the light's `started` signal, so an enabled workspace
-holding only fresh blank sessions stays gray (spec §1).
+holding only fresh blank sessions stays gray.
 
 **Why we rely on it:** the sidebar lights and the strip dots are derived from
 these fields only; reading an error would require opening every session's
@@ -341,7 +341,7 @@ catalog is already ready). It reads projections only; it never opens the
 conversation. The native header's dropdown does **not** request its root catalog
 on open — a plugin-side refresh on open is an extra, safe read.
 
-**Why we rely on it:** the strip's subagent seat (ticket 08) shows the focused
+**Why we rely on it:** the strip's subagent seat shows the focused
 conversation's direct-child total and running count with a flat dropdown of
 direct children, and hides itself when the projection has no usable entries. It
 reads only these fields and never opens a child's history. On open it asks for
@@ -503,29 +503,35 @@ disappear, the directory and sessions remain, and the turn keeps running.
 `dsh.hkcraft.layout.v1.<workspaceId>` (`src/client/layout-store.js`) plus the pane
 controller's loaded-layout registry (`dsh-pane-host.js:isWorkspaceEnabled`).
 
-**Semantics:** a workspace is "enabled" when it has a loaded pane layout in this
-process or a persisted layout key from an earlier one. The controller writes the
-key the first time a workspace's tree is restored or shown in split, including an
-empty tree; nothing else writes it. Opening a workspace in the native view goes
-through `uiWorkspace.startSession`/`openSession` and never reaches the pane
-controller, so it does **not** count as enabled and must not change the gray
-light. The key's existence is read without parsing the payload: a corrupt or
-empty payload still proves the workspace was opened in split at some point.
+**Semantics (the host boundary):** the layout key is plugin-owned storage; dsh
+does not read or write it. The controller writes the key the first time a
+workspace's tree is restored or shown in split, including an empty tree; nothing
+else writes it. Opening a workspace in the native view goes through
+`uiWorkspace.startSession`/`openSession` and never reaches the pane controller,
+so it writes **no** key. The key's existence is read without parsing the payload:
+a corrupt or empty payload still proves the workspace was opened in split at some
+point. The key is also the record the delete path must clear after a successful
+`workspaces.delete`, so a removed workspace cannot come back with a ghost layout.
 
-**Why we rely on it:** the sidebar's gray light means "never opened in split, or
-no conversation finished yet", not "no active session". The key is also the
-record ticket 03 must clear when it deletes a workspace, so a removed workspace
-cannot come back as an enabled gray row.
+**Why we rely on it:** the native-open path is indistinguishable from "never
+shown in split" by layout alone, which is exactly the fact the plugin wants; the
+`blank` summary bit (see [`#session-summary-fields`](#session-summary-fields))
+supplies the other half. How those two facts become a sidebar light — including
+what gray means — is a plugin UI decision, recorded in
+[`README.md`](README.md#5-工作区状态与四态灯) and
+[ADR-0007](../ai-docs/ADR/decisions.md#adr-0007--侧栏工作区管理窗格条工具栏与设置页搬迁),
+not an upstream contract.
 
 **Degradation:** an absent storage backend or a throwing store means "no key" for
 that workspace only; a pane controller that cannot answer at all makes the
 section treat every workspace as enabled and derive green/yellow/red/gray from
-the sessions, which loses at most the never-opened gray (spec §1).
+the sessions, which loses at most the never-opened gray.
 
 **Verified:** key existence and write timing were exercised through the storage
 seam and the controller's fake services. Runtime probe: open a workspace in split
 and watch the row leave gray without a reload; restart dsh and confirm it is
 still enabled; open another workspace natively and confirm it stays gray.
+
 
 ---
 
@@ -547,7 +553,7 @@ plain `Error` whose message is `workspace reorder failed: <code>: <message>`.
 plugin renders — the plugin keeps no order of its own, so a failed write needs
 no local rollback.
 
-**Why we rely on it:** pointer drag reordering (ticket 04) only decides an
+**Why we rely on it:** pointer drag reordering only decides an
 anchor from the row under the pointer and its upper/lower half; persistence,
 optimism and rollback belong to the host. The sidebar therefore never sorts or
 caches an order: it writes through this call and re-renders `workspaces.list`,
@@ -579,11 +585,11 @@ face has no "current session" to act on. Its navigation calls (`openResource`,
 Session's right bar" call.
 
 **Why we rely on it:** the pane strip's pinned native-action group therefore
-ships no "open right sidebar" button in this version (spec §5): it could not
+ships no "open right sidebar" button in this version: it could not
 open the native right bar for a split pane, and falling back to the native
 conversation would silently leave the split. The group is the reserved home for
 native header tools that can work inside a pane — the read-only mode badge
-(ticket 07) and the subagent viewer (ticket 08) — and any future native tool
+and the subagent viewer — and any future native tool
 needs an explicit seat there.
 
 **Verified:** `RightbarRoot`'s `activePanelId === null` visibility and the
@@ -635,7 +641,7 @@ component receives the standard slot props (including the `t` bound by its
 `locale`) plus `close`, the callback that dismisses the settings panel.
 
 **Why we rely on it:** the diagnostics panel and the native ⇄ pane switch used
-to be two `sidebar.footer.action` buttons; ticket 05 moves them into one
+to be two `sidebar.footer.action` buttons; they now live in one
 dedicated HK Craft settings page. The page consumes only the slot's `t` / `close`
 and the pane controller closure, so it needs neither `configForms` nor a
 settings data namespace. Because the entry is registered inside
