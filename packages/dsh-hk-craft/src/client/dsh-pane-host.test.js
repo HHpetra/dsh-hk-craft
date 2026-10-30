@@ -11,6 +11,7 @@ const {
   probeConversationContent,
   findCurrentSession,
   derivePanePhase,
+  interruptSession,
   createPaneController,
 } = require('./dsh-pane-host.js')
 
@@ -60,6 +61,66 @@ test('probe stays optimistic when the shell exposes no snapshot capability', () 
 
   assert.equal(probe.ok, true)
   assert.equal(probe.status, 'unknown')
+})
+
+test('interruptSession uses the same scoped conversation.cancel as the stop button', async () => {
+  const calls = []
+  const sessions = {
+    scope(sessionId) {
+      calls.push(['scope', sessionId])
+      return {
+        get(name) {
+          assert.equal(name, 'conversation')
+          return {
+            cancel() {
+              calls.push(['cancel'])
+              return Promise.resolve({ ok: true })
+            },
+          }
+        },
+      }
+    },
+  }
+
+  await interruptSession(sessions, 's1')
+  assert.deepEqual(calls, [['scope', 's1'], ['cancel']])
+})
+
+test('interruptSession falls back to the session cancel binding', async () => {
+  const calls = []
+  const sessions = {
+    scope: () => ({ get: () => undefined }),
+    binding(sessionId) {
+      return {
+        session: {
+          cancel() {
+            calls.push(sessionId)
+            return Promise.resolve({ ok: true })
+          },
+        },
+      }
+    },
+  }
+
+  await interruptSession(sessions, 's1')
+  assert.deepEqual(calls, ['s1'])
+})
+
+test('interruptSession turns a binding failure result into a rejection', async () => {
+  const sessions = {
+    scope: () => ({ get: () => undefined }),
+    binding: () => ({
+      session: {
+        cancel: () => Promise.resolve({ ok: false, error: { code: 'session/not-running', message: 'no turn' } }),
+      },
+    }),
+  }
+
+  await assert.rejects(() => interruptSession(sessions, 's1'), /no turn/)
+})
+
+test('interruptSession reports a missing public route instead of silently succeeding', async () => {
+  await assert.rejects(() => interruptSession({}, 's1'), /public interrupt/)
 })
 
 test('the explicitly chosen target defaults to the derived current session', () => {
@@ -123,8 +184,11 @@ function fakeControllerCtx({
   createFails = false,
   created = [],
   workspaces = [],
+  interruptFails = false,
+  deferredInterrupts = null,
 } = {}) {
-  const calls = { retain: [], selectPanel: [], create: [] }
+  const calls = { retain: [], selectPanel: [], create: [], interrupt: [] }
+  let interruptFailure = interruptFails
   const references = []
   const createdIds = [...created]
   let createCount = 0
@@ -171,6 +235,36 @@ function fakeControllerCtx({
       createCount += 1
       return next ?? `created-${createCount}`
     },
+    scope(sessionId) {
+      return {
+        get(name) {
+          if (name !== 'conversation') return undefined
+          return {
+            cancel() {
+              calls.interrupt.push({ sessionId, route: 'conversation' })
+              if (deferredInterrupts !== null) {
+                return new Promise((resolve, reject) => {
+                  deferredInterrupts.push({ resolve, reject })
+                })
+              }
+              if (interruptFailure) return Promise.reject(new Error('interrupt failed'))
+              return Promise.resolve({ ok: true })
+            },
+          }
+        },
+      }
+    },
+    binding(sessionId) {
+      return {
+        session: {
+          cancel() {
+            calls.interrupt.push({ sessionId, route: 'binding' })
+            if (interruptFailure) return Promise.resolve({ ok: false, error: { message: 'interrupt failed' } })
+            return Promise.resolve({ ok: true })
+          },
+        },
+      }
+    },
   }
   const slots = {
     snapshot(name) {
@@ -190,7 +284,11 @@ function fakeControllerCtx({
     ctx: { sessions, layout, slots, workspaces: workspacesService },
     calls,
     references,
+    rows,
     panel,
+    setInterruptFailure(value) {
+      interruptFailure = value
+    },
     reportEntryError(key, entry, error) {
       for (const listener of [...entryErrorListeners]) listener(key, entry, error, { abdicated: false })
     },
@@ -490,6 +588,119 @@ test('closing the last pane keeps the panel active with the empty state and no r
   assert.equal(state.sessionId, null)
   assert.equal(livePaneRefs(fake).length, 0)
   assert.equal(liveMainView(fake).length, 0)
+  assert.deepEqual(fake.calls.interrupt, [])
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Closing a running pane interrupts its conversation (ticket 09)
+// ---------------------------------------------------------------------------
+
+/** Rows with `s1` mid-turn, which is what makes a close ask for confirmation. */
+function runningRows() {
+  return { s1: { id: 's1', running: true } }
+}
+
+test('closing a running pane asks first and leaves the session and its refs untouched', async () => {
+  const { fake, controller } = await readyController({ rows: runningRows() })
+
+  assert.equal(controller.closePane('p1'), false)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.pendingClose, { paneId: 'p1', sessionId: 's1' })
+  assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(Object.keys(state.panes), ['p1'])
+  assert.equal(state.sessionId, 's1')
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.equal(livePaneRefs(fake).length, 1)
+  assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+test('cancelling the close confirmation changes nothing', async () => {
+  const { fake, controller } = await readyController({ rows: runningRows() })
+  controller.closePane('p1')
+
+  assert.equal(controller.cancelClose(), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.pendingClose, null)
+  assert.equal(state.closeError, null)
+  assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
+  assert.equal(state.sessionId, 's1')
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.equal(livePaneRefs(fake).length, 1)
+  controller.dispose()
+})
+
+test('confirming interrupts the turn once, then releases the pane and keeps the history row', async () => {
+  const { fake, controller } = await readyController({ rows: runningRows() })
+  controller.closePane('p1')
+
+  assert.equal(await controller.confirmClose(), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  assert.equal(state.pendingClose, null)
+  assert.equal(state.closeBusy, false)
+  assert.equal(state.root, null)
+  assert.deepEqual(state.panes, {})
+  assert.equal(livePaneRefs(fake).length, 0)
+  assert.equal(liveMainView(fake).length, 0)
+  // Release is a client-reference teardown, not a delete: the row /resume reads
+  // is still in the host list snapshot.
+  assert.equal(fake.rows.s1.running, true)
+  assert.equal(await controller.confirmClose(), false)
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  controller.dispose()
+})
+
+test('a second confirm while the interrupt is in flight is ignored', async () => {
+  const deferred = []
+  const { fake, controller } = await readyController({
+    rows: runningRows(),
+    deferredInterrupts: deferred,
+  })
+  controller.closePane('p1')
+
+  const first = controller.confirmClose()
+  assert.equal(controller.getSnapshot().closeBusy, true)
+  assert.equal(await controller.confirmClose(), false)
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+
+  deferred[0].resolve({ ok: true })
+  assert.equal(await first, true)
+  assert.equal(controller.getSnapshot().closeBusy, false)
+  assert.equal(controller.getSnapshot().root, null)
+  controller.dispose()
+})
+
+test('a failed interrupt keeps the pane mounted, its references and the dialog error visible', async () => {
+  const { fake, controller } = await readyController({
+    rows: runningRows(),
+    interruptFails: true,
+  })
+  controller.closePane('p1')
+
+  assert.equal(await controller.confirmClose(), false)
+
+  const state = controller.getSnapshot()
+  assert.match(state.closeError, /interrupt failed/)
+  assert.equal(state.closeBusy, false)
+  assert.deepEqual(state.pendingClose, { paneId: 'p1', sessionId: 's1' })
+  assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(Object.keys(state.panes), ['p1'])
+  assert.equal(livePaneRefs(fake).length, 1)
+  assert.equal(liveMainView(fake).length, 1)
+
+  // The user can retry after the transient failure, and that retry closes it.
+  fake.setInterruptFailure(false)
+  assert.equal(await controller.confirmClose(), true)
+  assert.equal(controller.getSnapshot().root, null)
+  assert.deepEqual(fake.calls.interrupt, [
+    { sessionId: 's1', route: 'conversation' },
+    { sessionId: 's1', route: 'conversation' },
+  ])
   controller.dispose()
 })
 

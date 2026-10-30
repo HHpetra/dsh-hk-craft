@@ -133,6 +133,54 @@ const segmentActiveStyle = {
 
 const segmentDisabledStyle = { opacity: 0.45, cursor: 'not-allowed' }
 
+const closeOverlayStyle = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 2147483000,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 16,
+  background: 'rgba(0, 0, 0, 0.35)',
+}
+
+const closeDialogStyle = {
+  width: 440,
+  maxWidth: 'calc(100vw - 32px)',
+  padding: '18px 20px',
+  borderRadius: 12,
+  border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
+  background: 'Canvas',
+  color: 'CanvasText',
+  boxShadow: '0 16px 40px rgba(0, 0, 0, 0.24)',
+  fontSize: 13,
+  lineHeight: 1.6,
+}
+
+const closeTitleStyle = {
+  fontSize: 12,
+  opacity: 0.7,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  marginBottom: 6,
+}
+
+const closeActionsStyle = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 8,
+  marginTop: 16,
+}
+
+const closeErrorStyle = {
+  marginTop: 10,
+  padding: '6px 8px',
+  borderRadius: 6,
+  background: 'color-mix(in srgb, tomato 16%, transparent)',
+  wordBreak: 'break-word',
+}
+
 /** Subscribe a component to the controller's frozen snapshot. */
 function usePaneSnapshot(React, controller) {
   return React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
@@ -504,6 +552,80 @@ function PaneSeparator({ controller, separator }) {
 }
 
 /**
+ * The interrupt confirmation for closing a running pane (spec D4). It is
+ * rendered by the pane host itself, so it exists only while the pane panel is
+ * selected; cancelling dismisses it without touching the session.
+ *
+ * @param {{ controller: any, t: (key: string) => string }} props
+ */
+function PaneCloseConfirm({ controller, t }) {
+  const React = react()
+  const h = React.createElement
+  const state = usePaneSnapshot(React, controller)
+  const pending = state.pendingClose
+  if (pending === null || pending === undefined) return null
+
+  const confirm = () => {
+    const attempt = controller.confirmClose()
+    if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+      attempt.catch(() => {})
+    }
+  }
+
+  return h(
+    'div',
+    { style: closeOverlayStyle },
+    h(
+      'div',
+      {
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': t('pane.close.confirm.title'),
+        style: closeDialogStyle,
+      },
+      pending.title === undefined ? null : h('div', { style: closeTitleStyle }, pending.title),
+      h(
+        'div',
+        { style: { fontWeight: 600, marginBottom: 6 } },
+        t('pane.close.confirm.title'),
+      ),
+      h('div', { style: { opacity: 0.78 } }, t('pane.close.confirm.body')),
+      state.closeError === null
+        ? null
+        : h(
+            'div',
+            { role: 'alert', style: closeErrorStyle },
+            `${t('pane.close.confirm.error')}: ${state.closeError}`,
+          ),
+      h(
+        'div',
+        { style: closeActionsStyle },
+        h(
+          'button',
+          {
+            type: 'button',
+            style: buttonStyle,
+            disabled: state.closeBusy,
+            onClick: () => controller.cancelClose(),
+          },
+          t('pane.close.confirm.cancel'),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: buttonStyle,
+            disabled: state.closeBusy,
+            onClick: confirm,
+          },
+          state.closeBusy ? t('pane.close.confirm.busy') : t('pane.close.confirm.action'),
+        ),
+      ),
+    ),
+  )
+}
+
+/**
  * The `main` keyed-slot entry. dsh hands it `SessionProvider` and the
  * authorized `renderSlot` for a session-scoped child because the registration
  * declares one non-root child.
@@ -522,42 +644,54 @@ function createPaneHost(controller) {
 
     if (!state.active) return null
 
+    const dialog = h(PaneCloseConfirm, { controller, t })
+
     if (state.root === null) {
-      return h(PaneEmptyState, {
-        t,
-        onNew: () => {
-          const attempt = controller.newInFocused()
-          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
-            attempt.catch(() => {})
-          }
-        },
-      })
+      return h(
+        React.Fragment,
+        null,
+        h(PaneEmptyState, {
+          t,
+          onNew: () => {
+            const attempt = controller.newInFocused()
+            if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+              attempt.catch(() => {})
+            }
+          },
+        }),
+        dialog,
+      )
     }
 
     const geometry = computeLayout(state.root)
     return h(
-      'div',
-      { style: layoutStyle, 'data-hkcraft-layout': '' },
-      geometry.panes.map((paneRect) => {
-        const pane = state.panes[paneRect.paneId]
-        if (pane === undefined) return null
-        return h(PaneFrame, {
-          key: paneRect.paneId,
-          controller,
-          pane,
-          rect: paneRect,
-          focused: paneRect.paneId === state.activePaneId,
-          kit: props,
-          t,
-        })
-      }),
-      geometry.separators.map((separator) =>
-        h(PaneSeparator, {
-          key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
-          controller,
-          separator,
+      React.Fragment,
+      null,
+      h(
+        'div',
+        { style: layoutStyle, 'data-hkcraft-layout': '' },
+        geometry.panes.map((paneRect) => {
+          const pane = state.panes[paneRect.paneId]
+          if (pane === undefined) return null
+          return h(PaneFrame, {
+            key: paneRect.paneId,
+            controller,
+            pane,
+            rect: paneRect,
+            focused: paneRect.paneId === state.activePaneId,
+            kit: props,
+            t,
+          })
         }),
+        geometry.separators.map((separator) =>
+          h(PaneSeparator, {
+            key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
+            controller,
+            separator,
+          }),
+        ),
       ),
+      dialog,
     )
   }
 }
@@ -681,6 +815,7 @@ module.exports = {
   PaneSeparator,
   PaneEmptyState,
   PaneViewSwitch,
+  PaneCloseConfirm,
   createPaneHost,
   createPaneBody,
   createPaneToggle,

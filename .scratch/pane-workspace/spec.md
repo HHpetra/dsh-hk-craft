@@ -189,7 +189,7 @@ S1 先于 S2 交付：它不依赖 G1，即使探针失败也仍然有价值。
 | 编号 | 假设 | 状态 / 验证方式 |
 | :--- | :--- | :--- |
 | G1 | 插件可为主区域任意窗格渲染指定会话的完整对话 | **已关闭（A 档）**；S0 做运行时冒烟 |
-| G2 | 关闭窗格时可通过公开 API 中断运行中的回合 | 🔲 待查（UI 已有 stop 动作，需确认插件侧入口）；S2 前必须确认 |
+| G2 | 关闭窗格时可通过公开 API 中断运行中的回合 | **已关闭（A 档）**：`ctx.sessions.scope(id).get("conversation").cancel()`，与壳 stop 按钮同一条路；`reference.release()` 只清客户端引用、不停宿主 agent。证据见 `issues/09-close-pane-stops-session.md` 的 Comments |
 | G3 | 非焦点窗格可用独立 retain 来源持有会话，且不破坏"当前会话"推导 | **已关闭**：`source` 是自由字符串，`mainView` 无唯一性校验（仅推导取第一个） |
 | G4 | `conversation.view` 的按钮条可被挪位而不重写对话组件 | 🟡 半关闭：改用公开的 `uiConversation.binding(id).activate(viewId)` 驱动 + 隐藏内置按钮条；S2 验证隐藏方式（作用域 CSS）是否稳定 |
 | G5 | `"conversation.content"` 这个 Factory 名是字符串契约，上游改名即断 | 🔲 缓解：启动时特性探测，缺失则退回"单对话 + 提示"降级形态，并锁定 dsh 版本范围 |

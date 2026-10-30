@@ -93,6 +93,58 @@ function probeConversationContent(slots) {
 }
 
 /**
+ * Interrupt the running turn of one session through the public client route the
+ * shell's own stop button uses.
+ *
+ * Verified against the unpacked bundles:
+ * - the stop action resolves its session-scoped conversation face as
+ *   `sessions.scope(id).get("conversation")` (ui-conversation:19674-19680) and
+ *   calls `cancel()` on it (ui-conversation:19808-19810);
+ * - that `cancel()` forwards to `sessions.binding(id).session.cancel()`
+ *   (ui-conversation:4940-4953), which is the Host RPC
+ *   `remote.session.cancel({ sessionId })`
+ *   (dsh-api-session-controller:2429-2440, types/session.js:257-267).
+ *
+ * The direct binding is the fallback, because it is the same call with one less
+ * hop; it reports failures as `{ ok: false }` instead of throwing, so this
+ * adapter normalises that. Releasing a Session reference is *not* a substitute:
+ * it only tears down the client generation and never stops the Host Agent
+ * (dsh-api-session-controller/README.md:82).
+ *
+ * @param {any} sessions the `ctx.sessions` face
+ * @param {string} sessionId
+ * @returns {Promise<void>} rejects when no public route exists or the Host
+ *   refuses to cancel the turn
+ */
+async function interruptSession(sessions, sessionId) {
+  if (typeof sessionId !== 'string' || sessionId === '') {
+    throw new Error('interruptSession: a session id is required')
+  }
+  if (typeof sessions?.scope === 'function') {
+    const scoped = sessions.scope(sessionId)
+    const conversation = scoped?.get?.('conversation')
+    if (conversation !== undefined && typeof conversation.cancel === 'function') {
+      await conversation.cancel()
+      return
+    }
+  }
+  if (typeof sessions?.binding === 'function') {
+    const session = sessions.binding(sessionId)?.session
+    if (session !== undefined && typeof session.cancel === 'function') {
+      const result = await session.cancel()
+      if (result !== null && result !== undefined && result.ok === false) {
+        const error = result.error ?? {}
+        throw new Error(
+          `session.cancel failed: ${error.code ?? 'unknown'}: ${error.message ?? 'unknown error'}`,
+        )
+      }
+      return
+    }
+  }
+  throw new Error(`no public interrupt route for session "${sessionId}"`)
+}
+
+/**
  * Derive the session dsh currently treats as "the conversation".
  *
  * dsh does not store this id. Every consumer scans the session list for the
@@ -186,6 +238,9 @@ function createPaneController(ctx, options = {}) {
     root: null,
     panes: {},
     activePaneId: null,
+    pendingClose: null,
+    closeBusy: false,
+    closeError: null,
   })
 
   function emit(patch) {
@@ -435,7 +490,14 @@ function createPaneController(ctx, options = {}) {
         // unmounted, so drop the references but keep the layout for the next
         // activation.
         releaseAll()
-        emit({ ...statePatch(layoutState, false), active: false, error: null })
+        emit({
+          ...statePatch(layoutState, false),
+          active: false,
+          error: null,
+          pendingClose: null,
+          closeBusy: false,
+          closeError: null,
+        })
       }
     }) ?? (() => {})
 
@@ -472,11 +534,111 @@ function createPaneController(ctx, options = {}) {
     return apply(layoutTree.focus(layoutState, paneId))
   }
 
+  /** The session list row the shell publishes for a session, if still known. */
+  function rowOf(sessionId) {
+    try {
+      return sessions?.list?.getSnapshot?.()?.byId?.[sessionId]
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * A session is "running" when its published summary says so — the same bit the
+   * sidebar's yellow light and the workspace status projection use
+   * (`workspace-status.js:sessionSignal`).
+   */
+  function isSessionRunning(sessionId) {
+    return rowOf(sessionId)?.running === true
+  }
+
+  /** Drop a pending close (and its error); no layout or session change. */
+  function clearPendingClose() {
+    if (
+      snapshot.pendingClose === null &&
+      snapshot.closeError === null &&
+      snapshot.closeBusy === false
+    ) {
+      return
+    }
+    emit({ pendingClose: null, closeBusy: false, closeError: null })
+  }
+
   /** Close a pane by id; false when it is absent. */
   function closePaneValue(paneId) {
     if (disposed) return false
     if (layoutState.panes[paneId] === undefined) return false
     return apply(layoutTree.close(layoutState, paneId))
+  }
+
+  /**
+   * Ask to close one pane. An idle session closes immediately. A running one is
+   * only staged in `pendingClose`: the user must confirm, because closing the
+   * pane interrupts the turn (spec D4).
+   *
+   * @param {string} paneId
+   * @returns {boolean} whether the pane closed immediately
+   */
+  function requestClose(paneId) {
+    if (disposed) return false
+    const pane = layoutState.panes[paneId]
+    if (pane === undefined) return false
+    if (!isSessionRunning(pane.sessionId)) {
+      const closed = closePaneValue(paneId)
+      if (closed) clearPendingClose()
+      return closed
+    }
+    const title = rowOf(pane.sessionId)?.title
+    emit({
+      pendingClose: {
+        paneId,
+        sessionId: pane.sessionId,
+        ...(typeof title === 'string' && title !== '' ? { title } : {}),
+      },
+      closeBusy: false,
+      closeError: null,
+    })
+    return false
+  }
+
+  /**
+   * Confirm the staged close: interrupt the running turn first, then release the
+   * pane. A failed interrupt keeps the pane mounted and leaves the dialog open
+   * with `closeError`, so nothing is half-closed and the user can retry or
+   * cancel.
+   *
+   * @returns {Promise<boolean>} whether the pane was closed
+   */
+  async function confirmCloseValue() {
+    if (disposed) return false
+    const pending = snapshot.pendingClose
+    if (pending === null || snapshot.closeBusy) return false
+    emit({ closeBusy: true, closeError: null })
+    try {
+      await interruptSession(sessions, pending.sessionId)
+    } catch (error) {
+      if (disposed) return false
+      emit({ closeBusy: false, closeError: messageOf(error) })
+      return false
+    }
+    if (disposed) return false
+    // The panel may have been hidden (or another close requested) while the
+    // interrupt was in flight; in that case the pane already lost its refs and
+    // must not be structurally re-reconciled from an inactive panel.
+    if (!snapshot.active || snapshot.pendingClose?.paneId !== pending.paneId) {
+      emit({ closeBusy: false })
+      return false
+    }
+    const closed = closePaneValue(pending.paneId)
+    emit({ pendingClose: null, closeBusy: false, closeError: null })
+    return closed
+  }
+
+  /** Dismiss the staged close without changing the session or the layout. */
+  function cancelCloseValue() {
+    if (disposed || snapshot.pendingClose === null || snapshot.closeBusy) return false
+    emit({ pendingClose: null, closeError: null })
+    return true
   }
 
   /** Replace the focused pane's session, focusing an existing holder instead. */
@@ -586,7 +748,14 @@ function createPaneController(ctx, options = {}) {
         }
       }
       releaseAll()
-      emit({ ...statePatch(layoutState, false), active: false, error: null })
+      emit({
+        ...statePatch(layoutState, false),
+        active: false,
+        error: null,
+        pendingClose: null,
+        closeBusy: false,
+        closeError: null,
+      })
     },
     /** Move the focus (and with it dsh's "current session"). */
     focusPane(paneId) {
@@ -640,20 +809,33 @@ function createPaneController(ctx, options = {}) {
       return apply(next)
     },
     /**
-     * Close one pane. Structurally its sibling takes the parent's place and the
-     * focus moves to the neighbour; interrupting a running session and asking
-     * for confirmation is ticket 09, which wraps this call.
+     * Ask to close one pane. An idle session closes immediately; a running one
+     * only stages `pendingClose` so the view can show the interrupt confirmation
+     * (ticket 09). The actual close happens in `confirmClose`.
      *
      * @param {string} paneId
-     * @returns {boolean}
+     * @returns {boolean} whether the pane closed immediately
      */
     closePane(paneId) {
-      return closePaneValue(paneId)
+      return requestClose(paneId)
     },
     /** Close the pane showing `sessionId` (the conversation fallbacks' exit). */
     closePaneBySession(sessionId) {
       const paneId = layoutTree.paneOfSession(layoutState, sessionId)
-      return paneId === undefined ? false : closePaneValue(paneId)
+      return paneId === undefined ? false : requestClose(paneId)
+    },
+    /**
+     * Confirm a staged close: interrupt the running turn, then close the pane.
+     * A failure is reported through `closeError` and the pane stays mounted.
+     *
+     * @returns {Promise<boolean>} whether the pane was closed
+     */
+    confirmClose() {
+      return confirmCloseValue()
+    },
+    /** Dismiss the staged close; the session and the layout are unchanged. */
+    cancelClose() {
+      return cancelCloseValue()
     },
     /**
      * Pane-aware `/resume`: swap the focused pane's conversation without
@@ -773,6 +955,9 @@ function createPaneController(ctx, options = {}) {
         root: null,
         panes: {},
         activePaneId: null,
+        pendingClose: null,
+        closeBusy: false,
+        closeError: null,
       })
     },
   }
@@ -788,5 +973,6 @@ module.exports = {
   probeConversationContent,
   findCurrentSession,
   derivePanePhase,
+  interruptSession,
   createPaneController,
 }
