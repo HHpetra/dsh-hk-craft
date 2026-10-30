@@ -19,6 +19,14 @@ const { CONTENT_FACTORY, PANE_SLOT, derivePanePhase } = require('./dsh-pane-host
 const { effectiveView, viewSegments } = require('./dsh-view-switch.js')
 const { computeLayout, SEPARATOR_HIT_PX, SEPARATOR_LINE_PX } = require('./layout-geometry.js')
 const { ratioFromDrag } = require('./layout-tree.js')
+const {
+  TAB_STATUS_ERROR,
+  TAB_STATUS_IDLE,
+  TAB_STATUS_RUNNING,
+  TAB_STATUS_WAITING,
+  projectTabs,
+  tabShortcutIndex,
+} = require('./tab-strip.js')
 
 let reactModule = null
 
@@ -53,16 +61,127 @@ const paneStyle = {
   color: 'var(--dsw-alias-label-primary, CanvasText)',
 }
 
-/** The workspace box every pane rect is a fraction of. */
-const layoutStyle = {
-  position: 'relative',
-  display: 'block',
+/** The workspace box: the tab strip on top, the pane area filling the rest. */
+const workspaceStyle = {
+  display: 'flex',
+  flexDirection: 'column',
   flex: '1 1 auto',
   minWidth: 0,
   minHeight: 0,
   height: '100%',
   width: '100%',
   overflow: 'hidden',
+  background: 'var(--dsw-alias-bg-base, Canvas)',
+  color: 'var(--dsw-alias-label-primary, CanvasText)',
+}
+
+/** The pane area the fractional rectangles are drawn in. */
+const layoutStyle = {
+  position: 'relative',
+  display: 'block',
+  flex: '1 1 auto',
+  minWidth: 0,
+  minHeight: 0,
+  width: '100%',
+  overflow: 'hidden',
+}
+
+/** Tab strip height (spec §5: 36px, the Agent10 density). */
+const TAB_STRIP_HEIGHT = 36
+
+const tabStripStyle = {
+  display: 'flex',
+  alignItems: 'stretch',
+  flex: 'none',
+  height: TAB_STRIP_HEIGHT,
+  minHeight: TAB_STRIP_HEIGHT,
+  minWidth: 0,
+  borderBottom: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
+  background: 'var(--dsw-alias-bg-base, Canvas)',
+}
+
+/** Only this inner box scrolls; `+` stays pinned at the right. */
+const tabViewportStyle = {
+  display: 'flex',
+  alignItems: 'stretch',
+  flex: '1 1 auto',
+  minWidth: 0,
+  overflowX: 'auto',
+  overflowY: 'hidden',
+  whiteSpace: 'nowrap',
+  scrollbarWidth: 'thin',
+}
+
+const tabStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  flex: '0 0 auto',
+  maxWidth: 200,
+  minWidth: 0,
+  height: '100%',
+  padding: '0 8px',
+  border: 'none',
+  borderTop: '2px solid transparent',
+  borderRight: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 12,
+  cursor: 'pointer',
+  userSelect: 'none',
+}
+
+/** Titles truncate instead of squeezing their neighbours (spec §5). */
+const tabTitleStyle = {
+  maxWidth: 128,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const tabDotStyle = {
+  flex: 'none',
+  width: 7,
+  height: 7,
+  borderRadius: '50%',
+  boxShadow: '0 0 0 1px color-mix(in srgb, CanvasText 12%, transparent)',
+}
+
+const tabCloseStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flex: 'none',
+  width: 18,
+  height: 18,
+  padding: 0,
+  border: 'none',
+  borderRadius: 4,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: 1,
+  cursor: 'pointer',
+}
+
+const tabNewStyle = {
+  ...buttonStyle,
+  flex: 'none',
+  border: 'none',
+  borderLeft: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+  borderRadius: 0,
+  padding: '0 10px',
+}
+
+/** Dot colours per tab status; waiting / error stay distinguishable (red vs orange). */
+const TAB_STATUS_COLORS = {
+  [TAB_STATUS_RUNNING]: '#d9a400',
+  [TAB_STATUS_WAITING]: '#e5484d',
+  [TAB_STATUS_ERROR]: '#f76b15',
+  [TAB_STATUS_IDLE]: '#30a46c',
 }
 
 const headerStyle = {
@@ -551,6 +670,152 @@ function PaneSeparator({ controller, separator }) {
   )
 }
 
+/** Stable stand-in so a missing hook never changes the hook call count. */
+function absentHook() {
+  return undefined
+}
+
+/**
+ * The tab strip: the current workspace's open conversations, in `leaves()`
+ * order (ticket 06, spec §5).
+ *
+ * Every tab is a pane — clicking it focuses that pane, its × closes the pane
+ * (after a confirmation when the session is live), and `+` creates a new
+ * conversation in a new pane beside the focused one. Status dots come from the
+ * live session status map; nothing here reorders tabs by status.
+ *
+ * The title and status read the shell's root standard hooks (`useSessions`,
+ * `useSessionStatus`); ui-session provides them as `sessions` and
+ * `sessionStatus` (dsh-client-ui-session/lib/client.js:1104-1113), which is the
+ * same pair the shipped sidebar consumes.
+ *
+ * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string }} props
+ */
+function TabStrip({ controller, state, kit, t }) {
+  const React = react()
+  const h = React.createElement
+  const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
+  const useSessionStatus = typeof kit?.useSessionStatus === 'function' ? kit.useSessionStatus : absentHook
+  const sessions = useSessions((snapshot) => snapshot)
+  const statuses = useSessionStatus((snapshot) => snapshot)
+  const [hovered, setHovered] = React.useState(null)
+  const [creating, setCreating] = React.useState(false)
+
+  // Ctrl+1..4 focuses the Nth tab. Document-level so the chord works from the
+  // composer too; the tab strip only exists while the pane workspace is shown.
+  React.useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const onKeyDown = (event) => {
+      const index = tabShortcutIndex(event)
+      if (index === null) return
+      event.preventDefault()
+      controller.focusTab(index)
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [controller])
+
+  const tabs = projectTabs(state, sessions, statuses, t('session.untitled'))
+
+  const closeTab = (tab) => {
+    // Closing a pane is `controller.closePane`: idle panes close immediately,
+    // a running one stages `pendingClose`, which the shared `PaneCloseConfirm`
+    // dialog (ticket 09) interrupts and closes after confirmation. The strip
+    // does not own a second confirmation UI.
+    controller.closePane(tab.paneId)
+  }
+
+  const createTab = () => {
+    if (creating) return
+    setCreating(true)
+    Promise.resolve(controller.newTab())
+      .catch(() => {})
+      .then(() => setCreating(false))
+  }
+
+  const tabElements = tabs.map((tab) => {
+    const statusLabel = t(`tab.status.${tab.status}`)
+    const label = tab.shortcut === undefined ? tab.title : `${tab.title} (${tab.shortcut})`
+    return h(
+      'div',
+      {
+        key: tab.paneId,
+        role: 'tab',
+        tabIndex: 0,
+        'aria-selected': tab.focused ? 'true' : 'false',
+        'aria-label': `${label} — ${statusLabel}`,
+        title: `${label} — ${statusLabel}`,
+        'data-hkcraft-tab': tab.paneId,
+        'data-hkcraft-tab-active': tab.focused ? 'true' : 'false',
+        style: {
+          ...tabStyle,
+          borderTopColor: tab.focused ? 'var(--dsw-alias-border-accent, Highlight)' : 'transparent',
+          background: tab.focused
+            ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
+            : hovered === tab.paneId
+              ? 'color-mix(in srgb, currentColor 6%, transparent)'
+              : 'transparent',
+          fontWeight: tab.focused ? 600 : 400,
+        },
+        onClick: () => controller.focusPane(tab.paneId),
+        onKeyDown: (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          controller.focusPane(tab.paneId)
+        },
+        onMouseEnter: () => setHovered(tab.paneId),
+        onMouseLeave: () => setHovered((current) => (current === tab.paneId ? null : current)),
+      },
+      h('span', {
+        'aria-hidden': 'true',
+        'data-hkcraft-tab-status': tab.status,
+        style: { ...tabDotStyle, background: TAB_STATUS_COLORS[tab.status] ?? TAB_STATUS_COLORS[TAB_STATUS_IDLE] },
+      }),
+      h('span', { style: tabTitleStyle }, tab.title),
+      h(
+        'button',
+        {
+          type: 'button',
+          title: t('tab.close'),
+          'aria-label': t('tab.close'),
+          'data-hkcraft-tab-close': tab.paneId,
+          style: { ...tabCloseStyle, visibility: hovered === tab.paneId ? 'visible' : 'hidden' },
+          onClick: (event) => {
+            event.stopPropagation()
+            closeTab(tab)
+          },
+          onKeyDown: (event) => event.stopPropagation(),
+        },
+        '×',
+      ),
+    )
+  })
+
+  return h(
+    'div',
+    {
+      role: 'tablist',
+      'aria-label': t('tab.aria'),
+      'data-hkcraft-tabstrip': '',
+      style: tabStripStyle,
+    },
+    h('div', { style: tabViewportStyle }, tabElements),
+    h(
+      'button',
+      {
+        type: 'button',
+        title: t('tab.new'),
+        'aria-label': t('tab.new'),
+        'data-hkcraft-tab-new': '',
+        disabled: creating,
+        style: { ...tabNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
+        onClick: createTab,
+      },
+      '＋',
+    ),
+  )
+}
+
 /**
  * The interrupt confirmation for closing a running pane (spec D4). It is
  * rendered by the pane host itself, so it exists only while the pane panel is
@@ -669,26 +934,31 @@ function createPaneHost(controller) {
       null,
       h(
         'div',
-        { style: layoutStyle, 'data-hkcraft-layout': '' },
-        geometry.panes.map((paneRect) => {
-          const pane = state.panes[paneRect.paneId]
-          if (pane === undefined) return null
-          return h(PaneFrame, {
-            key: paneRect.paneId,
-            controller,
-            pane,
-            rect: paneRect,
-            focused: paneRect.paneId === state.activePaneId,
-            kit: props,
-            t,
-          })
-        }),
-        geometry.separators.map((separator) =>
-          h(PaneSeparator, {
-            key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
-            controller,
-            separator,
+        { style: workspaceStyle, 'data-hkcraft-workspace': '' },
+        h(TabStrip, { controller, state, kit: props, t }),
+        h(
+          'div',
+          { style: layoutStyle, 'data-hkcraft-layout': '' },
+          geometry.panes.map((paneRect) => {
+            const pane = state.panes[paneRect.paneId]
+            if (pane === undefined) return null
+            return h(PaneFrame, {
+              key: paneRect.paneId,
+              controller,
+              pane,
+              rect: paneRect,
+              focused: paneRect.paneId === state.activePaneId,
+              kit: props,
+              t,
+            })
           }),
+          geometry.separators.map((separator) =>
+            h(PaneSeparator, {
+              key: separator.path.length === 0 ? 'root' : separator.path.join('/'),
+              controller,
+              separator,
+            }),
+          ),
         ),
       ),
       dialog,
@@ -816,6 +1086,7 @@ module.exports = {
   PaneEmptyState,
   PaneViewSwitch,
   PaneCloseConfirm,
+  TabStrip,
   createPaneHost,
   createPaneBody,
   createPaneToggle,

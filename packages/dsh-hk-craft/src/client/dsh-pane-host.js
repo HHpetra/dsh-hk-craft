@@ -49,6 +49,7 @@
 
 const { workspaceIdOf } = require('./dsh-sessions.js')
 const layoutTree = require('./layout-tree.js')
+const { paneIdForTabIndex } = require('./tab-strip.js')
 
 const MAIN_SLOT = 'main'
 const PANEL_KEY = 'hkcraft.panes'
@@ -653,6 +654,95 @@ function createPaneController(ctx, options = {}) {
     return apply(next)
   }
 
+  /** Split `paneId` and open (or create) the conversation beside it. */
+  async function splitPane(paneId, dir, options = {}) {
+    if (disposed || !registered) return false
+    const origin = layoutState.panes[paneId]
+    if (origin === undefined) return false
+    if (dir !== 'row' && dir !== 'col') return false
+
+    let sessionId = options?.sessionId
+    if (sessionId !== undefined) {
+      if (typeof sessionId !== 'string' || sessionId === '') return false
+      const holder = layoutTree.paneOfSession(layoutState, sessionId)
+      if (holder !== undefined) {
+        if (holder !== layoutState.activePaneId) apply(layoutTree.focus(layoutState, holder))
+        return false
+      }
+    } else {
+      const workspaceId = workspaceOf(origin.sessionId) ?? layoutState.workspaceId ?? undefined
+      if (workspaceId === undefined) {
+        emit({ error: `cannot split: pane ${paneId} has no workspace` })
+        return false
+      }
+      try {
+        sessionId = await createSession(workspaceId)
+      } catch (error) {
+        emit({ error: messageOf(error) })
+        return false
+      }
+    }
+
+    const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+    const next = layoutTree.split(layoutState, paneId, dir, pane)
+    if (next === layoutState) return false
+    return apply(next)
+  }
+
+  /** Pane-aware `/clear`: new conversation in the focused pane (or first pane). */
+  async function newInFocusedValue(workspaceId) {
+    if (disposed || !registered) return false
+    if (!snapshot.active) return false
+    const targetWorkspace = workspaceId ?? focusedWorkspaceId()
+    if (targetWorkspace === undefined) return false
+    let sessionId
+    try {
+      sessionId = await createSession(targetWorkspace)
+    } catch (error) {
+      emit({ error: messageOf(error) })
+      return false
+    }
+    if (layoutState.activePaneId !== null) return replaceFocusedValue(sessionId)
+    const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+    const next = { ...layoutTree.openPane(layoutState, pane), workspaceId: targetWorkspace }
+    return apply(next)
+  }
+
+  /** `+`: new conversation in a new pane beside the focused one. */
+  async function newTabValue() {
+    if (disposed || !registered) return false
+    if (!snapshot.active) return false
+    const paneId = layoutState.activePaneId
+    if (paneId === null) return newInFocusedValue()
+    return splitPane(paneId, 'row')
+  }
+
+  /** Ctrl+Enter in `/resume`: the chosen conversation in a new pane. */
+  async function openInNewPaneValue(sessionId) {
+    if (disposed || !registered) return false
+    if (typeof sessionId !== 'string' || sessionId === '') return false
+    // The strip and the command path only act while the pane panel is showing;
+    // outside it there is no visible pane to split beside.
+    if (!snapshot.active) return false
+    const paneId = layoutState.activePaneId
+    if (paneId === null) {
+      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+      const next = {
+        ...layoutTree.openPane(layoutState, pane),
+        workspaceId: layoutState.workspaceId ?? workspaceOf(sessionId) ?? null,
+      }
+      return apply(next)
+    }
+    return splitPane(paneId, 'row', { sessionId })
+  }
+
+  /** Ctrl+1..4: focus the Nth tab. */
+  function focusTabValue(index) {
+    if (disposed) return false
+    const paneId = paneIdForTabIndex(layoutState, index)
+    return paneId === null ? false : focusPaneValue(paneId)
+  }
+
   return {
     getSnapshot: () => snapshot,
     subscribe(listener) {
@@ -766,48 +856,41 @@ function createPaneController(ctx, options = {}) {
      *
      * With no `options.sessionId` a brand-new conversation is created in the
      * pane's workspace and the new pane takes the focus. Passing an explicit
-     * session is the seam the tab strip's `+` and `/resume`'s Ctrl+Enter will
-     * use (tickets 06): the session is opened in the new pane instead of being
-     * created. A session already mounted in another pane is focused rather than
-     * mounted twice (spec §4.4).
+     * session is the seam the tab strip's `+` and `/resume`'s Ctrl+Enter use:
+     * the session is opened in the new pane instead of being created. A session
+     * already mounted in another pane is focused rather than mounted twice
+     * (spec §4.4).
      *
      * @param {string} paneId
      * @param {'row'|'col'} dir
      * @param {{sessionId?: string}} [options]
      * @returns {Promise<boolean>}
      */
-    async split(paneId, dir, options = {}) {
-      if (disposed || !registered) return false
-      const origin = layoutState.panes[paneId]
-      if (origin === undefined) return false
-      if (dir !== 'row' && dir !== 'col') return false
-
-      let sessionId = options?.sessionId
-      if (sessionId !== undefined) {
-        const holder = layoutTree.paneOfSession(layoutState, sessionId)
-        if (holder !== undefined) {
-          if (holder !== layoutState.activePaneId) apply(layoutTree.focus(layoutState, holder))
-          return false
-        }
-      } else {
-        const workspaceId = workspaceOf(origin.sessionId) ?? layoutState.workspaceId ?? undefined
-        if (workspaceId === undefined) {
-          emit({ error: `cannot split: pane ${paneId} has no workspace` })
-          return false
-        }
-        try {
-          sessionId = await createSession(workspaceId)
-        } catch (error) {
-          emit({ error: messageOf(error) })
-          return false
-        }
-      }
-
-      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-      const next = layoutTree.split(layoutState, paneId, dir, pane)
-      if (next === layoutState) return false
-      return apply(next)
-    },
+    split: splitPane,
+    /**
+     * `+` on the tab strip: a new conversation in a new pane beside the focused
+     * one. With no pane open this opens the first pane instead (the empty-state
+     * path), so the button never dead-ends.
+     *
+     * @returns {Promise<boolean>}
+     */
+    newTab: newTabValue,
+    /**
+     * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane beside
+     * the focused one, leaving the current pane untouched. The conversation is
+     * never mounted twice — an already-open one just takes the focus.
+     *
+     * @param {string} sessionId
+     * @returns {Promise<boolean>}
+     */
+    openInNewPane: openInNewPaneValue,
+    /**
+     * Ctrl+1..4: focus the Nth tab in `leaves()` order.
+     *
+     * @param {number} index 1-based tab number
+     * @returns {boolean}
+     */
+    focusTab: focusTabValue,
     /**
      * Ask to close one pane. An idle session closes immediately; a running one
      * only stages `pendingClose` so the view can show the interrupt confirmation
@@ -857,23 +940,7 @@ function createPaneController(ctx, options = {}) {
      * @param {string} [workspaceId]
      * @returns {Promise<boolean>}
      */
-    async newInFocused(workspaceId) {
-      if (disposed || !registered) return false
-      if (!snapshot.active) return false
-      const targetWorkspace = workspaceId ?? focusedWorkspaceId()
-      if (targetWorkspace === undefined) return false
-      let sessionId
-      try {
-        sessionId = await createSession(targetWorkspace)
-      } catch (error) {
-        emit({ error: messageOf(error) })
-        return false
-      }
-      if (layoutState.activePaneId !== null) return replaceFocusedValue(sessionId)
-      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-      const next = { ...layoutTree.openPane(layoutState, pane), workspaceId: targetWorkspace }
-      return apply(next)
-    },
+    newInFocused: newInFocusedValue,
     /**
      * Switch one pane's conversation view. The remembered choice lives on that
      * pane only; the tree, the focus and every retained reference are

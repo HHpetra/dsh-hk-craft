@@ -1003,3 +1003,85 @@ test('/clear can open the first pane from the empty state without a session', as
   assert.equal(liveMainView(fake).length, 1)
   controller.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// Tab strip actions (ticket 06)
+// ---------------------------------------------------------------------------
+
+test('focusTab focuses the Nth tab in layout order', async () => {
+  const { controller } = await readyController({ created: ['s2', 's3'] })
+  await controller.split('p1', 'row')
+  await controller.split('p2', 'col')
+
+  // row(p1, col(p2, p3)): p3 is focused.
+  assert.equal(controller.getSnapshot().activePaneId, 'p3')
+
+  assert.equal(controller.focusTab(1), true)
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(controller.focusTab(3), true)
+  assert.equal(controller.getSnapshot().activePaneId, 'p3')
+
+  assert.equal(controller.focusTab(4), false)
+  assert.equal(controller.focusTab(0), false)
+  assert.equal(controller.focusTab(1.5), false)
+  controller.dispose()
+})
+
+test('+ creates a conversation in a new pane beside the focused one', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+
+  assert.equal(await controller.newTab(), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.root, {
+    kind: 'split',
+    dir: 'row',
+    ratio: 0.5,
+    a: { kind: 'leaf', paneId: 'p1' },
+    b: { kind: 'leaf', paneId: 'p2' },
+  })
+  assert.equal(state.panes.p2.sessionId, 's2')
+  assert.equal(state.activePaneId, 'p2')
+  assert.deepEqual(fake.calls.create, [{ workspaceId: 'w1' }])
+  controller.dispose()
+})
+
+test('+ from the empty state opens the first pane instead of doing nothing', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+  controller.closePane('p1')
+
+  assert.equal(await controller.newTab(), true)
+
+  const activePaneId = controller.getSnapshot().activePaneId
+  assert.equal(activePaneId, 'p2')
+  assert.equal(controller.getSnapshot().panes[activePaneId].sessionId, 's2')
+  assert.equal(liveMainView(fake).length, 1)
+  controller.dispose()
+})
+
+test('Ctrl+Enter opens a chosen conversation in a new pane beside the focused one', async () => {
+  const { fake, controller } = await readyController()
+
+  assert.equal(await controller.openInNewPane('s9'), true)
+
+  const state = controller.getSnapshot()
+  assert.deepEqual(state.root.a, { kind: 'leaf', paneId: 'p1' })
+  assert.deepEqual(state.root.b, { kind: 'leaf', paneId: 'p2' })
+  assert.deepEqual(state.panes.p2, { paneId: 'p2', sessionId: 's9', view: 'chat' })
+  assert.equal(state.activePaneId, 'p2')
+  assert.deepEqual(fake.calls.create, [])
+  assert.equal(liveMainView(fake)[0].sessionId, 's9')
+  controller.dispose()
+})
+
+test('Ctrl+Enter on a conversation already open focuses its pane instead of duplicating it', async () => {
+  const { controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+
+  assert.equal(await controller.openInNewPane('s1'), false)
+
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
+  controller.dispose()
+})

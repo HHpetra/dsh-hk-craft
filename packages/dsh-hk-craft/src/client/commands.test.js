@@ -3,7 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { registerCommands } = require('./commands.js')
+const { registerCommands, createCtrlEnterTracker } = require('./commands.js')
 
 /** @param {object} table */
 function fakeT(table) {
@@ -93,7 +93,8 @@ test('registerCommands registers /clear and /resume with localized copy', () => 
     assert.notEqual(spec.label(), spec.description())
     assert.equal(spec.label().startsWith('command.'), false)
   }
-  assert.equal(h.disposers.length, 2)
+  // Two command registrations plus the Ctrl+Enter modifier tracker.
+  assert.equal(h.disposers.length, 3)
 })
 
 test('/clear is a local action that starts a session in the triggering workspace', () => {
@@ -192,7 +193,7 @@ test('registerCommands never talks to the model', () => {
 
 /** A stand-in for the pane host face the commands call. */
 function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' } } = {}) {
-  const calls = { replaced: [], newConversation: [] }
+  const calls = { replaced: [], newConversation: [], openedInNewPane: [] }
   return {
     calls,
     active: () => active,
@@ -203,6 +204,10 @@ function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' } 
     },
     newConversation: (workspaceId) => {
       calls.newConversation.push(workspaceId)
+      return Promise.resolve(true)
+    },
+    openInNewPane: (sessionId) => {
+      calls.openedInNewPane.push(sessionId)
       return Promise.resolve(true)
     },
   }
@@ -252,3 +257,94 @@ test('/resume uses the native reveal when the pane workspace is showing but empt
   assert.deepEqual(panes.calls.replaced, [])
   assert.deepEqual(h.calls.opened, ['s2'])
 })
+
+// ---------------------------------------------------------------------------
+// Ctrl+Enter: open the chosen conversation in a new pane (ticket 06)
+// ---------------------------------------------------------------------------
+
+test('/resume + Ctrl+Enter opens the chosen conversation in a new pane', async () => {
+  const panes = fakePanes()
+  const h = harness({ panes, newPaneRequested: () => true })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.openedInNewPane, ['s2'])
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(h.calls.opened, [])
+})
+
+test('/resume without Ctrl+Enter still replaces the focused pane', async () => {
+  const panes = fakePanes()
+  const h = harness({ panes, newPaneRequested: () => false })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.openedInNewPane, [])
+  assert.deepEqual(panes.calls.replaced, ['s2'])
+})
+
+test('/resume + Ctrl+Enter outside the pane workspace reveals natively', async () => {
+  const panes = fakePanes({ active: false, focused: null })
+  const h = harness({ panes, newPaneRequested: () => true })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.openedInNewPane, [])
+  assert.deepEqual(h.calls.opened, ['s2'])
+})
+
+test('the Ctrl+Enter tracker arms on the chord and is consumed once', () => {
+  const target = fakeEventTarget()
+  const tracker = createCtrlEnterTracker(target)
+
+  assert.equal(tracker.consume(), false)
+
+  target.dispatch('keydown', { key: 'Enter', ctrlKey: true })
+  assert.equal(tracker.consume(), true)
+  assert.equal(tracker.consume(), false)
+})
+
+test('plain Enter and a released modifier never arm the new-pane selection', () => {
+  const target = fakeEventTarget()
+  const tracker = createCtrlEnterTracker(target)
+
+  target.dispatch('keydown', { key: 'Enter' })
+  assert.equal(tracker.consume(), false)
+
+  target.dispatch('keydown', { key: 'Enter', ctrlKey: true })
+  target.dispatch('keyup', { key: 'Enter' })
+  assert.equal(tracker.consume(), false)
+})
+
+test('disposing the tracker removes its listeners', () => {
+  const target = fakeEventTarget()
+  const tracker = createCtrlEnterTracker(target)
+
+  assert.equal(target.listeners.size, 2)
+  tracker.dispose()
+  assert.equal(target.listeners.size, 0)
+})
+
+test('a tracker without a document is a harmless no-op', () => {
+  const tracker = createCtrlEnterTracker(undefined)
+  assert.equal(tracker.consume(), false)
+  tracker.dispose()
+})
+
+/** Tiny EventTarget stand-in: listeners are kept by type so tests can dispatch. */
+function fakeEventTarget() {
+  const listeners = new Map()
+  return {
+    listeners,
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, new Set())
+      listeners.get(type).add(listener)
+    },
+    removeEventListener(type, listener) {
+      const set = listeners.get(type)
+      if (set === undefined) return
+      set.delete(listener)
+      if (set.size === 0) listeners.delete(type)
+    },
+    dispatch(type, event) {
+      for (const listener of [...(listeners.get(type) ?? [])]) listener(event)
+    },
+  }
+}
