@@ -183,6 +183,29 @@ function decodeLayout(raw, options = {}) {
 }
 
 /**
+ * Whether a workspace has ever been opened in split, judged by the mere
+ * existence of its layout key. The value is deliberately not parsed: the sidebar
+ * light only needs "there is a record", and a corrupt payload still proves the
+ * workspace was opened (spec §1). A broken store reports `false` instead of
+ * throwing, which degrades to "not enabled" only for that one workspace.
+ *
+ * @param {{getItem?: (key: string) => unknown}|undefined|null} storage
+ * @param {string} workspaceId
+ * @returns {boolean}
+ */
+function hasLayoutKey(storage, workspaceId) {
+  const key = layoutKey(workspaceId)
+  if (key === null) return false
+  try {
+    if (typeof storage?.getItem !== 'function') return false
+    const raw = storage.getItem(key)
+    return raw !== null && raw !== undefined
+  } catch (_error) {
+    return false
+  }
+}
+
+/**
  * Read one workspace's layout through the storage seam.
  *
  * @param {{getItem?: (key: string) => unknown}|undefined|null} storage
@@ -257,6 +280,7 @@ module.exports = {
   encodeLayout,
   decodeLayout,
   pruneToKnownSessions,
+  hasLayoutKey,
   readLayout,
   writeLayout,
   removeLayout,
