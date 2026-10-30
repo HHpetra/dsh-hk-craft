@@ -8,16 +8,21 @@
  * loader must equal the bundle patch row name (`dsh-hk-craft`).
  *
  * Everything here goes through public plugin services only: `slots`, `locale`,
- * `uiWorkspace` and `workspaces` for the sidebar workspace section, and
- * `commandUi`, `sessions`, `workspaces` and `uiWorkspace` for the slash
- * commands. Both capabilities attach through `ctx.inject`, so the footer action
- * keeps working even when a service is absent.
+ * `sessions`, `layout`, `uiWorkspace` and `workspaces` for the sidebar workspace
+ * section, and `commandUi`, `sessions`, `workspaces` and `uiWorkspace` for the
+ * slash commands. The optional capabilities attach through `ctx.inject`, so the
+ * footer action keeps working even when a service is absent.
+ *
+ * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
+ * and thin React views (`pane-view.js`).
  */
 
 const { dictionaries } = require('./locale.js')
 const { DiagnosticsAction } = require('./diagnostics.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
+const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
+const { createPaneBody, createPaneHost, createPaneToggle } = require('./pane-view.js')
 const { registerCommands } = require('./commands.js')
 
 const NS = 'dsh-hk-craft'
@@ -33,7 +38,7 @@ const NS = 'dsh-hk-craft'
 const WORKSPACE_SLOT_PRIORITY = -100
 
 /** Cordis services this plugin needs before `apply` runs. */
-const inject = ['slots', 'locale']
+const inject = ['slots', 'locale', 'sessions', 'layout']
 
 /** Services the two slash commands need before they can register. */
 const COMMAND_SERVICES = ['commandUi', 'sessions', 'workspaces', 'uiWorkspace']
@@ -54,6 +59,48 @@ function apply(ctx) {
       DiagnosticsAction,
     ),
   )
+
+  const controller = createPaneController(ctx)
+  const PaneHost = createPaneHost(controller)
+  const PaneBody = createPaneBody(controller)
+  const PaneToggle = createPaneToggle(controller)
+
+  ctx.slots.inject('sidebar.footer.action', () =>
+    ctx.slots.register(
+      {
+        name: 'sidebar.footer.action',
+        id: 'dsh-hk-craft.panes',
+        locale: NS,
+      },
+      PaneToggle,
+    ),
+  )
+
+  ctx.effect(() => {
+    // The `main` keyed root slot is declared by ui-layout. Register our key
+    // first, then the child slot entry the main entry declares. The generator
+    // form matches how ui-conversation registers `main` plus its child slots.
+    const disposeMain = ctx.slots.inject(MAIN_SLOT, function* () {
+      yield ctx.slots.register(
+        {
+          name: MAIN_SLOT,
+          key: PANEL_KEY,
+          locale: NS,
+          children: {
+            [PANE_SLOT]: { kind: 'single', scope: 'session' },
+          },
+        },
+        PaneHost,
+      )
+      yield ctx.slots.register({ name: PANE_SLOT, locale: NS }, PaneBody)
+      controller.markRegistered()
+    })
+
+    return () => {
+      disposeMain()
+      controller.dispose()
+    }
+  }, 'dsh-hk-craft: pane mount')
 
   // The workspace section replaces a slot declared by ui-workspace and drives its
   // public service, so both services must exist before the entry is registered.

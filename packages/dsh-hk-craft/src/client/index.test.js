@@ -5,6 +5,7 @@ const assert = require('node:assert/strict')
 
 const { NS, inject, COMMAND_SERVICES, apply, WORKSPACE_SLOT_PRIORITY } = require('./index.js')
 const { zh, en } = require('./locale.js')
+const { CONTENT_FACTORY, PANEL_KEY, PANE_SLOT } = require('./dsh-pane-host.js')
 
 /** @returns {object} one fake workspace snapshot store */
 function workspaceService(items = []) {
@@ -32,9 +33,22 @@ function workspaceServices() {
  * @param {{services?: Record<string, unknown>}} [options]
  */
 function fakeCtx({ services = workspaceServices() } = {}) {
-  const calls = { effect: [], locale: [], injected: [], registered: [], injections: [], services: [] }
+  const calls = {
+    effect: [],
+    locale: [],
+    injected: [],
+    registered: [],
+    injections: [],
+    services: [],
+    snapshot: [],
+    retained: [],
+    selectPanel: [],
+  }
+  const panel = { activePanelId: null }
+  const panelListeners = new Set()
   const ctx = {
     calls,
+    panel,
     effect(fn, label) {
       calls.effect.push(label)
       const dispose = fn()
@@ -62,15 +76,49 @@ function fakeCtx({ services = workspaceServices() } = {}) {
         }
       },
     },
+    sessions: {
+      list: { getSnapshot: () => ({ byId: {} }) },
+      retain(sessionId, options) {
+        calls.retained.push({ sessionId, options })
+        return { sessionId, release() {} }
+      },
+    },
+    layout: {
+      panelInfo: {
+        getSnapshot: () => ({ activePanelId: panel.activePanelId }),
+        subscribe(listener) {
+          panelListeners.add(listener)
+          return () => panelListeners.delete(listener)
+        },
+      },
+      selectPanel(panelId) {
+        calls.selectPanel.push(panelId)
+        panel.activePanelId = panelId
+        for (const listener of [...panelListeners]) listener()
+      },
+    },
     slots: {
       inject(key, callback) {
         calls.injected.push(key)
-        callback()
-        return () => {}
+        const result = callback()
+        if (result !== null && typeof result === 'object' && typeof result.next === 'function') {
+          const disposers = []
+          for (const value of result) if (typeof value === 'function') disposers.push(value)
+          return () => {
+            for (const dispose of disposers.reverse()) dispose()
+          }
+        }
+        return typeof result === 'function' ? result : () => {}
       },
       register(options, component) {
         calls.registered.push({ options, component })
         return () => {}
+      },
+      snapshot(name) {
+        calls.snapshot.push(name)
+        return name === `factory:${CONTENT_FACTORY}`
+          ? [{ type: 'factory', name: CONTENT_FACTORY, scope: 'session-maybe' }]
+          : []
       },
     },
   }
@@ -103,7 +151,7 @@ function commandServices() {
 }
 
 test('declares the services it uses', () => {
-  assert.deepEqual(inject, ['slots', 'locale'])
+  assert.deepEqual(inject, ['slots', 'locale', 'sessions', 'layout'])
   assert.deepEqual(COMMAND_SERVICES, ['commandUi', 'sessions', 'workspaces', 'uiWorkspace'])
 })
 
@@ -119,13 +167,43 @@ test('zh and en carry the same keys', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
 })
 
-test('registers one sidebar footer action inside its slot', () => {
+test('registers its main key with a session-scoped child slot', () => {
   const ctx = fakeCtx()
   apply(ctx)
-  const { options, component } = entryNamed(ctx, 'sidebar.footer.action')
-  assert.equal(options.id, 'dsh-hk-craft.diagnostics')
-  assert.equal(options.locale, NS)
-  assert.equal(typeof component, 'function')
+
+  const main = ctx.calls.registered.find((entry) => entry.options.name === 'main')
+  assert.notEqual(main, undefined)
+  assert.equal(main.options.key, PANEL_KEY)
+  assert.equal(main.options.locale, NS)
+  assert.deepEqual(main.options.children, {
+    [PANE_SLOT]: { kind: 'single', scope: 'session' },
+  })
+  assert.equal(typeof main.component, 'function')
+
+  const body = ctx.calls.registered.find((entry) => entry.options.name === PANE_SLOT)
+  assert.notEqual(body, undefined)
+  assert.equal(typeof body.component, 'function')
+})
+
+test('registers the diagnostics action and the visible pane toggle in the footer slot', () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+
+  const footer = ctx.calls.registered
+    .filter((entry) => entry.options.name === 'sidebar.footer.action')
+    .map((entry) => entry.options.id)
+    .sort()
+
+  assert.deepEqual(footer, ['dsh-hk-craft.diagnostics', 'dsh-hk-craft.panes'])
+  assert.ok(ctx.calls.injected.includes('sidebar.footer.action'))
+  assert.ok(ctx.calls.injected.includes('main'))
+})
+
+test('feature-probes conversation.content when the pane registration mounts', () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+
+  assert.ok(ctx.calls.snapshot.includes(`factory:${CONTENT_FACTORY}`))
 })
 
 test('waits for the workspace services before touching the workspaces slot', () => {
@@ -134,11 +212,19 @@ test('waits for the workspace services before touching the workspaces slot', () 
   assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
 })
 
-test('registers exactly the two slot entries this ticket owns', () => {
+test('registers the workspace entry alongside this ticket\'s pane entries', () => {
   const ctx = fakeCtx()
   apply(ctx)
-  assert.deepEqual(ctx.calls.injected, ['sidebar.footer.action', 'sidebar.workspaces'])
-  assert.equal(ctx.calls.registered.length, 2)
+  assert.deepEqual(
+    ctx.calls.registered.map((entry) => entry.options.name).sort(),
+    ['hkcraft.pane', 'main', 'sidebar.footer.action', 'sidebar.footer.action', 'sidebar.workspaces'],
+  )
+  assert.deepEqual(ctx.calls.injected, [
+    'sidebar.footer.action',
+    'sidebar.footer.action',
+    'main',
+    'sidebar.workspaces',
+  ])
 })
 
 test('shadows the sidebar workspace section at a lower priority than the shipped occupant', () => {
@@ -189,7 +275,7 @@ test('skips command registration when a command service is missing', () => {
   const ctx = fakeCtx()
   apply(ctx)
   assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
-  assert.equal(ctx.calls.registered.length, 2)
+  assert.equal(ctx.calls.registered.length, 5)
 })
 
 test('apply is idempotent in shape: no module-level state leaks between loads', () => {
