@@ -10,7 +10,10 @@
 - triage 状态写在每个 issue 文件靠上的 `Status:` 行（取值见 `triage-labels.md`）
 - 评论与对话历史追加到文件末尾的 `## Comments` 小节下
 
-当前在用的 effort：`.scratch/inception/`（`spec.md` 范围与边界、`roadmap.md` 里程碑与验收）。
+当前在用的 effort：
+
+- `.scratch/pane-workspace/`（多会话分屏 + 侧栏精简：`spec.md` 与 `issues/01`–`10`）
+- `.scratch/inception/`（`spec.md` 范围与边界、`roadmap.md` 里程碑与验收）
 
 ## 当 skill 说“发布到 issue 跟踪器”
 
