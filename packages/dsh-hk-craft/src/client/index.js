@@ -10,8 +10,10 @@
  * Everything here goes through public plugin services only: `slots`, `locale`,
  * `sessions`, `layout`, `uiWorkspace` and `workspaces` for the sidebar workspace
  * section and the settings page, and `commandUi`, `sessions`, `workspaces` and
- * `uiWorkspace` for the slash commands. The optional capabilities attach through
- * `ctx.inject`, so the plugin keeps working even when a service is absent.
+ * `uiWorkspace` for the slash commands. Optional capabilities attach through
+ * `ctx.inject`, except the agent-preset roster behind the read-only mode badge,
+ * which is read through `ctx.get('remote')` at call time (ticket 07), so the
+ * plugin keeps working even when a service is absent.
  *
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
  * and thin React views (`pane-view.js`); the HK Craft settings page
@@ -26,6 +28,8 @@ const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh
 const { createViewSwitch } = require('./dsh-view-switch.js')
 const { createPaneBody, createPaneHost } = require('./pane-view.js')
 const { createSettingsSection } = require('./settings-view.js')
+const { modeRosterRows } = require('./pane-mode.js')
+const { createModeSeat } = require('./pane-mode-seat.js')
 const { registerCommands } = require('./commands.js')
 
 const NS = 'dsh-hk-craft'
@@ -57,6 +61,57 @@ const inject = ['slots', 'locale', 'sessions', 'layout']
 const COMMAND_SERVICES = ['commandUi', 'sessions', 'workspaces', 'uiWorkspace']
 
 /**
+ * The optional agent-preset roster adapter behind the read-only mode badge
+ * (ticket 07, spec §6).
+ *
+ * `remote.agentPresets.list()` is an optional capability, so it is read through
+ * `ctx.get('remote')` at call time instead of joining `inject`: an older or
+ * trimmed shell simply has no roster and the badge falls back to the localized
+ * shipped name or the raw id. A failed read, an absent service and a malformed
+ * result all degrade to "no roster rows".
+ *
+ * The result is cached per preset id for the process. The seat calls the loader
+ * on mount and again when the focused pane's preset id changes; the cache keeps
+ * ordinary focus switches from re-requesting the same roster, while a failed
+ * read is not cached so the next focus change can retry.
+ *
+ * @param {any} ctx Cordis context of the client plugin row
+ * @returns {(presetId: string) => Promise<{id: string, name?: string, description?: string}[]>}
+ */
+function createModeRosterLoader(ctx) {
+  /** @type {Map<string, {id: string, name?: string, description?: string}[]>} */
+  const cache = new Map()
+
+  return async function loadModeRoster(presetId) {
+    const key = typeof presetId === 'string' ? presetId : ''
+    const cached = cache.get(key)
+    if (cached !== undefined) return cached
+    try {
+      const result = await ctx.get('remote')?.agentPresets?.list?.()
+      const rows = modeRosterRows(result)
+      if (result?.ok === true) cache.set(key, rows)
+      return rows
+    } catch (_error) {
+      return []
+    }
+  }
+}
+
+/**
+ * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
+ * Ticket 07 fills the read-only mode seat here; ticket 08 fills `subagents` the
+ * same way, so neither module has to reach into the strip or the action group.
+ *
+ * @param {any} ctx Cordis context of the client plugin row
+ * @returns {Record<string, Function>} component types by seat name
+ */
+function createStripSeats(ctx) {
+  return {
+    mode: createModeSeat({ loadRoster: createModeRosterLoader(ctx) }),
+  }
+}
+
+/**
  * @param {any} ctx Cordis context of the client plugin row.
  */
 function apply(ctx) {
@@ -68,12 +123,12 @@ function apply(ctx) {
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
 
   /**
-   * The strip's pinned native-action seats (ticket 06, `pane-toolbar.js`).
-   * Each later ticket fills its own key — `mode` (ticket 07) and `subagents`
-   * (ticket 08) — without touching the strip or the group; an empty object
-   * keeps the group invisible and leaves the tabs all the room.
+   * The strip's pinned native-action seats (ticket 06 `pane-toolbar.js`, filled
+   * by tickets 07/08). Each later ticket fills its own key without touching the
+   * strip or the group; `createStripSeats` builds them so an empty map keeps the
+   * group invisible and leaves the tabs all the room.
    */
-  const stripSeats = {}
+  const stripSeats = createStripSeats(ctx)
   const PaneHost = createPaneHost(controller, { seats: stripSeats })
   const PaneBody = createPaneBody(controller)
 
@@ -197,6 +252,8 @@ module.exports = {
   COMMAND_SERVICES,
   apply,
   WORKSPACE_SLOT_PRIORITY,
+  createModeRosterLoader,
+  createStripSeats,
   SETTINGS_SLOT,
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,
