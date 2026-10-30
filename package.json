@@ -1,0 +1,22 @@
+{
+  "name": "dsh-hk-craft",
+  "private": true,
+  "license": "MIT",
+  "productName": "dsh-hk-craft",
+  "author": "HHpetra",
+  "homepage": "",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "preinstall": "node scripts/only-pnpm.mjs",
+    "check": "node scripts/check-bundle.mjs",
+    "build": "pnpm -r --if-present --filter \"./packages/**\" build",
+    "test": "pnpm -r --if-present --filter \"./packages/**\" test"
+  }
+}

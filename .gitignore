@@ -1,0 +1,64 @@
+# OS generated files
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+.DS_Store
+$RECYCLE.BIN/
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Cursor / OpenCode — ignore OpenCode wiring; keep .cursor/ project rules & MCP in git
+.opencode/
+opencode.json
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# Build & Dependencies
+build/
+dist/
+bin/
+obj/
+node_modules/
+.pnpm-store/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# Generated browser plugin bundle (built from src/client/)
+/packages/*/lib/client.js
+
+# Disposable dsh profile used by smoke tests
+/.dsh-dev/
+
+# graft local graph cache — regenerable (run `graft build`)
+/graft/
+
+# Local scratch
+tmp/

@@ -1,0 +1,12 @@
+# dsh-hk-craft bundle layer.
+#
+# One row: this package carries the host half today, and will carry its client
+# half through the `dsh.client` manifest when the UI lands. Installing the
+# bundle appends this layer to an existing profile; nothing here creates a
+# launcher, a product DSH_HOME, or a second port.
+#
+# A profile may override this row by id in its own cordis.patch.yml, applied
+# after every bundle layer. Do not insert a second row with this id.
+- insert:
+    - id: dsh-hk-craft
+      name: dsh-hk-craft

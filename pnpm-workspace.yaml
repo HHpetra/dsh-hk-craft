@@ -1,0 +1,9 @@
+packages:
+  - "packages/*"
+
+shamefullyHoist: true
+engineStrict: true
+
+# Client bundles are built with esbuild (installed as a package devDependency).
+allowBuilds:
+  esbuild: true

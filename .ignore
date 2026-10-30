@@ -1,0 +1,4 @@
+# graft cards are gitignored but should stay greppable
+!graft/
+graft/.cache/
+graft/.graph/
