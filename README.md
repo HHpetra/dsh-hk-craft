@@ -6,7 +6,10 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 
 ## 状态
 
-**首个能力已交付**：多会话分屏 + 侧栏精简，并补齐侧栏工作区管理（四态灯、删除确认、拖动排序）、HK Craft 设置页与窗格条工具栏。关键决策见 [ADR-0005/0006/0007](ai-docs/ADR/decisions.md)，上游契约清单见 [`doc/upstream-contracts.md`](doc/upstream-contracts.md)。
+**首个能力已交付**：多会话分屏 + 侧栏精简，并补齐侧栏工作区管理（五态灯、删除确认、拖动排序）、HK Craft 设置页与窗格头部工具栏。关键决策见 [ADR-0005/0006/0007/0008](ai-docs/ADR/decisions.md)，上游契约清单见 [`doc/upstream-contracts.md`](doc/upstream-contracts.md)。
+
+- **多会话分屏**：每个窗格承载一个会话，`+` 按会话数量均分横排；每个窗格头部显示自己的标题、当前模式、子代理查看、视图切换与关闭，标签条只保留标签和紧贴的 `+`。
+- **侧栏精简与工作区管理**：工作区行有五态灯（灰/蓝空闲/绿未读/黄/红）、行内删除（二次确认、不中断运行中的会话）与指针拖动排序（顺序由 Host 持久化）。
 
 插件仍以 bundle 形式装入现有 dsh profile，不改变 dsh 的端口、home 与登录态；安装后需重启 dsh 生效。
 

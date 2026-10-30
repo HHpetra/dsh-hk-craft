@@ -18,9 +18,9 @@
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
  * and thin React views (`pane-view.js`); the HK Craft settings page
  * (`settings-view.js`) is the transitional home of the diagnostics and the
- * split-view switch. The strip's native-action seats keep the same
- * shape: `pane-subagents.js` is the pure projection and
- * `pane-subagents-view.js` its React seat.
+ * split-view switch. Each pane header carries two native controls: the read-only
+ * mode badge (`pane-mode.js` projection, `pane-mode-seat.js` view) and the
+ * subagent viewer (`pane-subagents.js` projection, `pane-subagents-view.js` view).
  */
 
 const { dictionaries } = require('./locale.js')
@@ -118,22 +118,17 @@ function catalogRefresher(ctx) {
 }
 
 /**
- * The strip's pinned native-action seats (`pane-toolbar.js`).
- * The read-only mode seat and the subagent seat fill their keys the
- * same way, so neither module has to reach into the strip or the action group.
- * The `createSeat` option exists for tests: production always builds the real
- * seat, and the callback wiring stays observable without rendering React.
+ * The two native controls every pane header can show: the read-only mode badge
+ * and the subagent viewer. Both are optional components; a null result from
+ * either leaves no box in the header.
  *
  * @param {any} ctx Cordis context of the client plugin row
- * @param {{createSeat?: (options: object) => Function}} [options]
- * @returns {Record<string, Function>} component types by seat name
+ * @returns {{mode: Function, subagents: Function}} component types by seat name
  */
-function createStripSeats(ctx, options = {}) {
-  const createSeat =
-    typeof options?.createSeat === 'function' ? options.createSeat : createSubagentSeat
+function createHeaderSeats(ctx) {
   return {
     mode: createModeSeat({ loadRoster: createModeRosterLoader(ctx) }),
-    subagents: createSeat({ refreshCatalog: catalogRefresher(ctx) }),
+    subagents: createSubagentSeat({ refreshCatalog: catalogRefresher(ctx) }),
   }
 }
 
@@ -148,14 +143,8 @@ function apply(ctx) {
   // developer-tools gate) the panes stay chat-only instead of failing to mount.
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
 
-  /**
-   * The strip's pinned native-action seats (`pane-toolbar.js`). Each seat fills
-   * its own key without touching the
-   * strip or the group; `createStripSeats` builds them so an empty map keeps the
-   * group invisible and leaves the tabs all the room.
-   */
-  const stripSeats = createStripSeats(ctx)
-  const PaneHost = createPaneHost(controller, { seats: stripSeats })
+  const headerSeats = createHeaderSeats(ctx)
+  const PaneHost = createPaneHost(controller, { headerSeats })
   const PaneBody = createPaneBody(controller)
 
   // The HK Craft settings page: diagnostics plus the transitional
@@ -279,7 +268,7 @@ module.exports = {
   apply,
   WORKSPACE_SLOT_PRIORITY,
   createModeRosterLoader,
-  createStripSeats,
+  createHeaderSeats,
   SETTINGS_SLOT,
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,

@@ -9,30 +9,30 @@
  * That id is all a pane can know: dsh fixes the composition after the first
  * turn, so this module resolves copy only; it never offers a switch.
  *
- * dsh shapes stop here. `pane-view.js` passes the raw `useSessions` snapshot to
- * the seat, and the seat passes the normalized roster rows (or nothing) in.
+ * dsh shapes stop here. `pane-view.js` passes the raw `useSessions` snapshot and
+ * the pane's own session id to the seat, and the seat passes the normalized roster
+ * rows (or nothing) in.
  */
 
 /** Localized names for the shipped presets whose copy the plugin carries. */
 const BUILT_IN_MODE_KEYS = {
-  standard: 'strip.mode.standard',
-  ptc: 'strip.mode.ptc',
-  minimal: 'strip.mode.minimal',
-  cordis: 'strip.mode.cordis',
+  standard: 'pane.mode.standard',
+  ptc: 'pane.mode.ptc',
+  minimal: 'pane.mode.minimal',
+  cordis: 'pane.mode.cordis',
 }
 
 /** The explanation used when the roster publishes no description. */
-const MODE_HINT_KEY = 'strip.mode.hint'
+const MODE_HINT_KEY = 'pane.mode.hint'
 
 /**
- * The preset id recorded on the focused pane's session summary.
+ * The preset id recorded on one pane's session summary.
  *
- * @param {{sessionId?: string}|null|undefined} focused focused strip entry
  * @param {{byId?: Record<string, any>}|undefined} sessions raw `useSessions` snapshot
+ * @param {string|undefined} sessionId the pane's conversation
  * @returns {string|undefined} a non-empty preset id, or undefined
  */
-function focusedPresetId(focused, sessions) {
-  const sessionId = focused?.sessionId
+function presetIdOfSession(sessions, sessionId) {
   if (typeof sessionId !== 'string' || sessionId === '') return undefined
   const value = sessions?.byId?.[sessionId]?.projectionValues?.agentPreset
   if (typeof value !== 'string') return undefined
@@ -114,7 +114,7 @@ function resolveModeLabel(presetId, roster, t) {
 module.exports = {
   BUILT_IN_MODE_KEYS,
   MODE_HINT_KEY,
-  focusedPresetId,
+  presetIdOfSession,
   modeRosterRows,
   resolveModeLabel,
 }

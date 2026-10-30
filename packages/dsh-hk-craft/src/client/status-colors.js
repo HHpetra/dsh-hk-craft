@@ -4,13 +4,14 @@
  * The one palette behind both status-dot tables.
  *
  * The sidebar lights and the strip dots describe different things (workspace
- * aggregate vs. one conversation), but they share the same three colour roles,
- * so the literal fills live here once. Token-backed entries follow the shell's
- * palette and fall back to the literal on a shell without the token.
+ * aggregate vs. one conversation), but they share the same colour roles, so the
+ * literal fills live here once. Token-backed entries follow the shell's palette
+ * and fall back to the literal on a shell without the token.
  *
- * The sidebar's fourth state, gray, is a deliberately neutral fill that does not
- * follow the theme's accent: it means "not enabled / no conversation finished",
- * not "disabled by the shell".
+ * The sidebar's gray is a deliberately neutral fill that does not follow the
+ * theme's accent: it means "not enabled / no started conversation". Idle uses a
+ * neutral blue, distinct from both the green unread completion and the gray
+ * unused state.
  */
 
 const {
@@ -19,11 +20,12 @@ const {
   STRIP_STATUS_IDLE,
 } = require('./pane-strip.js')
 
-/** Dot fills for the sidebar workspace lights (red > yellow > green > gray). */
+/** Dot fills for the sidebar workspace lights (red > yellow > green > idle > gray). */
 const LIGHT_COLORS = Object.freeze({
   red: '#e5484d',
   yellow: '#d9a400',
   green: '#30a46c',
+  idle: '#3b82f6',
   gray: '#8b8d98',
 })
 

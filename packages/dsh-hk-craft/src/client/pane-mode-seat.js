@@ -1,25 +1,24 @@
 'use strict'
 
 /**
- * The strip's read-only current-mode seat.
+ * The pane header's read-only current-mode badge.
  *
- * This is the dumb half of the mode badge: it takes the seat props
- * `pane-toolbar.js` documents — the visible layout snapshot, the focused strip
- * entry, the raw `useSessions` / `useSessionStatus` snapshots, the host kit and
- * the translator — and paints the focused pane's preset name. The projection and
- * label rules live in `pane-mode.js`; the optional roster is read by a loader
- * injected from `index.js`, so nothing here imports dsh or a plugin context.
+ * This is the dumb half of the mode badge: it takes the pane header props — the
+ * pane's session id, the raw `useSessions` snapshot, the translator and its box
+ * style — and paints the preset name. The projection and label rules live in
+ * `pane-mode.js`; the optional roster is read by a loader injected from
+ * `index.js`, so nothing here imports dsh or a plugin context.
  *
  * Read-only by construction: a session's composition is fixed once its
  * conversation starts, so the badge is a plain `span` with a `title` and no
- * click handler. The seat renders nothing when the focused session records no
- * preset, and the strip's action group removes the empty slot entirely.
+ * click handler. The seat renders nothing when the session records no preset, so
+ * the header simply omits it.
  */
 
-const { focusedPresetId, resolveModeLabel } = require('./pane-mode.js')
+const { presetIdOfSession, resolveModeLabel } = require('./pane-mode.js')
 const { react } = require('./react-and-translator.js')
 
-/** The chip: content-sized, capped by the seat wrapper, never a control. */
+/** The chip: content-sized, capped by its pane-header box, never a control. */
 const modeBadgeStyle = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -37,7 +36,7 @@ const modeBadgeStyle = {
   cursor: 'default',
 }
 
-/** A long custom name truncates instead of squeezing the subagent seat. */
+/** A long custom name truncates instead of squeezing the rest of the header. */
 const modeLabelStyle = {
   minWidth: 0,
   overflow: 'hidden',
@@ -46,25 +45,25 @@ const modeLabelStyle = {
 }
 
 /**
- * Build the mode seat component.
+ * Build the mode badge component.
  *
  * @param {{loadRoster?: (presetId: string) => Promise<{id: string, name?: string, description?: string}[]>}} [options]
  *   `loadRoster` is the optional agent-preset roster adapter; when it is absent
  *   or fails, the badge still resolves the localized shipped name or the id.
- * @returns {(props: object) => any} the React seat component
+ * @returns {(props: object) => any} the React badge component
  */
 function createModeSeat(options = {}) {
   const loadRoster = typeof options.loadRoster === 'function' ? options.loadRoster : null
 
   /**
-   * One pane strip seat: the focused conversation's mode, or null.
+   * One pane header badge: that pane's mode, or null.
    *
-   * @param {object} props seat props from `PaneStripActions`
+   * @param {object} props pane header props
    */
   function ModeSeat(props) {
     const React = react()
     const h = React.createElement
-    const presetId = focusedPresetId(props?.focused, props?.sessions)
+    const presetId = presetIdOfSession(props?.sessions, props?.sessionId)
     const [roster, setRoster] = React.useState([])
 
     React.useEffect(() => {
@@ -87,9 +86,9 @@ function createModeSeat(options = {}) {
       'span',
       {
         title: mode.title,
-        'data-hkcraft-strip-mode': mode.id,
-        // The group's seat box (width cap + spacing) rides on the root the seat
-        // actually renders, so an empty seat takes no room.
+        'data-hkcraft-pane-mode': mode.id,
+        // The pane header's box (width cap) rides on the root the badge actually
+        // renders, so an absent badge takes no room.
         style: { ...modeBadgeStyle, ...props?.seatStyle },
       },
       h('span', { style: modeLabelStyle }, mode.label),

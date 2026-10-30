@@ -1,20 +1,19 @@
 'use strict'
 
 /**
- * The subagent viewer seat's React half.
+ * The subagent viewer's React half, mounted in each pane header.
  *
  * `pane-subagents.js` owns the catalog projection and every dsh shape; this file
  * only paints the count trigger and the flat dropdown, and routes a pick to the
- * pane controller's `openInNewPane` path. It follows the focused strip entry
- * through the seat props built by `pane-view.js`.
+ * pane controller's `openInNewPane` path. It reads the pane's own session id from
+ * the header props, so every pane shows its own children.
  *
  * The dropdown is a flat menu of direct children: nested expansion, hover-open,
- * retry and breadcrumbs are out of scope for this seat.
+ * retry and breadcrumbs are out of scope for this viewer.
  *
- * Static styles stay in this file rather than `pane-styles.js`: the two seats
- * are independent and neither extends the shared style module for
- * its own seat. The menu is `position: fixed` because a seat clips its content
- * (`stripSeatStyle`), so a portal-free dropdown has to escape the seat box.
+ * Static styles stay in this file rather than `pane-styles.js`: the two header
+ * controls are independent. The menu is `position: fixed` because a narrow pane
+ * clips its header content, so a portal-free dropdown has to escape the pane box.
  * `react` is resolved lazily because unit tests load this module in Node, where
  * the platform module graph does not exist.
  */
@@ -37,6 +36,7 @@ const rootStyle = {
   position: 'relative',
   display: 'inline-flex',
   alignItems: 'center',
+  flex: 'none',
   minWidth: 0,
   maxWidth: '100%',
 }
@@ -65,7 +65,7 @@ const runningDotStyle = {
   background: RUNNING_DOT_COLOR,
 }
 
-/** A fixed-position menu, because the seat box clips anything flowing out of it. */
+/** A fixed-position menu, because a narrow pane clips anything flowing out of it. */
 const menuStyle = {
   position: 'fixed',
   zIndex: 100,
@@ -118,9 +118,9 @@ const rowDetailStyle = {
 }
 
 /**
- * The subagent viewer seat. `options.refreshCatalog` is the optional-service
- * callback `index.js` builds (`ctx.get('sessions')?.refreshProjections`); the
- * seat calls it once per opening and never blocks the menu on its result.
+ * The subagent viewer. `options.refreshCatalog` is the optional-service callback
+ * `index.js` builds (`ctx.get('sessions')?.refreshProjections`); the viewer calls
+ * it once per opening and never blocks the menu on its result.
  *
  * @param {{refreshCatalog?: (sessionId: string) => unknown}} [options]
  * @returns {(props: any) => any}
@@ -134,9 +134,8 @@ function createSubagentSeat(options = {}) {
     const h = React.createElement
     const t = typeof props?.t === 'function' ? props.t : (key) => key
     const controller = props?.controller
-    const focusedSessionId =
-      typeof props?.focused?.sessionId === 'string' ? props.focused.sessionId : ''
-    const model = projectSubagentCatalog(props?.sessions, focusedSessionId, props?.statuses)
+    const sessionId = typeof props?.sessionId === 'string' ? props.sessionId : ''
+    const model = projectSubagentCatalog(props?.sessions, sessionId, props?.statuses)
     const catalogSessionId = model === null ? '' : model.sessionId
     const visible = model !== null
 
@@ -306,9 +305,9 @@ function createSubagentSeat(options = {}) {
       'div',
       {
         ref: rootRef,
-        'data-hkcraft-subagent-seat': '',
-        // The group's seat box (width cap + spacing) rides on the root the seat
-        // actually renders, so an empty seat takes no room.
+        'data-hkcraft-pane-subagents': '',
+        // The pane header's box (width cap) rides on the root the viewer actually
+        // renders, so an absent viewer takes no room.
         style: { ...rootStyle, ...props?.seatStyle },
         onKeyDown: (event) => {
           if (event.key !== 'Escape' || !open) return

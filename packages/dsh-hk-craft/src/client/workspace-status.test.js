@@ -2,9 +2,9 @@
 
 /**
  * The workspace status light is the one piece of sidebar behavior that has to be
- * *right*: four states, a hard precedence (red > yellow > green > gray), an
- * "enabled" gate and no knowledge of React or of dsh's record shapes at the call
- * site.
+ * *right*: five states, a hard precedence (red > yellow > green > idle > gray),
+ * an "enabled" gate and no knowledge of React or of dsh's record shapes at the
+ * call site.
  *
  * These tests fix the function's contract: it consumes plain signals and a plain
  * enabled set, so a wrong assumption about dsh lives in `dsh-workspaces.js` (and
@@ -16,6 +16,7 @@ const assert = require('node:assert/strict')
 
 const {
   LIGHT_GRAY,
+  LIGHT_IDLE,
   LIGHT_GREEN,
   LIGHT_YELLOW,
   LIGHT_RED,
@@ -26,64 +27,85 @@ const {
   displayWorkspaceName,
 } = require('./workspace-status.js')
 
-/** An idle session that has finished at least one turn. */
-const startedIdle = { running: false, waiting: false, started: true }
+/** An idle session that has started at least one turn, with nothing unread. */
+const startedIdle = { running: false, waiting: false, started: true, unread: false }
+
+/** A started session whose latest turn finished while it was not current. */
+const startedUnread = { running: false, waiting: false, started: true, unread: true }
 
 /** An idle session that never sent a message. */
-const blankIdle = { running: false, waiting: false, started: false }
+const blankIdle = { running: false, waiting: false, started: false, unread: false }
 
-/* ── workspaceLight: the four states ──────────────────────────────────────── */
+/* ── workspaceLight: the five states ──────────────────────────────────────── */
 
-test('a workspace with no started conversation is gray, not green', () => {
+test('a workspace with no started conversation is gray, not idle', () => {
   assert.equal(workspaceLight([]), LIGHT_GRAY)
   assert.equal(workspaceLight([blankIdle]), LIGHT_GRAY)
 })
 
-test('a workspace whose sessions all finished is green', () => {
-  assert.equal(workspaceLight([startedIdle]), LIGHT_GREEN)
-  assert.equal(workspaceLight([startedIdle, startedIdle]), LIGHT_GREEN)
+test('a workspace whose sessions are started and idle is idle, not green', () => {
+  assert.equal(workspaceLight([startedIdle]), LIGHT_IDLE)
+  assert.equal(workspaceLight([startedIdle, startedIdle]), LIGHT_IDLE)
+})
+
+test('an unread completion turns the workspace green', () => {
+  assert.equal(workspaceLight([startedUnread]), LIGHT_GREEN)
+  assert.equal(workspaceLight([startedIdle, startedUnread]), LIGHT_GREEN)
 })
 
 test('a workspace with one running session is yellow', () => {
   assert.equal(
     workspaceLight([
       startedIdle,
-      { running: true, waiting: false, started: true },
+      { running: true, waiting: false, started: true, unread: false },
     ]),
     LIGHT_YELLOW,
   )
 })
 
 test('a workspace with a session waiting for the user is red', () => {
-  assert.equal(workspaceLight([{ running: true, waiting: true, started: true }]), LIGHT_RED)
+  assert.equal(
+    workspaceLight([{ running: true, waiting: true, started: true, unread: false }]),
+    LIGHT_RED,
+  )
 })
 
-/* ── workspaceLight: precedence red > yellow > green > gray ──────────────── */
+/* ── workspaceLight: precedence red > yellow > green > idle > gray ────────── */
 
 test('red outranks yellow: waiting beats running, in any order', () => {
-  const running = { running: true, waiting: false, started: true }
-  const waiting = { running: true, waiting: true, started: true }
+  const running = { running: true, waiting: false, started: true, unread: false }
+  const waiting = { running: true, waiting: true, started: true, unread: false }
   assert.equal(workspaceLight([running, waiting]), LIGHT_RED)
   assert.equal(workspaceLight([waiting, running]), LIGHT_RED)
 })
 
 test('red outranks green wherever it sits in the list', () => {
-  const waiting = { running: false, waiting: true, started: true }
-  assert.equal(workspaceLight([startedIdle, startedIdle, waiting, startedIdle]), LIGHT_RED)
+  const waiting = { running: false, waiting: true, started: true, unread: false }
+  assert.equal(workspaceLight([startedUnread, startedUnread, waiting, startedUnread]), LIGHT_RED)
 })
 
 test('yellow outranks green wherever it sits in the list', () => {
-  const running = { running: true, waiting: false, started: true }
-  assert.equal(workspaceLight([startedIdle, running, startedIdle]), LIGHT_YELLOW)
+  const running = { running: true, waiting: false, started: true, unread: false }
+  assert.equal(workspaceLight([startedUnread, running, startedUnread]), LIGHT_YELLOW)
 })
 
-test('green outranks gray: one finished conversation lights the workspace', () => {
-  assert.equal(workspaceLight([blankIdle, startedIdle, blankIdle]), LIGHT_GREEN)
+test('green outranks idle: one unread completion lights the workspace', () => {
+  assert.equal(workspaceLight([startedIdle, startedUnread, startedIdle]), LIGHT_GREEN)
 })
 
-test('yellow and red can light a workspace that has no finished conversation', () => {
-  assert.equal(workspaceLight([{ running: true, waiting: false, started: false }]), LIGHT_YELLOW)
-  assert.equal(workspaceLight([{ running: false, waiting: true, started: false }]), LIGHT_RED)
+test('idle outranks gray: one started conversation lights the workspace', () => {
+  assert.equal(workspaceLight([blankIdle, startedIdle, blankIdle]), LIGHT_IDLE)
+})
+
+test('yellow and red can light a workspace that has no started conversation', () => {
+  assert.equal(
+    workspaceLight([{ running: true, waiting: false, started: false, unread: false }]),
+    LIGHT_YELLOW,
+  )
+  assert.equal(
+    workspaceLight([{ running: false, waiting: true, started: false, unread: false }]),
+    LIGHT_RED,
+  )
 })
 
 /* ── workspaceLight: defensive input ──────────────────────────────────────── */
@@ -105,11 +127,13 @@ test('a session status marks a session running, and the list row is the fallback
     running: true,
     waiting: false,
     started: false,
+    unread: false,
   })
   assert.deepEqual(sessionSignal({ running: false }, { running: true }), {
     running: true,
     waiting: false,
     started: false,
+    unread: false,
   })
 })
 
@@ -132,9 +156,17 @@ test('the summary row\'s blank bit is the only "started" source', () => {
   assert.equal(sessionSignal({ blank: true }, { running: false }).started, false)
 })
 
+test('the status map\'s completionUnread bit is the only "unread" source', () => {
+  assert.equal(sessionSignal({ blank: false }, { completionUnread: true }).unread, true)
+  assert.equal(sessionSignal({ blank: false }, { completionUnread: false }).unread, false)
+  assert.equal(sessionSignal({ blank: false }, undefined).unread, false)
+  // Nothing on the summary row can fake an unread completion.
+  assert.equal(sessionSignal({ blank: false, completionUnread: true }, undefined).unread, false)
+})
+
 test('the signal carries no error bit: dsh exposes none', () => {
   const signal = sessionSignal({ running: false }, { running: false })
-  assert.deepEqual(Object.keys(signal).sort(), ['running', 'started', 'waiting'])
+  assert.deepEqual(Object.keys(signal).sort(), ['running', 'started', 'unread', 'waiting'])
 })
 
 /* ── projectWorkspaceSection: dsh-shaped snapshots into rows ──────────────── */
@@ -187,10 +219,10 @@ test('rows keep the host order and do not invent workspaces', () => {
 
 test('the light aggregates the workspace members only', () => {
   const rows = projectWorkspaceSection(workspaces, sessionList, statuses, ALL_ENABLED)
-  // w1: s1 running + s2 waiting → red; w2: empty → gray; w3: s3 finished → green.
+  // w1: s1 running + s2 waiting → red; w2: empty → gray; w3: s3 started, idle → idle.
   assert.deepEqual(
     rows.map((row) => row.light),
-    [LIGHT_RED, LIGHT_GRAY, LIGHT_GREEN],
+    [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
 })
 
@@ -204,11 +236,21 @@ test('an enabled workspace with only blank sessions stays gray', () => {
   assert.equal(rows[0].light, LIGHT_GRAY)
 })
 
-test('an enabled workspace with one finished conversation is green', () => {
+test('an enabled workspace with one started idle conversation is idle', () => {
   const rows = projectWorkspaceSection(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['done'] }] },
     { phase: 'ready', ids: ['done'], byId: { done: { id: 'done', running: false, blank: false } }, archivedSessionIds: [] },
     new Map(),
+    new Set(['w1']),
+  )
+  assert.equal(rows[0].light, LIGHT_IDLE)
+})
+
+test('an enabled workspace with one unread completion is green', () => {
+  const rows = projectWorkspaceSection(
+    { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['done'] }] },
+    { phase: 'ready', ids: ['done'], byId: { done: { id: 'done', running: false, blank: false } }, archivedSessionIds: [] },
+    new Map([['done', { running: false, pendingInteraction: null, completionUnread: true }]]),
     new Set(['w1']),
   )
   assert.equal(rows[0].light, LIGHT_GREEN)
@@ -241,7 +283,7 @@ test('a workspace that was never opened in split is gray even while it runs or w
   )
   assert.deepEqual(
     rows.map((row) => row.light),
-    [LIGHT_GRAY, LIGHT_GRAY, LIGHT_GREEN],
+    [LIGHT_GRAY, LIGHT_GRAY, LIGHT_IDLE],
   )
 })
 
@@ -256,14 +298,14 @@ test('an empty enabled set makes every row gray', () => {
 test('without an enabled set every workspace is treated as enabled', () => {
   const rows = projectWorkspaceSection(workspaces, sessionList, statuses)
   // Same session-derived lights as the all-enabled case: the degraded path only
-  // loses the "never opened" gray, never the green/yellow/red distinction.
+  // loses the "never opened" gray, never the idle/green/yellow/red distinction.
   assert.deepEqual(
     rows.map((row) => row.light),
-    [LIGHT_RED, LIGHT_GRAY, LIGHT_GREEN],
+    [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
   assert.deepEqual(
     projectWorkspaceSection(workspaces, sessionList, statuses, null).map((row) => row.light),
-    [LIGHT_RED, LIGHT_GRAY, LIGHT_GREEN],
+    [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
 })
 
@@ -408,7 +450,7 @@ test('an absent session phase is treated as ready', () => {
   const rows = projectWorkspaceSection(workspaces, unphased, statuses, ALL_ENABLED)
   assert.deepEqual(
     rows.map((row) => row.light),
-    [LIGHT_RED, LIGHT_GRAY, LIGHT_GREEN],
+    [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
 })
 

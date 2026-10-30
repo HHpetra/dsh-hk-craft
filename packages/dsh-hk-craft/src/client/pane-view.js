@@ -41,7 +41,6 @@ const { EMPTY_STATE_LIMITS, buildResumeRows } = require('./resume-list.js')
 const { absentHook } = require('./shared.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const { STRIP_STATUS_IDLE, projectStrip } = require('./pane-strip.js')
-const { stripSeatEntries, stripSeatMaxWidth } = require('./pane-toolbar.js')
 const {
   buttonStyle,
   paneStyle,
@@ -52,8 +51,7 @@ const {
   paneStripStyle,
   stripViewportStyle,
   stripTablistStyle,
-  stripActionsStyle,
-  stripSeatStyle,
+  headerSeatStyle,
   stripItemStyle,
   stripTitleStyle,
   stripDotStyle,
@@ -376,25 +374,29 @@ function PaneViewToggle({ controller, pane, t }) {
 }
 
 /**
- * One pane: `标题 + 视图切换 + 关闭` (ADR-0006).
+ * One pane: `标题 + 当前模式 + 子代理 + 视图切换 + 关闭`.
  *
- * The header carries exactly two actions: the 对话 ⇄ 轨迹 toggle and the close
- * button. Splitting lives on the keyboard (`Ctrl+Shift+E`, `pane-shortcuts.js`);
- * the old `⋯` menu was removed together with vertical splits. The element type
- * is module-level and the key is the pane id, so the pane is never remounted by
- * a layout change. Only a session replacement resets the conversation subtree
- * (the boundary below is keyed by session id).
+ * Every pane shows its own conversation's mode badge and subagent viewer; the
+ * controls read that pane's session id, not the focused pane's. They disappear
+ * individually when the session records no preset or has no direct subagents, so
+ * the header keeps its title and two actions in the common case. Splitting lives
+ * on the keyboard (`Ctrl+Shift+E`, `pane-shortcuts.js`). The element type is
+ * module-level and the key is the pane id, so the pane is never remounted by a
+ * layout change. Only a session replacement resets the conversation subtree (the
+ * boundary below is keyed by session id).
  *
- * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string }} props
+ * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneFrame({ controller, pane, rect, focused, kit, t }) {
+function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
   const React = react()
   const h = React.createElement
   const reference = controller.paneReference(pane.paneId)
-  const title =
-    typeof kit.useSessions === 'function'
-      ? kit.useSessions((snapshot) => snapshot.byId[pane.sessionId]?.title)
-      : undefined
+  const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
+  const useSessionStatus =
+    typeof kit?.useSessionStatus === 'function' ? kit.useSessionStatus : absentHook
+  const sessions = useSessions((snapshot) => snapshot)
+  const statuses = useSessionStatus((snapshot) => snapshot)
+  const title = sessions?.byId?.[pane.sessionId]?.title
 
   const close = () => controller.closePane(pane.paneId)
   const focus = () => {
@@ -432,6 +434,28 @@ function PaneFrame({ controller, pane, rect, focused, kit, t }) {
     'div',
     { style: headerStyle },
     h('span', { style: titleStyle }, title ?? t('pane.title')),
+    seats?.mode
+      ? h(seats.mode, {
+          key: 'mode',
+          controller,
+          sessionId: pane.sessionId,
+          sessions,
+          statuses,
+          t,
+          seatStyle: { ...headerSeatStyle, maxWidth: 140 },
+        })
+      : null,
+    seats?.subagents
+      ? h(seats.subagents, {
+          key: 'subagents',
+          controller,
+          sessionId: pane.sessionId,
+          sessions,
+          statuses,
+          t,
+          seatStyle: { ...headerSeatStyle, maxWidth: 160 },
+        })
+      : null,
     h(PaneViewToggle, { key: 'view', controller, pane, t }),
     h(
       'button',
@@ -628,55 +652,13 @@ function stripPaneIdAt(clientX, clientY) {
 }
 
 /**
- * The strip's pinned native-action group.
- *
- * Layout only: it renders the filled seats in `STRIP_SEAT_ORDER` and gives each
- * its width cap, so the two seats are independent. The group sits outside the
- * scrollport and never shrinks (`stripActionsStyle`), but it carries no padding
- * or gap itself: the wrapper is `display: contents` and each seat spreads the
- * `seatStyle` box onto its own root, so a seat that renders null contributes no
- * box and the group is 0px wide when both are empty.
- *
- * Each seat receives the seat context plus `seatStyle`: the visible layout
- * snapshot, the focused strip entry (or null), the `sessions` / `sessionStatus`
- * snapshots the strip already subscribes to, the host kit, the translator and the
- * seat box. Nothing here reads dsh data.
- *
- * @param {{ seats: Record<string, Function>|null|undefined, context: object }} props
- */
-function PaneStripActions({ seats, context }) {
-  const React = react()
-  const h = React.createElement
-  const entries = stripSeatEntries(seats)
-  return h(
-    'div',
-    { 'data-hkcraft-strip-actions': '', style: stripActionsStyle },
-    entries.map((entry) =>
-      h(
-        'div',
-        {
-          key: entry.key,
-          'data-hkcraft-strip-seat': entry.key,
-          style: { display: 'contents' },
-        },
-        h(entry.component, {
-          ...context,
-          seatStyle: { ...stripSeatStyle, maxWidth: stripSeatMaxWidth(entry.key) ?? undefined },
-        }),
-      ),
-    ),
-  )
-}
-
-/**
  * The pane strip: the current workspace's open conversations, in `leaves()`
- * order, plus the pinned native-action group.
+ * order, with `+` immediately after the last tab.
  *
- * Structure, outermost first: the bar; a horizontally scrolling viewport
- * holding the `tablist` and then `+` immediately after the last tab; and the
- * action group outside the scrollport, so it never scrolls or shrinks. The tab
- * viewport gives way first (`flex: 1 1 auto`, `minWidth: 0`) and titles
- * truncate, so the group stays complete when the bar is narrow.
+ * Structure, outermost first: the bar and a horizontally scrolling viewport
+ * holding the `tablist` followed by `+`. The current mode and subagent viewer live
+ * in each pane header, not here; the strip is only the index of open
+ * conversations.
  *
  * Every entry is a pane — clicking it focuses that pane, its × closes the pane
  * (after a confirmation when the session is live), and `+` adds a conversation
@@ -690,9 +672,9 @@ function PaneStripActions({ seats, context }) {
  * The ARIA roles stay `tablist`/`tab` because the strip is a list of selectable
  * views of the same main region; the domain vocabulary is not "tab".
  *
- * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string, seats?: Record<string, Function>|null }} props
+ * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string }} props
  */
-function PaneStrip({ controller, state, kit, t, seats }) {
+function PaneStrip({ controller, state, kit, t }) {
   const React = react()
   const h = React.createElement
   const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
@@ -798,18 +780,6 @@ function PaneStrip({ controller, state, kit, t, seats }) {
   }
 
   const hint = paneShortcutHint(t)
-
-  // The seats act on the focused pane's conversation only; they follow focus
-  // because this context is rebuilt from the same snapshot the tabs read.
-  const seatContext = {
-    controller,
-    layout: state,
-    focused: entries.find((entry) => entry.focused) ?? null,
-    sessions,
-    statuses,
-    kit,
-    t,
-  }
 
   const entryElements = entries.map((entry) => {
     const statusLabel = t(`strip.status.${entry.status}`)
@@ -936,7 +906,6 @@ function PaneStrip({ controller, state, kit, t, seats }) {
         '＋',
       ),
     ),
-    h(PaneStripActions, { seats, context: seatContext }),
   )
 }
 
@@ -1052,7 +1021,7 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t, seats
     // Only the visible workspace owns a strip: hidden strips would render a
     // second row over an invisible tree. The pane bodies below stay mounted
     // regardless, which is what D5 actually protects.
-    visible ? h(PaneStrip, { controller, state: layout, kit, t, seats }) : null,
+    visible ? h(PaneStrip, { controller, state: layout, kit, t }) : null,
     h(
       'div',
       { style: layoutStyle, 'data-hkcraft-layout': '' },
@@ -1067,6 +1036,7 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t, seats
           focused: visible && paneRect.paneId === layout.activePaneId,
           kit,
           t,
+          seats,
         })
       }),
       geometry.separators.map((separator) =>
@@ -1114,16 +1084,16 @@ function workspaceGroups(state) {
  * authorized `renderSlot` for a session-scoped child because the registration
  * declares one non-root child.
  *
- * `options.seats` is the strip's native-action extension point:
- * `{ mode?: Component, subagents?: Component }` from `pane-toolbar.js`. The
- * current-mode badge and the subagent viewer fill one seat each through this
- * option; both are optional, so the strip works with no seats at all.
+ * `options.headerSeats` is the pane header's native-control extension point:
+ * `{ mode?: Component, subagents?: Component }`. The current-mode badge and the
+ * subagent viewer fill one seat each in every pane header; both are optional, so
+ * a pane works with no seats at all.
  *
  * @param {any} controller
- * @param {{ seats?: Record<string, Function>|null }} [options]
+ * @param {{ headerSeats?: Record<string, Function>|null }} [options]
  */
 function createPaneHost(controller, options = {}) {
-  const seats = options?.seats ?? null
+  const seats = options?.headerSeats ?? null
   return function PaneHost(props) {
     const React = react()
     const h = React.createElement
@@ -1347,7 +1317,6 @@ module.exports = {
   PaneViewToggle,
   PaneCloseConfirm,
   PaneStrip,
-  PaneStripActions,
   paneViewOfSession,
   createPaneConversationViews,
   createPaneHost,

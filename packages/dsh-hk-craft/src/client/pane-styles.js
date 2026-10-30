@@ -127,31 +127,16 @@ const stripTablistStyle = {
 }
 
 /**
- * The pinned native-action group: outside the scrollport, never shrinking. It
- * only arranges the seats supplied by `pane-toolbar.js`. The group carries no
- * padding, gap or fixed width: each seat's root owns its own spacing and width
- * cap, so a seat that renders null takes no room at all.
+ * The box for one native control in a pane header. The pane header's own gap
+ * supplies the spacing, so an absent control simply contributes no element and
+ * no gap. Each caller caps its own width.
  */
-const stripActionsStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  flex: 'none',
-  minWidth: 0,
-  whiteSpace: 'nowrap',
-}
-
-/**
- * One seat's box, merged onto the seat's own root by the seat component. Spacing
- * lives here rather than on the group so a null seat has no box; the group's
- * wrappers are `display: contents` and contribute nothing.
- */
-const stripSeatStyle = {
+const headerSeatStyle = {
   display: 'inline-flex',
   alignItems: 'center',
   flex: 'none',
   minWidth: 0,
   overflow: 'hidden',
-  marginLeft: 8,
 }
 
 const stripItemStyle = {
@@ -447,8 +432,7 @@ module.exports = {
   paneStripStyle,
   stripViewportStyle,
   stripTablistStyle,
-  stripActionsStyle,
-  stripSeatStyle,
+  headerSeatStyle,
   stripItemStyle,
   stripTitleStyle,
   stripDotStyle,

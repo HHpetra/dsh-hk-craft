@@ -9,7 +9,7 @@ const {
   COMMAND_SERVICES,
   apply,
   createModeRosterLoader,
-  createStripSeats,
+  createHeaderSeats,
   WORKSPACE_SLOT_PRIORITY,
   SETTINGS_SECTION_ID,
   SETTINGS_SECTION_ORDER,
@@ -187,8 +187,8 @@ test('zh and en carry the same keys', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
 })
 
-test('the four workspace lights have localized names and green is no longer "no active session"', () => {
-  for (const light of ['gray', 'green', 'yellow', 'red']) {
+test('the five workspace lights have localized names and green is reserved for unread completions', () => {
+  for (const light of ['gray', 'idle', 'green', 'yellow', 'red']) {
     const key = `workspace.light.${light}`
     assert.equal(typeof zh[key], 'string', key)
     assert.notEqual(zh[key], '', key)
@@ -198,8 +198,10 @@ test('the four workspace lights have localized names and green is no longer "no 
   assert.match(zh['workspace.light.gray'], /未启用/)
   assert.match(en['workspace.light.gray'], /not enabled/i)
   assert.notEqual(zh['workspace.light.green'], '无活动会话')
-  assert.match(zh['workspace.light.green'], /结束/)
-  assert.match(en['workspace.light.green'], /finished/i)
+  assert.match(zh['workspace.light.green'], /未查看/)
+  assert.match(en['workspace.light.green'], /unread/i)
+  assert.equal(zh['workspace.light.idle'], '空闲')
+  assert.match(en['workspace.light.idle'], /idle/i)
 })
 
 test('the running-pane close confirmation says the conversation is kept in history', () => {
@@ -362,38 +364,11 @@ test('skips command registration when a command service is missing', () => {
   assert.equal(ctx.calls.registered.length, 4)
 })
 
-test('the strip fills its subagent seat with an optional-service catalog refresher', () => {
-  const refreshed = []
-  const ctx = fakeCtx({
-    services: {
-      ...workspaceServices(),
-      sessions: {
-        list: { getSnapshot: () => ({ byId: {} }) },
-        refreshProjections(sessionId) {
-          refreshed.push(sessionId)
-          return Promise.resolve()
-        },
-      },
-    },
-  })
-  const seatOptions = []
-  const seats = createStripSeats(ctx, {
-    createSeat(options) {
-      seatOptions.push(options)
-      return function Seat() {
-        return null
-      }
-    },
-  })
-
-  assert.deepEqual(Object.keys(seats), ['mode', 'subagents'])
+test('the pane header seats are the read-only mode badge and the subagent viewer', () => {
+  const seats = createHeaderSeats(fakeCtx())
   assert.equal(typeof seats.mode, 'function')
   assert.equal(typeof seats.subagents, 'function')
-  assert.equal(seatOptions.length, 1)
-  assert.equal(typeof seatOptions[0].refreshCatalog, 'function')
-
-  seatOptions[0].refreshCatalog('s1')
-  assert.deepEqual(refreshed, ['s1'])
+  assert.deepEqual(Object.keys(seats), ['mode', 'subagents'])
 })
 
 test('the catalog refresher reads sessions through ctx.get and stays quiet without it', () => {
@@ -428,18 +403,11 @@ test('every shipped preset and the badge explanation have copy in both languages
     ['zh', zh],
     ['en', en],
   ]) {
-    for (const key of [...Object.values(BUILT_IN_MODE_KEYS), 'strip.mode.hint']) {
+    for (const key of [...Object.values(BUILT_IN_MODE_KEYS), 'pane.mode.hint']) {
       assert.equal(typeof table[key], 'string', `${language} is missing ${key}`)
       assert.notEqual(table[key], '')
     }
   }
-})
-
-test('the strip seats pair the read-only mode seat with the subagent viewer seat', () => {
-  const seats = createStripSeats(fakeCtx())
-  assert.equal(typeof seats.mode, 'function')
-  assert.equal(typeof seats.subagents, 'function')
-  assert.deepEqual(Object.keys(seats), ['mode', 'subagents'])
 })
 
 test('the mode roster loader reads the optional remote once per preset id', async () => {

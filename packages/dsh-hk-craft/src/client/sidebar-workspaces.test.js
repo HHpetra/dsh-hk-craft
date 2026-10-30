@@ -238,34 +238,34 @@ test('the select control keeps the workspace name, light and click target', () =
     const select = buttons.find((button) => button.props['aria-label']?.startsWith('Project A'))
 
     assert.notEqual(select, undefined, 'the row keeps a control named after its workspace')
-    assert.equal(select.props['aria-label'], 'Project A — 对话已结束')
-    assert.equal(select.props.title, 'Project A — 对话已结束')
+    assert.equal(select.props['aria-label'], 'Project A — 空闲')
+    assert.equal(select.props.title, 'Project A — 空闲')
 
     select.props.onClick()
     assert.deepEqual(opened, ['w1'], 'clicking still opens or switches that workspace')
   })
 })
 
-test('a workspace that was never opened in split reads as gray, not as finished', () => {
+test('a workspace that was never opened in split reads as gray, not as idle', () => {
   const fakeReact = createFakeReact()
   withFakeReact(fakeReact, () => {
     // No pane controller: the degraded projection assumes every workspace is
-    // enabled, and this workspace has a started conversation — so it is green.
+    // enabled, and this workspace has a started conversation — so it is idle.
     const degraded = renderSection()
     const degradedSelect = descendants(degraded)
       .filter((element) => element.type === 'button')
       .find((button) => button.props['aria-label']?.startsWith('Project A'))
-    assert.equal(degradedSelect.props['aria-label'], 'Project A — 对话已结束')
+    assert.equal(degradedSelect.props['aria-label'], 'Project A — 空闲')
 
     // With a controller that says "never opened in split", the same workspace is
-    // gray even though its stored conversation has finished.
+    // gray even though its stored conversation has started.
     const { panes } = paneFace([])
     const tree = renderSection({ panes })
     const select = descendants(tree)
       .filter((element) => element.type === 'button')
       .find((button) => button.props['aria-label']?.startsWith('Project A'))
-    assert.equal(select.props['aria-label'], 'Project A — 未启用 / 还没有对话结束')
-    assert.equal(select.props.title, 'Project A — 未启用 / 还没有对话结束')
+    assert.equal(select.props['aria-label'], 'Project A — 未启用 / 还没有对话开始')
+    assert.equal(select.props.title, 'Project A — 未启用 / 还没有对话开始')
   })
 })
 
@@ -277,7 +277,7 @@ test('an enabled workspace full of blank conversations still reads gray', () => 
     const select = descendants(tree)
       .filter((element) => element.type === 'button')
       .find((button) => button.props['aria-label']?.startsWith('Project A'))
-    assert.equal(select.props['aria-label'], 'Project A — 未启用 / 还没有对话结束')
+    assert.equal(select.props['aria-label'], 'Project A — 未启用 / 还没有对话开始')
   })
 })
 

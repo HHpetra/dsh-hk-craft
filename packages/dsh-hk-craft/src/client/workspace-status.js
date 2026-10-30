@@ -8,20 +8,22 @@
  * turns live snapshots into the plain shapes below, so an upstream rename is a
  * one-file fix and every rule here stays unit-testable in Node.
  *
- * Light precedence: red > yellow > green > gray.
+ * Light precedence: red > yellow > green > idle > gray.
  *   red    a session in this workspace is waiting for the user (approval,
  *          question, plan review)
  *   yellow a session is running
- *   green  at least one conversation actually finished (a non-blank session) and
- *          nothing is running or waiting
+ *   green  at least one conversation finished while you were not looking
+ *          (dsh's `completionUnread`), and nothing is running or waiting
+ *   idle   at least one conversation has started, and nothing is running,
+ *          waiting or unread: the workspace is genuinely idle
  *   gray   the workspace was never opened in split, or every conversation in it
  *          is still blank
  *
- * Gray is not "nothing happened recently": it is the absence of proof that a
- * conversation ever ended. A workspace that was never opened in split is gray
- * even while a native session of it runs; the "enabled" gate lives in the
- * projection below, and the sidebar computes that gate from the pane controller's
- * loaded/stored layout keys.
+ * Gray is not "nothing happened recently": it is the absence of a started
+ * conversation. A workspace that was never opened in split is gray even while a
+ * native session of it runs; the "enabled" gate lives in the projection below,
+ * and the sidebar computes that gate from the pane controller's loaded/stored
+ * layout keys.
  *
  * There is no error light. dsh exposes no "this turn failed" bit in the client
  * status map or the session summary, and reading a failure would mean opening
@@ -29,9 +31,10 @@
  * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
-/** @typedef {'gray' | 'green' | 'yellow' | 'red'} WorkspaceLight */
+/** @typedef {'gray' | 'idle' | 'green' | 'yellow' | 'red'} WorkspaceLight */
 
 const LIGHT_GRAY = 'gray'
+const LIGHT_IDLE = 'idle'
 const LIGHT_GREEN = 'green'
 const LIGHT_YELLOW = 'yellow'
 const LIGHT_RED = 'red'
@@ -41,26 +44,29 @@ const LIGHT_RED = 'red'
  * known to be enabled.
  *
  * Red short-circuits: the first red-worthy member wins regardless of position,
- * so a workspace with a queued question never hides behind a green sibling.
- * Yellow is remembered while scanning; green needs at least one member that has
- * actually started a conversation (`started`), so a workspace holding only fresh
+ * so a workspace with a queued question never hides behind a finished sibling.
+ * Yellow is remembered while scanning; green needs an unread completion, and
+ * idle needs at least one started conversation. A workspace holding only fresh
  * blank sessions stays gray.
  *
- * @param {ReadonlyArray<{ running?: boolean, waiting?: boolean, started?: boolean } | null | undefined> | unknown} signals
+ * @param {ReadonlyArray<{ running?: boolean, waiting?: boolean, started?: boolean, unread?: boolean } | null | undefined> | unknown} signals
  * @returns {WorkspaceLight}
  */
 function workspaceLight(signals) {
   if (!Array.isArray(signals)) return LIGHT_GRAY
   let running = false
+  let unread = false
   let started = false
   for (const signal of signals) {
     if (signal === null || signal === undefined || typeof signal !== 'object') continue
     if (signal.waiting === true) return LIGHT_RED
     if (signal.running === true) running = true
+    if (signal.unread === true) unread = true
     if (signal.started === true) started = true
   }
   if (running) return LIGHT_YELLOW
-  return started ? LIGHT_GREEN : LIGHT_GRAY
+  if (unread) return LIGHT_GREEN
+  return started ? LIGHT_IDLE : LIGHT_GRAY
 }
 
 /**
@@ -70,11 +76,13 @@ function workspaceLight(signals) {
  * interaction union (approval / question / plan-review) is the user's move, and
  * an unknown future kind would still block that session. `started` is the
  * summary row's `blank` field inverted: only the Host knows whether a message was
- * ever sent, and a session's pending/running state never implies it.
+ * ever sent, and a session's pending/running state never implies it. `unread`
+ * comes from the shell's `completionUnread`, which is set when a non-current
+ * session stops running and cleared when it becomes current or starts again.
  *
  * @param {{ running?: boolean, blank?: boolean } | undefined} summary session list row
- * @param {{ running?: boolean, pendingInteraction?: { kind?: string } | null } | undefined} status unified UI status
- * @returns {{ running: boolean, waiting: boolean, started: boolean }}
+ * @param {{ running?: boolean, pendingInteraction?: { kind?: string } | null, completionUnread?: boolean } | undefined} status unified UI status
+ * @returns {{ running: boolean, waiting: boolean, started: boolean, unread: boolean }}
  */
 function sessionSignal(summary, status) {
   const pending = status?.pendingInteraction
@@ -82,6 +90,7 @@ function sessionSignal(summary, status) {
     running: status?.running === true || summary?.running === true,
     waiting: pending !== undefined && pending !== null,
     started: summary?.blank === false,
+    unread: status?.completionUnread === true,
   }
 }
 
@@ -209,6 +218,7 @@ function displayWorkspaceName(title, localizedDefault) {
 
 module.exports = {
   LIGHT_GRAY,
+  LIGHT_IDLE,
   LIGHT_GREEN,
   LIGHT_YELLOW,
   LIGHT_RED,

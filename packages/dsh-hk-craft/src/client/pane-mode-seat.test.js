@@ -1,14 +1,14 @@
 'use strict'
 
 /**
- * The strip's read-only current-mode seat.
+ * The pane header's read-only current-mode badge.
  *
- * The seat is a thin React component: the pure projection lives in
+ * The badge is a thin React component: the pure projection lives in
  * `pane-mode.js`, and the optional roster loader is injected by `index.js`, so
  * this module never mentions dsh. These tests drive it with a fake React (the
  * same approach as the pane view tests) and assert what a user can observe:
  * hidden without a preset, a non-interactive label, and copy that follows the
- * focused pane.
+ * badge's own pane.
  */
 
 const test = require('node:test')
@@ -81,12 +81,11 @@ function installHarness() {
   return { render, flush, restore }
 }
 
-/** Seat props as `PaneStripActions` builds them; only the mode inputs matter. */
-function seatProps({ focused = { paneId: 'p1', sessionId: 's1', focused: true }, preset } = {}) {
+/** Pane header props as `PaneFrame` builds them; only the mode inputs matter. */
+function seatProps({ sessionId = 's1', preset } = {}) {
   return {
     controller: {},
-    layout: {},
-    focused,
+    sessionId,
     sessions: preset === undefined ? { byId: {} } : { byId: { s1: { projectionValues: { agentPreset: preset } } } },
     statuses: new Map(),
     kit: {},
@@ -99,16 +98,16 @@ function labelOf(element) {
   return element.props.children[0].props.children[0]
 }
 
-test('a focused session with a shipped preset renders a read-only, localized badge', () => {
+test('a session with a shipped preset renders a read-only, localized badge', () => {
   const harness = installHarness()
   try {
     const ModeSeat = createModeSeat({ loadRoster: async () => [] })
     const { element } = harness.render(ModeSeat, seatProps({ preset: 'ptc' }))
 
     assert.equal(element.type, 'span')
-    assert.equal(element.props['data-hkcraft-strip-mode'], 'ptc')
-    assert.equal(labelOf(element), 'strip.mode.ptc')
-    assert.equal(element.props.title, 'strip.mode.hint')
+    assert.equal(element.props['data-hkcraft-pane-mode'], 'ptc')
+    assert.equal(labelOf(element), 'pane.mode.ptc')
+    assert.equal(element.props.title, 'pane.mode.hint')
     // Read-only by construction: no click handler, no button role, no tab stop.
     assert.equal(element.props.onClick, undefined)
     assert.equal(element.props.role, undefined)
@@ -119,7 +118,7 @@ test('a focused session with a shipped preset renders a read-only, localized bad
   }
 })
 
-test('the badge is absent when there is no focused session or no preset', () => {
+test('the badge is absent when the pane has no session or no preset', () => {
   const harness = installHarness()
   try {
     const calls = []
@@ -129,9 +128,9 @@ test('the badge is absent when there is no focused session or no preset', () => 
     }
     const ModeSeat = createModeSeat({ loadRoster })
 
-    const noFocus = harness.render(ModeSeat, seatProps({ focused: null }))
-    assert.equal(noFocus.element, null)
-    for (const effect of noFocus.effects) effect()
+    const noSession = harness.render(ModeSeat, seatProps({ sessionId: '' }))
+    assert.equal(noSession.element, null)
+    for (const effect of noSession.effects) effect()
 
     const noPreset = harness.render(ModeSeat, seatProps())
     assert.equal(noPreset.element, null)
@@ -167,7 +166,7 @@ test('a custom preset uses the roster name and description once loaded', async (
   }
 })
 
-test('changing the focused preset retries the roster for the new id', async () => {
+test('changing the pane preset retries the roster for the new id', async () => {
   const harness = installHarness()
   try {
     const calls = []
@@ -182,7 +181,7 @@ test('changing the focused preset retries the roster for the new id', async () =
     const second = harness.render(ModeSeat, seatProps({ preset: 'minimal' }))
     await harness.flush(second.effects)
 
-    assert.equal(labelOf(second.element), 'strip.mode.minimal')
+    assert.equal(labelOf(second.element), 'pane.mode.minimal')
     assert.deepEqual(calls, ['standard', 'minimal'])
   } finally {
     harness.restore()
@@ -201,7 +200,7 @@ test('a failing or absent roster still renders the built-in name or the id', asy
     await harness.flush(first.effects)
     assert.equal(
       labelOf(harness.render(failing, seatProps({ preset: 'standard' })).element),
-      'strip.mode.standard',
+      'pane.mode.standard',
     )
 
     const absent = createModeSeat({})

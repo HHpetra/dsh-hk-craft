@@ -8,7 +8,6 @@ const { withFakeReact } = require('./fake-react.js')
 const {
   PANE_CONTENT_OCCURRENCE,
   PaneFrame,
-  PaneStripActions,
   PaneViewToggle,
   createPaneBody,
   createPaneConversationViews,
@@ -232,7 +231,7 @@ function headerController({ trajectory = true, calls = [] } = {}) {
   }
 }
 
-test('the pane header offers exactly a view toggle and a close button', () => {
+test('the pane header offers a view toggle and a close button when no seats are supplied', () => {
   withFakeReact(fakeReact, () => {
     const controller = headerController()
     const frame = PaneFrame({
@@ -245,7 +244,7 @@ test('the pane header offers exactly a view toggle and a close button', () => {
     })
 
     const header = frame.props.children[0]
-    const actions = header.props.children.slice(1)
+    const actions = header.props.children.filter(Boolean).slice(1)
     assert.equal(actions.length, 2, 'the header must not keep a split/more button row')
     assert.equal(actions[0].type, PaneViewToggle)
     assert.equal(actions[1].props['data-hkcraft-pane-close'], 'p1')
@@ -396,47 +395,42 @@ function elementChildren(element) {
   return out
 }
 
-test('the strip action group reserves no padding or gap when both seats render null', () => {
+test('both pane-header seats receive that pane session and its own width cap', () => {
   withFakeReact(fakeReact, () => {
-    const NullSeat = () => null
-    const tree = PaneStripActions({ seats: { mode: NullSeat, subagents: NullSeat }, context: {} })
-
-    assert.equal(tree.props.style.padding, undefined, 'the group must not reserve group padding')
-    assert.equal(tree.props.style.gap, undefined, 'the group must not reserve a gap')
-    assert.equal(tree.props.style.width, undefined, 'the group must not reserve a fixed width')
-
-    const wrappers = elementChildren(tree)
-    assert.equal(wrappers.length, 2)
-    for (const wrapper of wrappers) {
-      // A display:contents wrapper has no box of its own; only the seat root can.
-      assert.equal(wrapper.props.style.display, 'contents')
-    }
-  })
-})
-
-test('a visible seat carries its width cap and spacing on its own root', () => {
-  withFakeReact(fakeReact, () => {
-    const seats = []
-    const Seat = (props) => {
-      seats.push(props)
-      return null
-    }
-    const tree = PaneStripActions({
-      seats: { mode: Seat, subagents: Seat },
-      context: { marker: 'context' },
+    const ModeSeat = () => null
+    const SubagentsSeat = () => null
+    const sessions = { byId: { s2: { id: 's2', title: 'Second' } } }
+    const statuses = new Map()
+    const frame = PaneFrame({
+      controller: headerController(),
+      pane: pane('p2', 's2'),
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      focused: true,
+      kit: {
+        SessionProvider: () => null,
+        renderSlot: () => null,
+        useSessions: (selector) => selector(sessions),
+        useSessionStatus: (selector) => selector(statuses),
+      },
+      t: (key) => key,
+      seats: { mode: ModeSeat, subagents: SubagentsSeat },
     })
 
-    const seatElements = elementChildren(tree).map((wrapper) => elementChildren(wrapper)[0])
-    assert.equal(seatElements.length, 2)
+    const header = frame.props.children[0]
+    assert.equal(header.props.children.length, 5, 'title + mode + subagents + view + close')
+    const modeElement = header.props.children[1]
+    const subagentElement = header.props.children[2]
+    assert.equal(modeElement.type, ModeSeat)
+    assert.equal(subagentElement.type, SubagentsSeat)
+    assert.equal(header.props.children[3].type, PaneViewToggle)
+
+    assert.equal(modeElement.props.sessionId, 's2')
+    assert.equal(subagentElement.props.sessionId, 's2')
+    assert.equal(modeElement.props.sessions, sessions)
+    assert.equal(subagentElement.props.statuses, statuses)
     assert.deepEqual(
-      seatElements.map((element) => element.props.seatStyle.maxWidth),
-      [140, 180],
-      'each seat keeps its own width cap',
+      [modeElement.props.seatStyle.maxWidth, subagentElement.props.seatStyle.maxWidth],
+      [140, 160],
     )
-    for (const element of seatElements) {
-      assert.equal(element.props.seatStyle.marginLeft, 8, 'spacing belongs to the seat root')
-      assert.equal(element.props.seatStyle.flex, 'none', 'a seat never shrinks')
-      assert.equal(element.props.marker, 'context', 'the seat context still reaches the seat')
-    }
   })
 })

@@ -3,7 +3,7 @@
 /**
  * The pane strip's subagent viewer seat.
  *
- * The seat is dumb: `pane-subagents.js` projects the focused conversation's
+ * The viewer is dumb: `pane-subagents.js` projects one pane session's direct
  * `subagentCatalog` into plain rows, `pane-subagents-view.js` only paints those
  * rows, and a pick routes to the pane controller. These tests cover the
  * projection, the open seam and the refresh helper; the dropdown's pointer/keyboard
@@ -305,7 +305,7 @@ test('the on-open refresh runs once and swallows every failure', () => {
   assert.doesNotThrow(() => requestCatalogRefresh(() => {}, ''))
 })
 
-test('the seat follows the focused strip entry and hides without a catalog', () => {
+test('the viewer follows its pane session and hides without a catalog', () => {
   withFakeReact(fakeReact, () => {
     const Seat = createSubagentSeat({ refreshCatalog: () => {} })
     const baseProps = {
@@ -316,8 +316,8 @@ test('the seat follows the focused strip entry and hides without a catalog', () 
       t: (key) => key,
     }
 
-    assert.equal(Seat({ ...baseProps, focused: null }), null)
-    assert.equal(Seat({ ...baseProps, focused: { sessionId: 's1' } }), null)
+    assert.equal(Seat({ ...baseProps }), null)
+    assert.equal(Seat({ ...baseProps, sessionId: 's1' }), null)
   })
 })
 
@@ -338,7 +338,7 @@ test('the seat trigger exposes the total and running counts', () => {
 
     const seat = Seat({
       controller: { openInNewPane: () => {} },
-      focused: { sessionId: 's1' },
+      sessionId: 's1',
       sessions,
       statuses: new Map(),
       kit: {},

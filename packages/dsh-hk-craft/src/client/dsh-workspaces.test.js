@@ -130,7 +130,7 @@ test('sectionModel asks the pane controller which workspaces were opened in spli
   assert.deepEqual(
     rows.map((row) => [row.workspaceId, row.light]),
     [
-      ['w1', 'green'],
+      ['w1', 'idle'],
       ['w2', 'gray'],
     ],
   )
@@ -162,7 +162,7 @@ test('without a pane controller every workspace counts as enabled', () => {
   const rows = sectionModel(workspaces, sessions, new Map())
   assert.deepEqual(
     rows.map((row) => row.light),
-    ['green', 'gray'],
+    ['idle', 'gray'],
   )
 })
 
@@ -176,7 +176,7 @@ test('a controller that cannot answer degrades to all enabled, not to all gray',
   const rows = sectionModel(workspaces, sessions, new Map(), panes)
   assert.deepEqual(
     rows.map((row) => row.light),
-    ['green', 'gray'],
+    ['idle', 'gray'],
   )
 })
 

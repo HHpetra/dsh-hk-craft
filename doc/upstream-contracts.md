@@ -272,6 +272,29 @@ the lights.
 
 ---
 
+## Completion unread
+
+**Provider:** `@deepseek-ai/dsh-client-ui-session` (`sessionStatus` map).
+
+**Semantics:** `completionUnread` is true for a session whose turn stopped running
+while that session was **not** the current one (`mainView` retention). It is
+cleared when the session becomes current again (for example, it is focused) or
+when it starts running again. The plugin reads it as the `unread` signal; the
+sidebar paints green only for this bit, so a workspace that is merely idle stays
+blue after a restart instead of looking like a fresh completion.
+
+**Why we rely on it:** without this bit, "a conversation just finished and you have
+not looked" is indistinguishable from "nothing is running"; a restart would paint
+every used workspace green. The bit is part of the same `sessionStatus` map the
+sidebar already consumes, so the light needs no extra history read.
+
+**Verified:** set/clear rules were read in the 0.2.1-rc.5 `ui-session` bundle
+(`observeRunning`, `reconcileStatus`, `isMain`). Runtime probe: leave a workspace,
+let a background turn finish, confirm green; focus the conversation, confirm it
+returns to idle.
+
+---
+
 ## Session preset and optional roster
 
 **Provider:** `@deepseek-ai/dsh-api-session-controller` (the `sessions.list`
@@ -516,16 +539,18 @@ point. The key is also the record the delete path must clear after a successful
 **Why we rely on it:** the native-open path is indistinguishable from "never
 shown in split" by layout alone, which is exactly the fact the plugin wants; the
 `blank` summary bit (see [`#session-summary-fields`](#session-summary-fields))
-supplies the other half. How those two facts become a sidebar light — including
-what gray means — is a plugin UI decision, recorded in
-[`README.md`](README.md#5-工作区状态与四态灯) and
-[ADR-0007](../ai-docs/ADR/decisions.md#adr-0007--侧栏工作区管理窗格条工具栏与设置页搬迁),
+and `completionUnread` (see [`#completion-unread`](#completion-unread)) supply the
+other facts. How those become a sidebar light — including what gray and idle mean
+— is a plugin UI decision, recorded in
+[`README.md`](README.md#5-工作区状态与五态灯) and
+[ADR-0007](../ai-docs/ADR/decisions.md#adr-0007--侧栏工作区管理窗格条工具栏与设置页搬迁) /
+[ADR-0008](../ai-docs/ADR/decisions.md#adr-0008--五态工作区灯与窗格头部原生控件),
 not an upstream contract.
 
 **Degradation:** an absent storage backend or a throwing store means "no key" for
 that workspace only; a pane controller that cannot answer at all makes the
-section treat every workspace as enabled and derive green/yellow/red/gray from
-the sessions, which loses at most the never-opened gray.
+section treat every workspace as enabled and derive the session lights from the
+sessions, which loses at most the never-opened gray.
 
 **Verified:** key existence and write timing were exercised through the storage
 seam and the controller's fake services. Runtime probe: open a workspace in split
