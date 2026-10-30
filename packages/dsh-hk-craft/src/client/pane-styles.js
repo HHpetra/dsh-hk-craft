@@ -98,7 +98,12 @@ const paneStripStyle = {
   background: 'var(--dsw-alias-bg-base, Canvas)',
 }
 
-/** Only this inner box scrolls; `+` stays pinned at the right. */
+/**
+ * The strip's scrollport (ticket 06). The tabs and `+` live inside it, so `+`
+ * follows the last tab and scrolls away with the tabs when they overflow; the
+ * pinned action group sits outside. The viewport gives way before the group:
+ * `flex: 1 1 auto` + `minWidth: 0` here, `flex: none` on the group.
+ */
 const stripViewportStyle = {
   display: 'flex',
   alignItems: 'stretch',
@@ -108,6 +113,37 @@ const stripViewportStyle = {
   overflowY: 'hidden',
   whiteSpace: 'nowrap',
   scrollbarWidth: 'thin',
+}
+
+/** The `tablist`: the entries only, immediately followed by `+` in the viewport. */
+const stripTablistStyle = {
+  display: 'flex',
+  alignItems: 'stretch',
+  flex: '0 0 auto',
+}
+
+/**
+ * The pinned native-action group (ticket 06): outside the scrollport, at its
+ * content width, never shrinking. It only arranges the seats supplied by
+ * `pane-toolbar.js`; when no seat is filled it takes no tab room.
+ */
+const stripActionsStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  flex: 'none',
+  gap: 8,
+  minWidth: 0,
+  padding: '0 8px',
+  whiteSpace: 'nowrap',
+}
+
+/** One seat: content-sized and capped by `stripSeatMaxWidth`, clipped by itself. */
+const stripSeatStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  flex: 'none',
+  minWidth: 0,
+  overflow: 'hidden',
 }
 
 const stripItemStyle = {
@@ -177,13 +213,18 @@ const stripCloseStyle = {
   cursor: 'pointer',
 }
 
+/**
+ * `+` follows the last tab inside the scrollport (ticket 06): it is an ordinary
+ * inline button, no longer a full-height, right-aligned slab with a left border.
+ */
 const stripNewStyle = {
   ...buttonStyle,
   flex: 'none',
+  alignSelf: 'center',
   border: 'none',
-  borderLeft: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-  borderRadius: 0,
-  padding: '0 10px',
+  borderRadius: 4,
+  padding: '2px 8px',
+  margin: '0 4px',
 }
 
 const headerStyle = {
@@ -397,6 +438,9 @@ module.exports = {
   PANE_STRIP_HEIGHT,
   paneStripStyle,
   stripViewportStyle,
+  stripTablistStyle,
+  stripActionsStyle,
+  stripSeatStyle,
   stripItemStyle,
   stripTitleStyle,
   stripDotStyle,
