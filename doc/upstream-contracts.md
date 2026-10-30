@@ -269,6 +269,50 @@ the lights.
 
 ---
 
+## Session preset and optional roster
+
+**Provider:** `@deepseek-ai/dsh-api-session-controller` (the `sessions.list`
+snapshot row), `@deepseek-ai/dsh-client-ui-agent-preset` (the native header
+label), and `@deepseek-ai/dsh-agent-preset-registry` (the `remote.agentPresets`
+namespace).
+
+**Semantics:** a session summary row carries
+`projectionValues.agentPreset`, a string id naming the Agent preset the
+conversation was composed with. The native header label reads exactly
+`state.byId[sessionId]?.projectionValues?.agentPreset` and renders nothing when
+the field is absent, which is the same source and the same "no field, no badge"
+rule the pane strip follows. The composition is fixed once the conversation
+starts, so the label is read-only; there is no "switch this session's preset"
+operation in the public services.
+
+The roster behind the names is an **optional** capability:
+`ctx.get("remote")` exposes `agentPresets.list()`, whose success result is
+`{ ok: true, value: { presets: [{ id, isDefault, name?, description?, broken? }] } }`.
+A failed read returns `{ ok: false, error }` (a not-yet-ready gateway is
+`gateway/invocation-unavailable`), and an older or trimmed shell may have no
+`remote` service at all. Declarations that publish a `name` own their copy; the
+four shipped presets (`standard`, `ptc`, `minimal`, `cordis`) publish no name,
+so their labels and descriptions are the UI dictionaries'
+`presetStandardName`/`presetStandardDescription` (and the matching PTC, Minimal
+and Creator keys). The pane badge localizes just the names and falls back to the
+localized shipped name, then the raw id; the roster is read through `ctx.get`
+instead of `inject`, and absence, failure or malformed rows degrade silently.
+
+**Why we rely on it:** the split pane does not mount the native session header,
+so the strip's read-only mode seat reconstructs its label from the same summary
+field. Resolving copy in this order (`ctx`-read roster name > localized shipped
+name > id) keeps custom presets honest without making user-authored names
+translatable.
+
+**Verified:** the summary read, the native `AgentPresetLabel` fallback and the
+roster result shape were read in the installed Desktop 0.2.1-rc.5 bundles
+(`dsh-client-ui-agent-preset`, `dsh-agent-preset-registry`,
+`dsh-api-session-controller`). Runtime probe: start sessions with shipped and
+custom presets, switch panes, and confirm the badge follows focus; remove the
+`remote` fiber and confirm the built-in names still render.
+
+---
+
 ## Directory picker
 
 **Provider:** the Electron preload bridge

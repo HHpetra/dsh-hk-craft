@@ -3,8 +3,17 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { NS, inject, COMMAND_SERVICES, apply, WORKSPACE_SLOT_PRIORITY } = require('./index.js')
+const {
+  NS,
+  inject,
+  COMMAND_SERVICES,
+  apply,
+  createModeRosterLoader,
+  createStripSeats,
+  WORKSPACE_SLOT_PRIORITY,
+} = require('./index.js')
 const { zh, en } = require('./locale.js')
+const { BUILT_IN_MODE_KEYS } = require('./pane-mode.js')
 const { CONTENT_FACTORY, PANEL_KEY, PANE_SLOT } = require('./dsh-pane-host.js')
 
 /** @returns {object} one fake workspace snapshot store */
@@ -289,4 +298,92 @@ test('apply is idempotent in shape: no module-level state leaks between loads', 
   apply(first)
   apply(second)
   assert.equal(first.calls.registered.length, second.calls.registered.length)
+})
+
+test('every shipped preset and the badge explanation have copy in both languages', () => {
+  for (const [language, table] of [
+    ['zh', zh],
+    ['en', en],
+  ]) {
+    for (const key of [...Object.values(BUILT_IN_MODE_KEYS), 'strip.mode.hint']) {
+      assert.equal(typeof table[key], 'string', `${language} is missing ${key}`)
+      assert.notEqual(table[key], '')
+    }
+  }
+})
+
+test('the strip seats fill the read-only mode seat without claiming the subagent seat', () => {
+  const seats = createStripSeats(fakeCtx())
+  assert.equal(typeof seats.mode, 'function')
+  // Ticket 08 owns `subagents`; this ticket must not place an empty stand-in.
+  assert.equal(seats.subagents, undefined)
+  assert.deepEqual(Object.keys(seats), ['mode'])
+})
+
+test('the mode roster loader reads the optional remote once per preset id', async () => {
+  const calls = []
+  const services = {
+    ...workspaceServices(),
+    remote: {
+      agentPresets: {
+        async list() {
+          calls.push('list')
+          return {
+            ok: true,
+            value: { presets: [{ id: 'review', name: 'Code review', description: 'Prioritize bugs.' }] },
+          }
+        },
+      },
+    },
+  }
+  const ctx = fakeCtx({ services })
+  const loadRoster = createModeRosterLoader(ctx)
+
+  assert.deepEqual(await loadRoster('review'), [
+    { id: 'review', name: 'Code review', description: 'Prioritize bugs.' },
+  ])
+  // A focus switch back to the same preset must not fetch again.
+  assert.deepEqual(await loadRoster('review'), [
+    { id: 'review', name: 'Code review', description: 'Prioritize bugs.' },
+  ])
+  assert.deepEqual(calls, ['list'])
+
+  // A different preset id is the documented retry point.
+  await loadRoster('standard')
+  assert.deepEqual(calls, ['list', 'list'])
+  assert.deepEqual(ctx.calls.services, ['remote', 'remote'])
+})
+
+test('the roster loader degrades silently and retries after a failed read', async () => {
+  const absent = createModeRosterLoader(fakeCtx())
+  assert.deepEqual(await absent('standard'), [])
+
+  let attempts = 0
+  const flaky = {
+    ...workspaceServices(),
+    remote: {
+      agentPresets: {
+        async list() {
+          attempts += 1
+          if (attempts === 1) throw new Error('gateway not ready')
+          return { ok: true, value: { presets: [{ id: 'standard' }] } }
+        },
+      },
+    },
+  }
+  const loadRoster = createModeRosterLoader(fakeCtx({ services: flaky }))
+  assert.deepEqual(await loadRoster('standard'), [])
+  // Failures are not cached: the next preset/focus retry may succeed.
+  assert.deepEqual(await loadRoster('standard'), [{ id: 'standard' }])
+  assert.equal(attempts, 2)
+
+  const malformed = createModeRosterLoader(
+    fakeCtx({
+      services: {
+        ...workspaceServices(),
+        remote: { agentPresets: { list: async () => ({ ok: true, value: {} }) } },
+      },
+    }),
+  )
+  assert.deepEqual(await malformed('standard'), [])
 })
