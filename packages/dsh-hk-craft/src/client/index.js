@@ -22,6 +22,7 @@ const { DiagnosticsAction } = require('./diagnostics.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
 const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
+const { createViewSwitch } = require('./dsh-view-switch.js')
 const { createPaneBody, createPaneHost, createPaneToggle } = require('./pane-view.js')
 const { registerCommands } = require('./commands.js')
 
@@ -60,7 +61,9 @@ function apply(ctx) {
     ),
   )
 
-  const controller = createPaneController(ctx)
+  // The View adapter is optional: without `uiConversation` (or the
+  // developer-tools gate) the panes stay chat-only instead of failing to mount.
+  const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
   const PaneHost = createPaneHost(controller)
   const PaneBody = createPaneBody(controller)
   const PaneToggle = createPaneToggle(controller)
