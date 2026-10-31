@@ -199,6 +199,34 @@ function readListSnapshot(ctx, name) {
 }
 
 /**
+ * Whether `sessionId` is a conversation this workspace can show: a member,
+ * still in the catalog, not archived, and not a blank.
+ *
+ * @param {any} workspacesSnapshot `workspaces.list` snapshot
+ * @param {any} sessionsSnapshot `sessions.list` snapshot
+ * @param {string} workspaceId
+ * @param {unknown} sessionId
+ * @returns {boolean}
+ */
+function isWorkspaceConversation(workspacesSnapshot, sessionsSnapshot, workspaceId, sessionId) {
+  if (typeof workspaceId !== 'string' || workspaceId === '') return false
+  if (typeof sessionId !== 'string' || sessionId === '') return false
+  if (workspacesSnapshot?.phase !== 'ready') return false
+  if (sessionsSnapshot == null) return false
+  if (sessionsSnapshot.phase !== undefined && sessionsSnapshot.phase !== 'ready') return false
+  const items = Array.isArray(workspacesSnapshot.items) ? workspacesSnapshot.items : []
+  const item = items.find((candidate) => candidate?.workspaceId === workspaceId)
+  if (item === undefined) return false
+  const memberIds = Array.isArray(item.sessionIds) ? item.sessionIds : []
+  if (!memberIds.includes(sessionId)) return false
+  const archived = new Set(workspacesSnapshot.archivedSessionIds ?? [])
+  if (archived.has(sessionId)) return false
+  const summary = sessionsSnapshot.byId?.[sessionId]
+  if (summary == null) return false
+  return summary.blank !== true
+}
+
+/**
  * The conversation a native workspace click should reveal.
  *
  * Outside the pane view the sidebar has no conversation list, so the click is
@@ -229,22 +257,9 @@ function nativeConversationId(workspacesSnapshot, sessionsSnapshot, workspaceId)
   const item = items.find((candidate) => candidate?.workspaceId === workspaceId)
   if (item === undefined) return undefined
   const memberIds = Array.isArray(item.sessionIds) ? item.sessionIds : []
-  const archived = new Set(workspacesSnapshot.archivedSessionIds ?? [])
   const byId = sessionsSnapshot.byId ?? {}
-
-  /**
-   * A member that can be revealed: present, not archived, and not a blank.
-   *
-   * @param {unknown} sessionId
-   * @returns {boolean}
-   */
-  const revealable = (sessionId) => {
-    if (typeof sessionId !== 'string' || sessionId === '' || archived.has(sessionId)) return false
-    if (!memberIds.includes(sessionId)) return false
-    const summary = byId[sessionId]
-    if (summary === undefined || summary === null) return false
-    return summary.blank !== true
-  }
+  const revealable = (sessionId) =>
+    isWorkspaceConversation(workspacesSnapshot, sessionsSnapshot, workspaceId, sessionId)
 
   const current = mainSessionId(sessionsSnapshot)
   if (revealable(current)) return current
@@ -270,13 +285,14 @@ function nativeConversationId(workspacesSnapshot, sessionsSnapshot, workspaceId)
  * pane workspace is showing, clicking a workspace must not call the native
  * reveal: that path goes through `replaceMain(..., "reveal")`, which calls
  * `selectPanel(null)` and dismisses the pane workspace, unmounting every pane
- * (the exact loss D5 forbids). In pane mode the click only switches which
- * workspace tree is visible. When the pane workspace is not showing, the click
- * reveals that workspace's existing conversation; a workspace with nothing to
- * reveal falls back to the native blank session, which is also the fallback
- * when the pane controller refuses the switch. Deleting is the mirror image:
- * the public registration goes first and the pane controller cleans up locally
- * afterwards.
+ * (the exact loss D5 forbids). In pane mode the click switches which workspace
+ * tree is visible, and the pane controller shows that workspace's conversation
+ * when the tree is not already showing one. When the pane workspace is not
+ * showing, the click reveals that workspace's existing conversation; a workspace
+ * with nothing to reveal falls back to the native blank session, which is also
+ * the fallback when the pane controller refuses the switch. Deleting is the
+ * mirror image: the public registration goes first and the pane controller
+ * cleans up locally afterwards.
  *
  * @param {any} ctx client Cordis context (already injected with `uiWorkspace`
  *   and `workspaces` by the plugin entry)
@@ -288,9 +304,11 @@ function createSectionActions(ctx, options = {}) {
   /**
    * Switch to a workspace.
    *
-   * While the pane workspace is showing, show that workspace's pane tree.
-   * Otherwise reveal its existing conversation in the native view. A workspace
-   * with no revealable conversation starts (or reuses) its blank session —
+   * While the pane workspace is showing, show that workspace's pane tree. The
+   * pane controller puts the workspace's conversation on screen when that tree
+   * does not already have one. Otherwise reveal its existing conversation in
+   * the native view. A workspace with no revealable conversation starts (or
+   * reuses) its blank session —
    * the same call the add flow needs for a workspace that has no history yet.
    *
    * @param {string} workspaceId
@@ -388,6 +406,7 @@ function createSectionActions(ctx, options = {}) {
 module.exports = {
   sectionModel,
   workspaceRunningCount,
+  isWorkspaceConversation,
   nativeConversationId,
   createSectionActions,
   pickDirectory,

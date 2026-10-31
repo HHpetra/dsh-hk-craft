@@ -353,20 +353,6 @@ test('activating without a session still shows the pane with a hint and no refer
   controller.dispose()
 })
 
-test('deactivating returns to the native panel and releases the retained reference', () => {
-  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
-  const controller = createPaneController(fake.ctx)
-  controller.markRegistered()
-  controller.activate('s1')
-
-  controller.deactivate()
-
-  assert.deepEqual(fake.calls.selectPanel, [PANEL_KEY, null])
-  assert.equal(fake.references[0].released, true)
-  assert.equal(controller.getSnapshot().active, false)
-  assert.equal(controller.getSnapshot().sessionId, null)
-})
-
 test('an external return to the native panel releases the pane reference', () => {
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
   const controller = createPaneController(fake.ctx)
@@ -787,8 +773,9 @@ test('/clear with no pane creates the first pane instead of leaving the workspac
 
 test('/clear is refused while the pane panel is not showing', async () => {
   const { fake, controller } = await readyController()
-  controller.deactivate()
+  fake.setPanel(null)
 
+  assert.equal(controller.getSnapshot().active, false)
   assert.equal(await controller.newInFocused('w1'), false)
   assert.deepEqual(fake.calls.create, [])
   controller.dispose()
@@ -937,12 +924,12 @@ test('re-enabling developer tools re-applies the pane trajectory memory', async 
   assert.equal(viewSwitch.listenerCount(), 0)
 })
 
-test('deactivating keeps the layout and releases references; activating restores them', async () => {
+test('the shell leaving the pane panel keeps the layout; activating restores it', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
   const layoutBefore = controller.getSnapshot()
 
-  controller.deactivate()
+  fake.setPanel(null)
 
   assert.equal(controller.getSnapshot().active, false)
   assert.equal(controller.getSnapshot().sessionId, null)

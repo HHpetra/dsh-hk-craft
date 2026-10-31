@@ -12,7 +12,6 @@
 /** @type {Record<string, string>} */
 const zh = {
   'pane.title': 'hkcraft 窗格',
-  'pane.back': '回到原生视图',
   'pane.close': '关闭窗格',
   'pane.close.confirm.title': '会话将被中断并保留在历史中',
   'pane.close.confirm.body': '关闭窗格会中断当前回合；会话本身保留在历史中，之后可从 /resume 重新打开。',
@@ -101,13 +100,6 @@ const zh = {
   'settings.split.error': '保存失败',
   'settings.split.note':
     '默认 4 格；填 0 表示不限制。修改只影响之后新开的分栏，已打开的窗格不会被关闭。',
-  'settings.pane.title': '分屏视图（临时）',
-  'settings.pane.current': '当前模式',
-  'settings.pane.enter': '进入分屏窗格',
-  'settings.pane.exit': '回到原生视图',
-  'settings.pane.busy': '正在切换…',
-  'settings.pane.error': '切换失败',
-  'settings.pane.note': '诊断和分屏开关是过渡入口；长期入口确定后会移走。',
   'command.clear.label': '新会话',
   'command.clear.description': '在当前工作区新开一个会话，旧会话留在历史中',
   'command.resume.label': '恢复会话',
@@ -127,7 +119,6 @@ const zh = {
 /** @type {Record<string, string>} */
 const en = {
   'pane.title': 'hkcraft pane',
-  'pane.back': 'Back to native',
   'pane.close': 'Close pane',
   'pane.close.confirm.title': 'This conversation will be interrupted and kept in history',
   'pane.close.confirm.body':
@@ -217,14 +208,6 @@ const en = {
   'settings.split.error': 'Could not save',
   'settings.split.note':
     'Default: 4 panes. Enter 0 for no limit. Changing it only affects new splits; open panes are never closed.',
-  'settings.pane.title': 'Split view (temporary)',
-  'settings.pane.current': 'Current mode',
-  'settings.pane.enter': 'Enter split panes',
-  'settings.pane.exit': 'Back to native view',
-  'settings.pane.busy': 'Switching…',
-  'settings.pane.error': 'Switch failed',
-  'settings.pane.note':
-    'Diagnostics and the split-view switch are temporary entry points; they will move once the long-term entry is decided.',
   'command.clear.label': 'New conversation',
   'command.clear.description': 'Start a new conversation in this workspace; the old one stays in history',
   'command.resume.label': 'Resume conversation',

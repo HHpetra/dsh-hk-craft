@@ -163,7 +163,7 @@ function PaneFallback({ t, text, detail, label, onBack }) {
     { style: fallbackStyle, role: 'status' },
     h('div', { style: { fontWeight: 600, marginBottom: 6 } }, text),
     detail === undefined ? null : h('div', { style: { opacity: 0.75, marginBottom: 12 } }, detail),
-    h('button', { type: 'button', style: buttonStyle, onClick: onBack }, label ?? t('pane.back')),
+    h('button', { type: 'button', style: buttonStyle, onClick: onBack }, label ?? t('pane.close')),
   )
 }
 

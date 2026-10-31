@@ -3,11 +3,8 @@
 /**
  * The HK Craft page in dsh's Settings panel.
  *
- * This used to be two sidebar footer actions — a floating diagnostics panel and
- * the native ⇄ pane toggle. Both are transitional developer entry points, so they
- * moved here: the diagnostics render inline, the workspace pane limit is edited
- * beside them, and the split-view switch lives next to both until a long-term
- * entry point is decided.
+ * Diagnostics render inline and the workspace pane limit is edited beside them.
+ * The page does not offer a way back to the native conversation.
  *
  * The component consumes only the pane controller face and the slot's locale
  * translator; every dsh-specific assumption stays in `dsh-pane-host.js`. The pure
@@ -54,7 +51,6 @@ const rowStyle = {
 
 const labelStyle = { opacity: 0.7 }
 const valueStyle = { minWidth: 0, wordBreak: 'break-word' }
-const modeStyle = { opacity: 0.7 }
 
 const actionStyle = {
   ...buttonStyle,
@@ -135,49 +131,6 @@ function diagnosticsRows(snapshot, t) {
   ]
 }
 
-/**
- * Activate or leave the pane workspace from the settings page.
- *
- * The controller reports failure through its snapshot (both `activate()` and
- * `deactivate()` emit `error`), so the caller must re-read it after the call.
- * On success the settings page closes; on failure the error stays on the page
- * and the page stays open. Never rejects.
- *
- * @param {any} controller the pane controller face
- * @param {{close?: () => void, setBusy?: (busy: boolean) => void, setError?: (error: string|null) => void}} [handlers]
- * @returns {Promise<{ok: true} | {ok: false, error: string}>}
- */
-function togglePaneMode(controller, handlers = {}) {
-  const close = typeof handlers.close === 'function' ? handlers.close : () => {}
-  const setBusy = typeof handlers.setBusy === 'function' ? handlers.setBusy : () => {}
-  const setError = typeof handlers.setError === 'function' ? handlers.setError : () => {}
-
-  setBusy(true)
-  setError(null)
-
-  return Promise.resolve()
-    .then(() => {
-      const before = controller.getSnapshot()
-      if (before?.active === true) {
-        controller.deactivate()
-      } else if (controller.activate() !== true) {
-        const failed = controller.getSnapshot()
-        // An empty reason still counts as a failure: the page shows its
-        // localized "switch failed" line even when the controller gives none.
-        return { ok: false, error: failed?.error ?? '' }
-      }
-      const after = controller.getSnapshot()
-      return after?.error == null ? { ok: true } : { ok: false, error: after.error }
-    })
-    .catch((error) => ({ ok: false, error: messageOf(error) }))
-    .then((result) => {
-      setBusy(false)
-      if (result.ok === true) close()
-      else setError(result.error)
-      return result
-    })
-}
-
 /** A failure line: the localized summary alone when the detail is empty. */
 function withReason(summary, detail) {
   return detail === '' ? summary : `${summary} — ${detail}`
@@ -236,22 +189,18 @@ function saveMaxPanes(controller, draft) {
  * Build the `settings.section` component for one pane controller.
  *
  * @param {any} controller the pane controller face
- * @returns {(props: { t?: (key: string) => string, close?: () => void }) => any}
+ * @returns {(props: { t?: (key: string) => string }) => any}
  */
 function createSettingsSection(controller) {
   return function HkCraftSettings(props) {
     const React = react()
     const h = React.createElement
     const t = createTranslator(props)
-    const close = typeof props?.close === 'function' ? props.close : undefined
     const state = React.useSyncExternalStore(
       controller.subscribe,
       controller.getSnapshot,
       controller.getSnapshot,
     )
-    const [busy, setBusy] = React.useState(false)
-    const [error, setError] = React.useState(null)
-    const inFlight = React.useRef(false)
     const maxPanes = normalizeMaxPanes(state?.maxPanes)
     const [limitDraft, setLimitDraft] = React.useState(String(maxPanes))
     /** Outcome of the last save: `{kind: 'saved'}`, `{kind: 'invalid'}` or `{kind: 'error', message}`. */
@@ -281,21 +230,6 @@ function createSettingsSection(controller) {
         setLimitNotice({ kind: 'error', message: result.message ?? '' })
       }
     }
-
-    const toggle = () => {
-      // `setBusy(true)` only lands on the next render, so a ref also guards a
-      // double click in the same tick.
-      if (inFlight.current) return
-      inFlight.current = true
-      togglePaneMode(controller, { close, setBusy, setError }).then(() => {
-        inFlight.current = false
-      })
-    }
-
-    const toggleLabel = busy
-      ? t('settings.pane.busy')
-      : t(state?.active === true ? 'settings.pane.exit' : 'settings.pane.enter')
-    const errorText = error === null ? null : withReason(t('settings.pane.error'), error)
 
     const rows = diagnosticsRows(state, t)
 
@@ -375,25 +309,6 @@ function createSettingsSection(controller) {
           : null,
         h('p', { style: noteStyle }, t('settings.split.note')),
       ),
-      h(
-        'section',
-        { style: groupStyle },
-        h('h3', { style: groupTitleStyle }, t('settings.pane.title')),
-        h('div', { style: modeStyle }, `${t('settings.pane.current')}: ${t(paneModeKey(state))}`),
-        h(
-          'button',
-          {
-            type: 'button',
-            onClick: toggle,
-            disabled: busy,
-            'aria-busy': busy ? 'true' : undefined,
-            style: { ...actionStyle, opacity: busy ? 0.6 : 1 },
-          },
-          toggleLabel,
-        ),
-        errorText === null ? null : h('div', { role: 'alert', style: errorStyle }, errorText),
-        h('p', { style: noteStyle }, t('settings.pane.note')),
-      ),
     )
   }
 }
@@ -403,7 +318,6 @@ module.exports = {
   probeStatusKey,
   paneModeKey,
   diagnosticsRows,
-  togglePaneMode,
   parseMaxPanesDraft,
   saveMaxPanes,
   createSettingsSection,

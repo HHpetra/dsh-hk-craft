@@ -355,6 +355,62 @@ test('a workspace with nothing stored starts empty without touching the others',
   controller.dispose()
 })
 
+const CONVERSATION_ROWS = {
+  s1: { id: 's1', blank: false, updatedAt: 1 },
+  s3: { id: 's3', blank: false, updatedAt: 10 },
+  s4: { id: 's4', blank: false, updatedAt: 20 },
+}
+
+test('switching to a workspace with no panes shows its latest conversation', () => {
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 's1')),
+  })
+  const { controller } = readyController({ storage, rows: CONVERSATION_ROWS })
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  const state = controller.getSnapshot()
+  assert.equal(state.workspaceId, 'w2')
+  assert.equal(state.sessionId, 's4')
+  assert.equal(state.layouts.w1.panes.p1.sessionId, 's1')
+  controller.dispose()
+})
+
+test('switching workspace leaves a foreign conversation and shows one that belongs there', () => {
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 's1')),
+    w2: openPane(createLayout('w2'), pane('p2', 's1')),
+  })
+  const { controller } = readyController({ storage, rows: CONVERSATION_ROWS })
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, 's4')
+  assert.equal(controller.getSnapshot().layouts.w1.panes.p1.sessionId, 's1')
+  controller.dispose()
+})
+
+test('switching workspace keeps a conversation that workspace already has open', () => {
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 's1')),
+    w2: openPane(createLayout('w2'), pane('p2', 's3')),
+  })
+  const { controller } = readyController({ storage, rows: CONVERSATION_ROWS })
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, 's3')
+  assert.equal(controller.getSnapshot().panes.p2.sessionId, 's3')
+  controller.dispose()
+})
+
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
@@ -439,14 +495,14 @@ test('pane ids restored for different workspaces are made unique', () => {
   controller.dispose()
 })
 
-test('leaving and re-entering the pane view keeps every workspace layout', () => {
+test('the shell leaving and re-entering the pane view keeps every workspace layout', () => {
   const layouts = twoWorkspaces()
   const storage = memoryStorage(layouts)
   const { fake, controller } = readyController({ storage })
 
   controller.activate('s1')
   controller.switchWorkspace('w2')
-  controller.deactivate()
+  fake.setPanel(null)
 
   assert.equal(controller.getSnapshot().active, false)
   assert.deepEqual(Object.keys(controller.getSnapshot().layouts).sort(), ['w1', 'w2'])

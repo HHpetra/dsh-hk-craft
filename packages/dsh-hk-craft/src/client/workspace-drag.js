@@ -138,15 +138,22 @@ function useWorkspaceDrag(React, options) {
     if (event.button !== undefined && event.button !== 0) return
     if (insideWorkspaceAction(event.target)) return
     if (reorderBusy.current) return
+    // Do NOT capture the pointer here. The select control is a child of the
+    // row, and pointer capture retargets the compatibility click to the capture
+    // element: capturing the row on pointerdown made a normal click land on the
+    // row (which has no onClick) instead of the select button, so clicking a
+    // workspace never reached `openWorkspace`. Capture only once the press has
+    // actually become a drag; a click below the threshold stays a plain click.
     dragRef.current = {
       sourceId: row.workspaceId,
+      pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
+      captured: false,
       targetId: null,
       side: null,
     }
-    event.currentTarget?.setPointerCapture?.(event.pointerId)
   }
 
   const onRowPointerMove = (event) => {
@@ -155,13 +162,27 @@ function useWorkspaceDrag(React, options) {
     if (!current.active && !crossedDragThreshold(current.startX, current.startY, event.clientX, event.clientY)) {
       return
     }
+    const entering = !current.active
+    if (entering) {
+      current.active = true
+      // Pointer capture keeps the move events on the source row while it is
+      // being dragged. Doing it at drag start (not at pointerdown) preserves
+      // the click target for a press that never becomes a drag.
+      try {
+        event.currentTarget?.setPointerCapture?.(current.pointerId)
+        current.captured = typeof event.currentTarget?.setPointerCapture === 'function'
+      } catch (_error) {
+        // A pointer that already ended cannot be captured; the drag simply
+        // falls back to the events that still reach the row.
+        current.captured = false
+      }
+    }
     const target = dropTargetFor(order, current.sourceId, event.clientX, event.clientY)
     const targetId = target === null ? null : target.targetId
     const side = target === null ? null : target.side
     // Entering drag mode is itself a change: the source row must dim even when
     // the pointer is not over another row yet.
-    const changed = !current.active || targetId !== current.targetId || side !== current.side
-    current.active = true
+    const changed = entering || targetId !== current.targetId || side !== current.side
     current.targetId = targetId
     current.side = side
     if (changed) setDrag({ sourceId: current.sourceId, targetId, side })
@@ -172,7 +193,13 @@ function useWorkspaceDrag(React, options) {
     const current = dragRef.current
     if (current === null) return
     clearDrag()
-    event.currentTarget?.releasePointerCapture?.(event.pointerId)
+    if (current.captured) {
+      try {
+        event.currentTarget?.releasePointerCapture?.(current.pointerId)
+      } catch (_error) {
+        // Capture may already be gone (pointerup/cancel ordering); nothing to do.
+      }
+    }
     if (!current.active) return
     // Dropping ends with a click on the source row; consume that one click.
     suppressClick.current = true
@@ -188,9 +215,15 @@ function useWorkspaceDrag(React, options) {
   }
 
   const onRowPointerCancel = (event) => {
-    if (dragRef.current === null) return
+    const current = dragRef.current
+    if (current === null) return
     clearDrag()
-    event.currentTarget?.releasePointerCapture?.(event.pointerId)
+    if (!current.captured) return
+    try {
+      event.currentTarget?.releasePointerCapture?.(current.pointerId)
+    } catch (_error) {
+      // Capture may already be gone; the drag was discarded above either way.
+    }
   }
 
   const consumeSuppressedClick = () => {

@@ -148,10 +148,10 @@ function apply(ctx) {
   const PaneHost = createPaneHost(controller, { headerSeats })
   const PaneBody = createPaneBody(controller)
 
-  // The HK Craft settings page: diagnostics, the pane limit and the
-  // transitional split-view switch. `settings.section` is a root list slot declared by
-  // ui-settings-general; `slots.inject` only runs this callback once that slot
-  // exists, so a shell without a settings panel simply never shows the page.
+  // The HK Craft settings page: diagnostics and the pane limit.
+  // `settings.section` is a root list slot declared by ui-settings-general;
+  // `slots.inject` only runs this callback once that slot exists, so a shell
+  // without a settings panel simply never shows the page.
   const SettingsSection = createSettingsSection(controller)
   ctx.slots.inject(SETTINGS_SLOT, () =>
     ctx.slots.register(
@@ -200,11 +200,9 @@ function apply(ctx) {
       )
       yield ctx.slots.register({ name: PANE_SLOT, locale: NS }, PaneBody)
       controller.markRegistered()
-      // Split view is the default once the plugin has loaded. `activate` needs
-      // the `main` entry to exist, which `markRegistered` has just recorded.
-      // A failure leaves the native conversation selected; the settings switch
-      // can still enter or leave split view for the rest of this run. The next
-      // load enters split view again.
+      // Split view is selected as soon as the pane panel exists. There is no
+      // control that returns to the native conversation. A failed activate
+      // leaves the shell on whatever panel it already had selected.
       controller.activate()
     })
 

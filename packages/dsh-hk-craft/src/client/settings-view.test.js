@@ -12,7 +12,6 @@ const {
   paneModeKey,
   parseMaxPanesDraft,
   saveMaxPanes,
-  togglePaneMode,
 } = require('./settings-view.js')
 const { zh } = require('./locale.js')
 
@@ -76,12 +75,12 @@ function elementWhere(node, predicate) {
 
 /**
  * The controller face the settings page consumes: a snapshot, a subscription
- * and the two mode actions. It records every call.
+ * and the pane-limit action.
  *
- * @param {{active?: boolean, probe?: object, activateResult?: boolean, activateError?: string, deactivateError?: string}} [options]
+ * @param {{active?: boolean, probe?: object, maxPanes?: number}} [options]
  */
 function fakeController(options = {}) {
-  const calls = { activate: 0, deactivate: 0, refreshProbe: 0, setMaxPanes: [] }
+  const calls = { refreshProbe: 0, setMaxPanes: [] }
   let snapshot = {
     active: options.active === true,
     probe: options.probe ?? { ok: true, status: 'present' },
@@ -95,39 +94,11 @@ function fakeController(options = {}) {
     refreshProbe() {
       calls.refreshProbe += 1
     },
-    activate() {
-      calls.activate += 1
-      if (options.activateResult === false) {
-        if (options.activateError !== undefined) snapshot = { ...snapshot, error: options.activateError }
-        return false
-      }
-      snapshot = { ...snapshot, active: true, error: null }
-      return true
-    },
-    deactivate() {
-      calls.deactivate += 1
-      if (options.deactivateError !== undefined) {
-        snapshot = { ...snapshot, error: options.deactivateError }
-        return
-      }
-      snapshot = { ...snapshot, active: false, error: null }
-    },
     setMaxPanes(value) {
       calls.setMaxPanes.push(value)
       snapshot = { ...snapshot, maxPanes: value }
       return value
     },
-  }
-}
-
-/** @returns {{log: any[], close: Function, setBusy: Function, setError: Function}} */
-function toggleHandlers() {
-  const log = []
-  return {
-    log,
-    close: () => log.push('close'),
-    setBusy: (value) => log.push(['busy', value]),
-    setError: (value) => log.push(['error', value]),
   }
 }
 
@@ -170,86 +141,10 @@ test('the pane mode key follows the controller snapshot', () => {
   assert.equal(paneModeKey(undefined), 'settings.view.native')
 })
 
-test('the toggle enters the pane workspace and closes the settings page on success', async () => {
-  const controller = fakeController()
-  const handlers = toggleHandlers()
-
-  const result = await togglePaneMode(controller, handlers)
-
-  assert.deepEqual(result, { ok: true })
-  assert.equal(controller.calls.activate, 1)
-  assert.equal(controller.calls.deactivate, 0)
-  assert.deepEqual(handlers.log, [['busy', true], ['error', null], ['busy', false], 'close'])
-})
-
-test('the toggle returns to the native view and closes on success', async () => {
-  const controller = fakeController({ active: true })
-  const handlers = toggleHandlers()
-
-  const result = await togglePaneMode(controller, handlers)
-
-  assert.deepEqual(result, { ok: true })
-  assert.equal(controller.calls.deactivate, 1)
-  assert.equal(controller.calls.activate, 0)
-  assert.equal(handlers.log.includes('close'), true)
-})
-
-test('a rejected activation shows the controller error and keeps the page open', async () => {
-  const controller = fakeController({
-    activateResult: false,
-    activateError: 'pane main entry is not registered yet',
-  })
-  const handlers = toggleHandlers()
-
-  const result = await togglePaneMode(controller, handlers)
-
-  assert.deepEqual(result, { ok: false, error: 'pane main entry is not registered yet' })
-  assert.equal(handlers.log.includes('close'), false)
-  assert.deepEqual(handlers.log.at(-1), ['error', 'pane main entry is not registered yet'])
-})
-
-test('a failed return to the native view shows the controller error and keeps the page open', async () => {
-  const controller = fakeController({
-    active: true,
-    deactivateError: 'cannot select the native panel',
-  })
-  const handlers = toggleHandlers()
-
-  const result = await togglePaneMode(controller, handlers)
-
-  assert.deepEqual(result, { ok: false, error: 'cannot select the native panel' })
-  assert.equal(handlers.log.includes('close'), false)
-  assert.deepEqual(handlers.log.at(-1), ['error', 'cannot select the native panel'])
-})
-
-test('a rejection without a controller reason still counts as a visible failure', async () => {
-  const controller = fakeController({ activateResult: false })
-  const handlers = toggleHandlers()
-
-  const result = await togglePaneMode(controller, handlers)
-
-  assert.deepEqual(result, { ok: false, error: '' })
-  assert.equal(handlers.log.includes('close'), false)
-  assert.deepEqual(handlers.log.at(-1), ['error', ''])
-})
-
-test('a throwing controller becomes a displayed error instead of an unhandled rejection', async () => {
-  const controller = fakeController()
-  controller.activate = () => {
-    throw new Error('controller exploded')
-  }
-  const handlers = toggleHandlers()
-
-  const result = await togglePaneMode(controller, handlers)
-
-  assert.deepEqual(result, { ok: false, error: 'controller exploded' })
-  assert.equal(handlers.log.includes('close'), false)
-})
-
-test('the settings page renders the diagnostics inline and the transition note', () => {
+test('the settings page renders diagnostics and the pane limit, without a way back to the native view', () => {
   withFakeReact(fakeReact, () => {
-    const Section = createSettingsSection(fakeController())
-    const view = Section({ t, close: () => {} })
+    const Section = createSettingsSection(fakeController({ active: true }))
+    const view = Section({ t })
     const text = textOf(view)
 
     assert.match(text, /HK Craft/)
@@ -257,21 +152,11 @@ test('the settings page renders the diagnostics inline and the transition note',
     assert.ok(text.includes(zh['settings.diag.loaded']))
     assert.ok(text.includes(ENTRY_NAME))
     assert.ok(text.includes(zh['settings.diag.status.present']))
-    assert.ok(text.includes(zh['settings.view.native']))
-    assert.ok(text.includes(zh['settings.pane.note']))
-    assert.notEqual(buttonWithText(view, zh['settings.pane.enter']), undefined)
-  })
-})
-
-test('an active pane workspace offers the way back to the native view', () => {
-  withFakeReact(fakeReact, () => {
-    const Section = createSettingsSection(fakeController({ active: true }))
-    const view = Section({ t, close: () => {} })
-    const text = textOf(view)
-
     assert.ok(text.includes(zh['settings.view.split']))
-    assert.ok(text.includes(zh['settings.pane.current']))
-    assert.notEqual(buttonWithText(view, zh['settings.pane.exit']), undefined)
+    assert.ok(text.includes(zh['settings.split.title']))
+    assert.equal(text.includes('回到原生视图'), false)
+    assert.equal(text.includes('进入分屏窗格'), false)
+    assert.notEqual(buttonWithText(view, zh['settings.split.save']), undefined)
   })
 })
 

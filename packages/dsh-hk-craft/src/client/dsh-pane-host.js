@@ -35,6 +35,7 @@
  */
 
 const { listWorkspaceConversations, workspaceIdOf } = require('./dsh-sessions.js')
+const { isWorkspaceConversation, nativeConversationId } = require('./dsh-workspaces.js')
 const layoutTree = require('./layout-tree.js')
 const { hasLayoutKey } = require('./layout-store.js')
 const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
@@ -879,6 +880,63 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
+   * The catalog snapshots the conversation picker reads, or empty when a
+   * service is missing. A throw must not turn a workspace switch into an error.
+   *
+   * @returns {{workspaces: any, sessions: any}}
+   */
+  function conversationCatalog() {
+    try {
+      return {
+        workspaces: workspacesFace()?.list?.getSnapshot?.(),
+        sessions: sessions?.list?.getSnapshot?.(),
+      }
+    } catch (_error) {
+      return { workspaces: undefined, sessions: undefined }
+    }
+  }
+
+  /**
+   * Make the visible workspace show one of its own conversations.
+   *
+   * Switching the tree is not enough: an empty tree, or a tree whose focused
+   * pane still holds another workspace's session, leaves the previous
+   * transcript on screen. This opens the workspace's latest conversation when
+   * none of its panes already shows one, and focuses an existing one when the
+   * focused pane does not. A tree that already shows one of its conversations
+   * is left alone, so a split the user arranged is not rebuilt. Nothing here
+   * calls the native reveal — that would dismiss the pane panel.
+   *
+   * @param {string} workspaceId
+   * @returns {boolean} whether the layout changed
+   */
+  function focusOrOpenWorkspaceConversation(workspaceId) {
+    if (disposed) return false
+    const { workspaces: workspacesSnapshot, sessions: sessionsSnapshot } = conversationCatalog()
+    const sessionId = nativeConversationId(workspacesSnapshot, sessionsSnapshot, workspaceId)
+    if (sessionId === undefined) return false
+    const layout = book.layoutOf(workspaceId)
+    const focused = layout.activePaneId == null ? undefined : layout.panes[layout.activePaneId]
+    const own = (candidate) =>
+      isWorkspaceConversation(workspacesSnapshot, sessionsSnapshot, workspaceId, candidate)
+    if (focused !== undefined && own(focused.sessionId)) return false
+
+    const holder = layoutTree.paneOfSession(layout, sessionId)
+    if (holder !== undefined) {
+      if (holder === layout.activePaneId) return false
+      return apply(layoutTree.focus(layout, holder), workspaceId)
+    }
+    for (const pane of Object.values(layout.panes)) {
+      if (!own(pane.sessionId) || pane.paneId === layout.activePaneId) continue
+      return apply(layoutTree.focus(layout, pane.paneId), workspaceId)
+    }
+    if (layout.root === null || layout.activePaneId === null) {
+      return openSessionPane(layout, sessionId, workspaceId)
+    }
+    return apply(layoutTree.replaceSession(layout, layout.activePaneId, sessionId), workspaceId)
+  }
+
+  /**
    * Re-select the plugin panel without touching any layout. The sidebar uses
    * this after a native workspace reveal bounced the shell back to the native
    * Conversation; references for every loaded workspace are retained again.
@@ -1499,11 +1557,19 @@ function createPaneController(ctx, options = {}) {
     /**
      * Show another workspace's layout without closing anything (spec D5).
      *
+     * The tree switch alone does not change the transcript when the destination
+     * has no panes, or when its focused pane still holds another workspace's
+     * session. After the tree is visible, show one of this workspace's own
+     * conversations in that case.
+     *
      * @param {string} workspaceId
      * @returns {boolean} whether that workspace is now the active one
      */
     switchWorkspace(workspaceId) {
-      return switchWorkspaceValue(workspaceId)
+      const switched = switchWorkspaceValue(workspaceId)
+      if (!switched) return false
+      focusOrOpenWorkspaceConversation(workspaceId)
+      return true
     },
     /**
      * Forget a workspace whose registration was just deleted.
@@ -1527,27 +1593,6 @@ function createPaneController(ctx, options = {}) {
      */
     reactivate() {
       return reactivateValue()
-    },
-    /** Return to dsh's native Conversation, keeping every workspace layout. */
-    deactivate() {
-      if (disposed) return
-      if (snapshot.active && panelId() === PANEL_KEY) {
-        try {
-          layout.selectPanel(null)
-        } catch (error) {
-          emit({ error: messageOf(error) })
-          return
-        }
-      }
-      releaseAll()
-      emit({
-        ...statePatch(false),
-        active: false,
-        error: null,
-        pendingClose: null,
-        closeBusy: false,
-        closeError: null,
-      })
     },
     /** Move the focus (and with it dsh's "current session"). */
     focusPane(paneId) {
@@ -1757,7 +1802,7 @@ function createPaneController(ctx, options = {}) {
       if (disposed) return false
       return apply(layoutTree.resize(book.activeLayout(), path, ratio))
     },
-    /** Plugin unload / panel unregistration: release everything, restore native. */
+    /** Plugin unload: release everything and hand the main area back to the shell. */
     dispose() {
       if (disposed) return
       disposed = true
