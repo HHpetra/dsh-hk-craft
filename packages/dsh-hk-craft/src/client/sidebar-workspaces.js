@@ -67,10 +67,22 @@ function useWorkspacePaneRevision(React, panes) {
 /** The insertion line's colour: the shell's business accent, themed per palette. */
 const DROP_LINE_COLOR = 'var(--dsw-alias-state-business-primary, Highlight)'
 
+/**
+ * Fill only the free space above the shell footer.
+ *
+ * `sidebar.workspaces` is rendered inside the sidebar column, and that column
+ * clips overflow. A flex item whose minimum size is its content grows the
+ * column past the clip and pushes the footer — the settings trigger, and any
+ * entry another plugin inserts there — below the visible edge. The box is
+ * still in the layout, so it looks present to accessibility tools, but it is
+ * neither painted nor clickable. `height: 0` plus `flex: 1 1 auto` makes this
+ * section take the free space and nothing more; the list inside it scrolls.
+ */
 const rootStyle = {
   display: 'flex',
   flexDirection: 'column',
-  flex: 1,
+  flex: '1 1 auto',
+  height: 0,
   minHeight: 0,
   overflow: 'hidden',
   padding: '0 0 4px',
@@ -79,6 +91,7 @@ const rootStyle = {
 const listStyle = {
   display: 'flex',
   flexDirection: 'column',
+  flex: '1 1 auto',
   gap: 1,
   minHeight: 0,
   overflowY: 'auto',

@@ -8,7 +8,9 @@
  * These tests render the component with a React stand-in — the same approach as
  * `pane-view.test.js` — and assert what a user can observe:
  * the click target, the accessible name, the current marker and the action
- * slot's stable marker. Styles and hover feedback stay on the manual smoke list.
+ * slot's stable marker. The one layout contract asserted here is the scrollport
+ * that keeps the shell footer inside the sidebar column. Hover feedback stays
+ * on the manual smoke list.
  */
 
 const test = require('node:test')
@@ -468,6 +470,27 @@ test('a press on the row action slot never starts a drag', () => {
 
     assert.deepEqual(reorders, [], 'a row action press must not reorder')
     assert.deepEqual(opened, ['w2'], 'and it must not swallow the click either')
+  })
+})
+
+test('the section is a bounded scrollport so the shell footer stays in the sidebar column', () => {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
+    const tree = renderSection()
+    // The sidebar column clips overflow. A flex child whose minimum size is its
+    // content pushes the shell footer (settings, and other plugins' footer
+    // entries such as the recycle bin) below that clip, where it still has a
+    // layout box but is neither painted nor clickable. The section must take
+    // only the free space above the footer and scroll inside it.
+    assert.equal(tree.props['data-hkcraft'], 'workspaces')
+    assert.equal(tree.props.style.flex, '1 1 auto')
+    assert.equal(tree.props.style.height, 0)
+    assert.equal(tree.props.style.minHeight, 0)
+    assert.equal(tree.props.style.overflow, 'hidden')
+    const list = childrenOf(tree).find((child) => child.props?.style?.overflowY === 'auto')
+    assert.notEqual(list, undefined, 'the rows must scroll inside the section')
+    assert.equal(list.props.style.flex, '1 1 auto')
+    assert.equal(list.props.style.minHeight, 0)
   })
 })
 
