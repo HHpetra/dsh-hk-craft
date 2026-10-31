@@ -41,6 +41,7 @@ const { EMPTY_STATE_LIMITS, buildResumeRows } = require('./resume-list.js')
 const { absentHook } = require('./shared.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const { STRIP_STATUS_IDLE, projectStrip } = require('./pane-strip.js')
+const { DEFAULT_MAX_PANES, paneBudgetBlocked } = require('./pane-budget.js')
 const {
   buttonStyle,
   paneStyle,
@@ -652,6 +653,27 @@ function stripPaneIdAt(clientX, clientY) {
 }
 
 /**
+ * Whether `+` should read as unavailable.
+ *
+ * The controller's `splitBlock` counts reservations that have passed the check
+ * but are still waiting on `sessions.create`. The leaf count alone stays under
+ * the cap until that call returns, which would leave `+` enabled for a slot
+ * that is already taken. Callers without `splitBlock` fall back to the leaves.
+ *
+ * @param {any} controller
+ * @param {object} state layout shown in the strip
+ * @param {string|null|undefined} workspaceId workspace the strip is counting
+ * @param {number} maxPanes fallback cap when the controller has no `splitBlock`
+ * @returns {boolean}
+ */
+function splitBlocked(controller, state, workspaceId, maxPanes) {
+  if (typeof controller?.splitBlock === 'function') {
+    return controller.splitBlock(workspaceId) === 'budget'
+  }
+  return paneBudgetBlocked(state, maxPanes)
+}
+
+/**
  * The pane strip: the current workspace's open conversations, in `leaves()`
  * order, with `+` immediately after the last tab.
  *
@@ -661,9 +683,13 @@ function stripPaneIdAt(clientX, clientY) {
  * conversations.
  *
  * Every entry is a pane — clicking it focuses that pane, its × closes the pane
- * (after a confirmation when the session is live), and `+` adds a conversation
- * and re-tiles the workspace into equal columns. Status dots come from the live
- * session status map; nothing here reorders entries by status.
+ * (after a confirmation when the session is live), and `+` splits the focused
+ * pane with a new conversation. Status dots come from the live session status
+ * map; nothing here reorders entries by status.
+ *
+ * `+` follows the sidebar's split control: it is disabled once the workspace
+ * holds `maxPanes` panes (0 = unlimited) and explains the limit on hover/hold.
+ * The strip never closes a pane to enforce a lowered cap.
  *
  * The title and status read the shell's root standard hooks (`useSessions`,
  * `useSessionStatus`); ui-session provides them as `sessions` and
@@ -672,9 +698,9 @@ function stripPaneIdAt(clientX, clientY) {
  * The ARIA roles stay `tablist`/`tab` because the strip is a list of selectable
  * views of the same main region; the domain vocabulary is not "tab".
  *
- * @param {{ controller: any, state: any, kit: any, t: (key: string, params?: object) => string }} props
+ * @param {{ controller: any, state: any, workspaceId?: string|null, maxPanes?: number, kit: any, t: (key: string, params?: object) => string }} props
  */
-function PaneStrip({ controller, state, kit, t }) {
+function PaneStrip({ controller, state, workspaceId, maxPanes = DEFAULT_MAX_PANES, kit, t }) {
   const React = react()
   const h = React.createElement
   const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
@@ -690,6 +716,8 @@ function PaneStrip({ controller, state, kit, t }) {
   const suppressClick = React.useRef(false)
 
   const entries = projectStrip(state, sessions, statuses, t('session.untitled'))
+  const budgetBlocked = splitBlocked(controller, state, workspaceId, maxPanes)
+  const budgetHint = budgetBlocked ? t('strip.budget', { n: maxPanes }) : null
 
   const closeEntry = (entry) => {
     // Closing a pane is `controller.closePane`: idle panes close immediately,
@@ -700,7 +728,7 @@ function PaneStrip({ controller, state, kit, t }) {
   }
 
   const createEntry = () => {
-    if (creating) return
+    if (creating || splitBlocked(controller, state, workspaceId, maxPanes)) return
     setCreating(true)
     Promise.resolve(controller.newPane())
       .catch(() => {})
@@ -874,8 +902,8 @@ function PaneStrip({ controller, state, kit, t }) {
     {
       'data-hkcraft-pane-strip': '',
       // The full key table lives here and in the empty state, built from the
-      // same labels the listener accepts.
-      title: hint,
+      // same labels the listener accepts; a spent budget appends its reason.
+      title: budgetHint === null ? hint : `${hint} · ${budgetHint}`,
       style: paneStripStyle,
     },
     h(
@@ -894,13 +922,26 @@ function PaneStrip({ controller, state, kit, t }) {
         'button',
         {
           type: 'button',
-          // `+` adds a pane; `Ctrl+Shift+N` creates a conversation in the focused
-          // pane instead, so this button must not advertise that chord.
-          title: t('strip.new'),
-          'aria-label': t('strip.new'),
+          // `+` splits the focused pane; `Ctrl+Shift+N` creates a conversation in
+          // that pane instead, so this button must not advertise that chord. At
+          // the pane budget it stays visible and focusable (like the sidebar's
+          // split control) with `aria-disabled` and a title that explains the
+          // limit, instead of a native `disabled` that would hide the reason
+          // from keyboard users.
+          title: budgetHint ?? t('strip.new'),
+          'aria-label': budgetHint ?? t('strip.new'),
+          'aria-disabled': budgetBlocked ? 'true' : undefined,
           'data-hkcraft-strip-new': '',
-          disabled: creating,
-          style: { ...stripNewStyle, opacity: creating ? 0.55 : 1, cursor: creating ? 'default' : 'pointer' },
+          'data-hkcraft-strip-budget': budgetBlocked ? 'true' : undefined,
+          // A native `disabled` would drop the button out of tab order, which
+          // hides the budget reason. `creating` still uses it while another
+          // slot remains, so a double-click cannot start a second split.
+          disabled: budgetBlocked ? false : creating,
+          style: {
+            ...stripNewStyle,
+            opacity: creating || budgetBlocked ? 0.55 : 1,
+            cursor: creating || budgetBlocked ? 'default' : 'pointer',
+          },
           onClick: createEntry,
         },
         '＋',
@@ -987,9 +1028,9 @@ function PaneCloseConfirm({ controller, t }) {
  * One workspace's tree. Every loaded workspace gets one of these and stays
  * mounted; `visible` only flips `display` (ticket 08, spec D5).
  *
- * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
+ * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, maxPanes?: number, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t, seats }) {
+function PaneWorkspace({ controller, workspaceId, layout, visible, maxPanes = DEFAULT_MAX_PANES, kit, t, seats }) {
   const React = react()
   const h = React.createElement
   const attributes = {
@@ -1021,7 +1062,7 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, kit, t, seats
     // Only the visible workspace owns a strip: hidden strips would render a
     // second row over an invisible tree. The pane bodies below stay mounted
     // regardless, which is what D5 actually protects.
-    visible ? h(PaneStrip, { controller, state: layout, kit, t }) : null,
+    visible ? h(PaneStrip, { controller, state: layout, workspaceId, maxPanes, kit, t }) : null,
     h(
       'div',
       { style: layoutStyle, 'data-hkcraft-layout': '' },
@@ -1124,6 +1165,7 @@ function createPaneHost(controller, options = {}) {
             workspaceId: group.workspaceId,
             layout: group.layout,
             visible: group.visible,
+            maxPanes: state.maxPanes,
             kit: props,
             t,
             seats,

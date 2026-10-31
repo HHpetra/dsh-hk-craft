@@ -256,16 +256,18 @@ function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes
         // in a new pane beside it (Ctrl+Enter). The shell-level reveal would
         // otherwise call selectPanel(null) and dismiss the split layout. An
         // already-open conversation makes `replaceFocused` focus its pane, which
-        // is exactly the D10 "focus instead of reopen" rule.
+        // is exactly the D10 "focus instead of reopen" rule. Ctrl+Enter still
+        // goes through the pane host when the workspace is empty: that opens
+        // the first pane and does not spend the split budget.
         const openBeside = newPaneRequested?.() === true
-        if (panePanelActive(panes) && focusedPane(panes) !== null) {
-          if (openBeside && typeof panes?.openInNewPane === 'function') {
-            const attempt = panes.openInNewPane(option.sessionId)
-            if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
-              attempt.catch(() => {})
-            }
-            return
+        if (panePanelActive(panes) && openBeside && typeof panes?.openInNewPane === 'function') {
+          const attempt = panes.openInNewPane(option.sessionId)
+          if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+            attempt.catch(() => {})
           }
+          return
+        }
+        if (panePanelActive(panes) && focusedPane(panes) !== null) {
           panes.replaceFocused(option.sessionId)
           return
         }

@@ -381,7 +381,8 @@ address to `uiWorkspace.openSession(address)`, which reveals the native
 conversation panel and would dismiss the pane workspace (see
 [`#native-start-session-reveal`](#native-start-session-reveal)); the pane uses the
 controller's `openInNewPane(sessionId)` instead — it focuses an already-open child
-and otherwise tiles a new pane.
+and otherwise splits a new pane beside the focused one (subject to the workspace
+pane limit, ADR-0009).
 
 **Verified:** the catalog shape, mode union and label requirements, activity
 fallback, `refreshProjections`, and `resolveTarget`/`subagentAddress` were read in

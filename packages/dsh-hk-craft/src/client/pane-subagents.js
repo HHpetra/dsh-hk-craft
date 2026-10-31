@@ -174,7 +174,8 @@ function requestCatalogRefresh(refreshCatalog, sessionId) {
  * Open one catalog row through the pane controller's public "new pane" path.
  *
  * The controller focuses the child when a pane already holds it and otherwise
- * tiles a new pane, so the viewer never mounts a conversation twice. External
+ * splits a new pane beside the focused one, so the viewer never mounts a
+ * conversation twice. External
  * rows are inert: they have no local Session to retain. A controller failure is
  * reported through its snapshot, not here.
  *

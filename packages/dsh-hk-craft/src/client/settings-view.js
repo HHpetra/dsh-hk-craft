@@ -5,8 +5,9 @@
  *
  * This used to be two sidebar footer actions — a floating diagnostics panel and
  * the native ⇄ pane toggle. Both are transitional developer entry points, so they
- * moved here: the diagnostics render inline and the split-view switch lives next
- * to them until a long-term entry point is decided.
+ * moved here: the diagnostics render inline, the workspace pane limit is edited
+ * beside them, and the split-view switch lives next to both until a long-term
+ * entry point is decided.
  *
  * The component consumes only the pane controller face and the slot's locale
  * translator; every dsh-specific assumption stays in `dsh-pane-host.js`. The pure
@@ -20,6 +21,7 @@
 
 const { createTranslator, react } = require('./react-and-translator.js')
 const { buttonStyle } = require('./pane-styles.js')
+const { normalizeMaxPanes, parseNonNegativeInteger } = require('./pane-budget.js')
 const { messageOf } = require('./shared.js')
 
 /** The build entry named in the diagnostics. */
@@ -59,6 +61,17 @@ const actionStyle = {
   alignSelf: 'flex-start',
   fontSize: 13,
   padding: '4px 10px',
+}
+
+const inputStyle = {
+  width: 88,
+  boxSizing: 'border-box',
+  padding: '3px 6px',
+  border: '1px solid color-mix(in srgb, currentColor 28%, transparent)',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
 }
 
 const noteStyle = { margin: 0, fontSize: 11, lineHeight: 1.5, opacity: 0.62 }
@@ -165,6 +178,60 @@ function togglePaneMode(controller, handlers = {}) {
     })
 }
 
+/** A failure line: the localized summary alone when the detail is empty. */
+function withReason(summary, detail) {
+  return detail === '' ? summary : `${summary} — ${detail}`
+}
+
+/**
+ * Parse the pane-limit input.
+ *
+ * The field is a number input, so the only accepted drafts are a non-negative
+ * whole number (`0` means unlimited). An empty or fractional draft is invalid
+ * rather than silently coerced, so the page can say why it did not save.
+ *
+ * @param {unknown} draft raw input value
+ * @returns {number|null} the parsed cap, or null when the draft is invalid
+ */
+function parseMaxPanesDraft(draft) {
+  // Numbers are judged as text, the same way the number input reports them.
+  if (typeof draft === 'number') return parseNonNegativeInteger(String(draft))
+  return parseNonNegativeInteger(draft)
+}
+
+/**
+ * Save the pane limit through the controller.
+ *
+ * Never rejects: an invalid draft, a controller without `setMaxPanes`, and a
+ * throwing controller are all reported as `{ ok: false, reason }` so the page
+ * can keep the draft and show a localized reason. A controller that keeps the
+ * new cap in memory but fails to persist it reports that through
+ * `snapshot.maxPanesError` (a string, empty when storage is missing) instead of
+ * throwing; the page shows the failure and the in-memory cap stays in effect.
+ * On success the value is the controller's normalised cap, which may differ
+ * from the draft only when the controller applies its own fallback.
+ *
+ * @param {any} controller the pane controller face
+ * @param {unknown} draft raw input value
+ * @returns {{ok: true, value: number} | {ok: false, reason: 'invalid'|'unsupported'|'error', message?: string}}
+ */
+function saveMaxPanes(controller, draft) {
+  const value = parseMaxPanesDraft(draft)
+  if (value === null) return { ok: false, reason: 'invalid' }
+  if (typeof controller?.setMaxPanes !== 'function') return { ok: false, reason: 'unsupported' }
+  try {
+    const applied = controller.setMaxPanes(value)
+    const snap = typeof controller.getSnapshot === 'function' ? controller.getSnapshot() : null
+    if (snap !== null && snap !== undefined && typeof snap.maxPanesError === 'string') {
+      return { ok: false, reason: 'error', message: snap.maxPanesError }
+    }
+    const next = normalizeMaxPanes(applied, value)
+    return { ok: true, value: next }
+  } catch (error) {
+    return { ok: false, reason: 'error', message: messageOf(error) }
+  }
+}
+
 /**
  * Build the `settings.section` component for one pane controller.
  *
@@ -185,12 +252,35 @@ function createSettingsSection(controller) {
     const [busy, setBusy] = React.useState(false)
     const [error, setError] = React.useState(null)
     const inFlight = React.useRef(false)
+    const maxPanes = normalizeMaxPanes(state?.maxPanes)
+    const [limitDraft, setLimitDraft] = React.useState(String(maxPanes))
+    /** Outcome of the last save: `{kind: 'saved'}`, `{kind: 'invalid'}` or `{kind: 'error', message}`. */
+    const [limitNotice, setLimitNotice] = React.useState(null)
 
     // The probe is a point-in-time slot snapshot; re-read it when the page opens
     // so the diagnostics describe the shell as it is now, not as it was at load.
     React.useEffect(() => {
       if (typeof controller.refreshProbe === 'function') controller.refreshProbe()
     }, [controller])
+
+    // A change made elsewhere (another window, a restored store) wins over the
+    // draft; an in-progress edit is left alone because only the committed value
+    // changes this dependency.
+    React.useEffect(() => {
+      setLimitDraft(String(maxPanes))
+    }, [maxPanes])
+
+    const saveLimit = () => {
+      const result = saveMaxPanes(controller, limitDraft)
+      if (result.ok === true) {
+        setLimitDraft(String(result.value))
+        setLimitNotice({ kind: 'saved' })
+      } else if (result.reason === 'invalid') {
+        setLimitNotice({ kind: 'invalid' })
+      } else {
+        setLimitNotice({ kind: 'error', message: result.message ?? '' })
+      }
+    }
 
     const toggle = () => {
       // `setBusy(true)` only lands on the next render, so a ref also guards a
@@ -205,12 +295,7 @@ function createSettingsSection(controller) {
     const toggleLabel = busy
       ? t('settings.pane.busy')
       : t(state?.active === true ? 'settings.pane.exit' : 'settings.pane.enter')
-    const errorText =
-      error === null
-        ? null
-        : error === ''
-          ? t('settings.pane.error')
-          : `${t('settings.pane.error')} — ${error}`
+    const errorText = error === null ? null : withReason(t('settings.pane.error'), error)
 
     const rows = diagnosticsRows(state, t)
 
@@ -234,6 +319,61 @@ function createSettingsSection(controller) {
             ),
           ),
         ),
+      ),
+      h(
+        'section',
+        { style: groupStyle, 'data-hkcraft': 'settings-split' },
+        h('h3', { style: groupTitleStyle }, t('settings.split.title')),
+        h(
+          'label',
+          { style: rowStyle },
+          h('span', { style: labelStyle }, t('settings.split.label')),
+          h('input', {
+            type: 'number',
+            min: 0,
+            step: 1,
+            inputMode: 'numeric',
+            value: limitDraft,
+            'aria-label': t('settings.split.label'),
+            'data-hkcraft-split-limit': '',
+            style: inputStyle,
+            onChange: (event) => {
+              const next = event.target.value
+              setLimitDraft(next)
+              // A draft that no longer matches the saved cap is not saved yet.
+              // Leaving the saved notice up would claim the edit had already landed.
+              // An invalid notice describes the draft, so it also goes away once
+              // the field is back to the cap that is already in effect.
+              if (next.trim() !== String(maxPanes) || limitNotice?.kind === 'invalid') {
+                setLimitNotice(null)
+              }
+            },
+            onKeyDown: (event) => {
+              if (event.key !== 'Enter') return
+              event.preventDefault()
+              saveLimit()
+            },
+          }),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+          h('button', { type: 'button', onClick: saveLimit, style: actionStyle }, t('settings.split.save')),
+          limitNotice?.kind === 'saved'
+            ? h('span', { role: 'status', style: noteStyle }, t('settings.split.saved'))
+            : null,
+        ),
+        limitNotice?.kind === 'invalid'
+          ? h('div', { role: 'alert', style: errorStyle }, t('settings.split.invalid'))
+          : null,
+        limitNotice?.kind === 'error'
+          ? h(
+              'div',
+              { role: 'alert', style: errorStyle },
+              withReason(t('settings.split.error'), limitNotice.message),
+            )
+          : null,
+        h('p', { style: noteStyle }, t('settings.split.note')),
       ),
       h(
         'section',
@@ -264,5 +404,7 @@ module.exports = {
   paneModeKey,
   diagnosticsRows,
   togglePaneMode,
+  parseMaxPanesDraft,
+  saveMaxPanes,
   createSettingsSection,
 }

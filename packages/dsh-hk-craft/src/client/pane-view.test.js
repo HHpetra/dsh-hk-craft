@@ -8,12 +8,14 @@ const { withFakeReact } = require('./fake-react.js')
 const {
   PANE_CONTENT_OCCURRENCE,
   PaneFrame,
+  PaneStrip,
   PaneViewToggle,
   createPaneBody,
   createPaneConversationViews,
   paneViewOfSession,
   workspaceGroups,
 } = require('./pane-view.js')
+const { zh } = require('./locale.js')
 
 /**
  * A React stand-in for the pane body render: only the calls `PaneBody` makes.
@@ -438,5 +440,70 @@ test('both pane-header seats receive that pane session and its own width cap', (
       [modeElement.props.seatStyle.maxWidth, subagentElement.props.seatStyle.maxWidth],
       [140, 160],
     )
+  })
+})
+
+/** @returns {object|undefined} the first element whose props satisfy `predicate` */
+function elementWhere(node, predicate) {
+  if (node === null || node === undefined || node === false) return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = elementWhere(child, predicate)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (typeof node === 'string' || typeof node === 'number') return undefined
+  if (predicate(node)) return node
+  return elementWhere(node.props?.children, predicate)
+}
+
+/** The strip's `+` element for one snapshot and pane cap. */
+function stripPlus(maxPanes) {
+  const controller = {
+    closePane: () => {},
+    newPane: () => {},
+    focusPane: () => {},
+    swapPanes: () => {},
+  }
+  const state = {
+    root: { kind: 'leaf', paneId: 'p1' },
+    panes: { p1: { paneId: 'p1', sessionId: 's1', view: 'chat' } },
+    activePaneId: 'p1',
+  }
+  const t = (key, params) => (zh[key] ?? key).replace('{n}', String(params?.n ?? ''))
+  const view = PaneStrip({
+    controller,
+    state,
+    maxPanes,
+    kit: {
+      useSessions: (selector) => selector({ byId: { s1: { title: 'One' } } }),
+      useSessionStatus: (selector) => selector({}),
+    },
+    t,
+  })
+  return { view, plus: elementWhere(view, (node) => node.props?.['data-hkcraft-strip-new'] === '') }
+}
+
+test('the strip split control is disabled at the pane cap and explains why', () => {
+  withFakeReact(fakeReact, () => {
+    const { plus } = stripPlus(1)
+
+    assert.notEqual(plus, undefined)
+    assert.equal(plus.props.disabled, false)
+    assert.equal(plus.props['aria-disabled'], 'true')
+    assert.equal(plus.props['data-hkcraft-strip-budget'], 'true')
+    assert.equal(plus.props.title, zh['strip.budget'].replace('{n}', '1'))
+  })
+})
+
+test('the strip split control stays enabled with 0 panes as the cap', () => {
+  withFakeReact(fakeReact, () => {
+    const { plus } = stripPlus(0)
+
+    assert.notEqual(plus, undefined)
+    assert.equal(plus.props.disabled, false)
+    assert.equal(plus.props['aria-disabled'], undefined)
+    assert.equal(plus.props['data-hkcraft-strip-budget'], undefined)
   })
 })

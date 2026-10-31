@@ -388,6 +388,16 @@ test('/resume without Ctrl+Enter still replaces the focused pane', async () => {
   assert.deepEqual(panes.calls.replaced, ['s2'])
 })
 
+test('/resume + Ctrl+Enter on an empty pane workspace opens the first pane', async () => {
+  const panes = fakePanes({ active: true, focused: null })
+  const h = harness({ panes, newPaneRequested: () => true })
+  await command(h, 'resume').ui.onSelect({ id: 's2', sessionId: 's2', label: 'x' }, { sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.openedInNewPane, ['s2'])
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(h.calls.opened, [])
+})
+
 test('/resume + Ctrl+Enter outside the pane workspace reveals natively', async () => {
   const panes = fakePanes({ active: false, focused: null })
   const h = harness({ panes, newPaneRequested: () => true })

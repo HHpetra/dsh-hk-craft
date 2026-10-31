@@ -38,6 +38,13 @@ const { listWorkspaceConversations, workspaceIdOf } = require('./dsh-sessions.js
 const layoutTree = require('./layout-tree.js')
 const { hasLayoutKey } = require('./layout-store.js')
 const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
+const {
+  isPaneBudgetSpent,
+  normalizeMaxPanes,
+  paneCount,
+  readMaxPanes,
+  writeMaxPanes,
+} = require('./pane-budget.js')
 const { createCloseFlow } = require('./pane-close.js')
 const { messageOf } = require('./shared.js')
 const { mainSessionId } = require('./workspace-status.js')
@@ -143,6 +150,11 @@ function defaultStorage() {
  * pane of every loaded workspace stays retained (and mounted-but-hidden by the
  * view layer) so streaming output, scroll position and composer drafts survive.
  *
+ * Pane creation follows dsh's sidebar split rule (ADR-0009): split only the
+ * referenced pane into equal siblings, and refuse a new pane once the workspace
+ * holds `maxPanes` panes (0 = unlimited). The cap lives in
+ * `pane-budget.js` and is shared by the strip control and every controller path.
+ *
  * Reference discipline (the part dsh observes):
  * - every loaded pane holds one `hkcraftPane` retention of its session;
  * - exactly one pane — the focused pane of the *active* workspace —
@@ -189,6 +201,31 @@ function createPaneController(ctx, options = {}) {
   const listeners = new Set()
   /** Per-workspace layouts, the visible workspace and persistence. */
   const book = createPaneLayouts({ storage, nextPaneId: () => nextPaneId() })
+  /**
+   * The pane cap shared by every workspace (dsh's sidebar pane budget, made a
+   * setting). Read once from storage; changing it only gates creating panes.
+   */
+  let maxPanes = readMaxPanes(storage)
+  /**
+   * Splits that have passed the budget check but are still awaiting
+   * `sessions.create`. Counted with the open panes so a second entry cannot
+   * also pass the check and create a session before the first one lands.
+   *
+   * @type {Map<string, number>}
+   */
+  const pendingSplits = new Map()
+  /**
+   * Empty workspaces whose first pane is still awaiting `sessions.create`.
+   *
+   * This is not a budget reservation: the first pane does not spend the split
+   * cap. It only stops a second new-session request (empty-state button,
+   * Ctrl+Shift+N, `+` / `newPane` with no focused pane) from calling
+   * `sessions.create` again. When that first create returns, the pane is
+   * written only if this same workspace is still empty.
+   *
+   * @type {Set<string>}
+   */
+  const pendingFirstPanes = new Set()
   let paneSeq = 0
   let registered = false
   let disposed = false
@@ -197,6 +234,9 @@ function createPaneController(ctx, options = {}) {
     sessionId: null,
     probe: probeConversationContent(slots),
     error: null,
+    maxPanes,
+    /** `null` after a successful write; a string when the last write failed. */
+    maxPanesError: null,
     workspaceId: null,
     layouts: {},
     root: null,
@@ -410,6 +450,25 @@ function createPaneController(ctx, options = {}) {
     book.store(workspaceId, next)
     emit({ ...statePatch(snapshot.active), error: null })
     return true
+  }
+
+  /** A new pane record. The id is allocated here, once, at the moment of insertion. */
+  function freshPane(sessionId) {
+    return { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
+  }
+
+  /**
+   * Open `sessionId` as the first pane of `layout`.
+   *
+   * `workspaceId` omitted uses the visible workspace, matching `apply`.
+   *
+   * @param {object} layout
+   * @param {string} sessionId
+   * @param {string|null} [workspaceId]
+   * @returns {boolean}
+   */
+  function openSessionPane(layout, sessionId, workspaceId) {
+    return apply(layoutTree.openPane(layout, freshPane(sessionId)), workspaceId)
   }
 
   function workspaceOf(sessionId) {
@@ -893,7 +952,80 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
-  /** Split `paneId` and open (or create) the conversation beside it. */
+  /** @param {string|null} workspaceId */
+  function splitBudgetKey(workspaceId) {
+    return workspaceId === null ? UNSCOPED_WORKSPACE : workspaceId
+  }
+
+  /** @param {string|null} workspaceId */
+  function pendingSplitCount(workspaceId) {
+    return pendingSplits.get(splitBudgetKey(workspaceId)) ?? 0
+  }
+
+  /**
+   * Whether one workspace has spent its pane budget.
+   *
+   * Mirrors the dockkit rule dsh's right sidebar uses (`canSplit`): the count
+   * is of docked panes in the surface, plus splits already committed to
+   * creating a session, and the budget only blocks a *new* pane.
+   *
+   * @param {string|null} workspaceId
+   * @returns {boolean}
+   */
+  function paneBudgetSpent(workspaceId) {
+    const open = paneCount(book.layoutOf(workspaceId))
+    return isPaneBudgetSpent(open + pendingSplitCount(workspaceId), maxPanes)
+  }
+
+  /**
+   * `splitBlock` reads the reservation map, which is not a snapshot field.
+   * Subscribers (the strip) only re-read it when the snapshot identity changes.
+   */
+  function publishPendingSplit() {
+    snapshot = Object.freeze({ ...snapshot })
+    for (const listener of [...listeners]) listener()
+  }
+
+  /** @param {string|null} workspaceId */
+  function reserveSplit(workspaceId) {
+    const key = splitBudgetKey(workspaceId)
+    pendingSplits.set(key, pendingSplitCount(workspaceId) + 1)
+  }
+
+  /**
+   * @param {string|null} workspaceId
+   * @param {boolean} [publish] false when the caller is about to publish the
+   *   layout itself, so the pane is not counted once as open and again as pending
+   */
+  function releaseSplit(workspaceId, publish = true) {
+    const key = splitBudgetKey(workspaceId)
+    const next = pendingSplitCount(workspaceId) - 1
+    if (next <= 0) pendingSplits.delete(key)
+    else pendingSplits.set(key, next)
+    if (publish) publishPendingSplit()
+  }
+
+  /** Record a refused split. No pane is created and no session is requested. */
+  function refuseSplitBudget() {
+    emit({ error: `cannot split: the workspace pane limit (${maxPanes}) is reached` })
+    return false
+  }
+
+  /**
+   * Split `paneId` to the right (or down) and open (or create) the conversation
+   * in the new pane.
+   *
+   * This is the sidebar's split rule, not the retired equal-row tiling: the new
+   * pane is the reference pane's equal sibling, the original pane keeps its
+   * place and ratio, and the new pane takes the focus. Splitting is refused once
+   * the workspace holds `maxPanes` panes (0 means unlimited); focusing a session
+   * that is already mounted is never refused, because it adds no pane.
+   *
+   * @param {string} paneId
+   * @param {'row'|'col'} dir
+   * @param {{sessionId?: string}} [options]
+   * @returns {Promise<boolean>}
+   */
   async function splitPane(paneId, dir, options = {}) {
     if (disposed || !registered) return false
     const located = book.locatePane(paneId)
@@ -925,57 +1057,122 @@ function createPaneController(ctx, options = {}) {
         }
         return false
       }
-    } else {
-      sessionId = await createNewPaneSession(origin, workspaceId, 'split')
-      if (sessionId === undefined) return false
     }
 
-    const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-    const current = book.layoutOf(workspaceId)
-    const next =
-      options.tile === true
-        ? layoutTree.tile(current, pane, paneId)
-        : layoutTree.split(current, paneId, dir, pane)
-    if (next === current) return false
-    return apply(next, workspaceId)
+    // Reserve before `sessions.create`. A later cap change does not cancel this
+    // split; only a new request is judged against the new cap. The reservation
+    // is dropped before the layout write, with no await in between, so another
+    // caller cannot pass the check in the gap and subscribers never count the
+    // new pane twice (once open, once still pending).
+    //
+    // `reservationHeld` is the cleanup duty while the create is in flight.
+    // `publishRelease` is set once that reservation is dropped without a
+    // snapshot, and cleared only after `apply` publishes. An unchanged tree
+    // (`split` returns the same layout) and a throw from `apply` both leave it
+    // set, so the strip learns the slot is free again.
+    let reservationHeld = false
+    let publishRelease = false
+    try {
+      if (sessionId === undefined) {
+        if (paneBudgetSpent(workspaceId)) return refuseSplitBudget()
+        reserveSplit(workspaceId)
+        reservationHeld = true
+        publishPendingSplit()
+        sessionId = await createNewPaneSession(origin, workspaceId, 'split')
+        if (sessionId === undefined) return false
+      } else if (paneBudgetSpent(workspaceId)) {
+        return refuseSplitBudget()
+      }
+
+      if (reservationHeld) {
+        releaseSplit(workspaceId, false)
+        reservationHeld = false
+        publishRelease = true
+      }
+
+      const current = book.layoutOf(workspaceId)
+      const next = layoutTree.split(current, paneId, dir, freshPane(sessionId))
+      if (next === current) return false
+      const applied = apply(next, workspaceId)
+      publishRelease = false
+      return applied
+    } finally {
+      if (reservationHeld) releaseSplit(workspaceId)
+      else if (publishRelease) publishPendingSplit()
+    }
   }
 
-  /** Pane-aware `/clear`: new conversation in the focused pane (or first pane). */
+  /**
+   * Pane-aware `/clear`: a new conversation in the focused pane, or the first
+   * pane when that workspace is empty.
+   *
+   * While that first session is still being created, another new-session
+   * request for the same empty workspace is ignored and does not call
+   * `sessions.create`. After the pane is open, this replaces the focused
+   * pane's conversation, and `newPane` splits beside it.
+   *
+   * When the first create returns, the pane is written only into the workspace
+   * that was empty at the start, and only while that workspace still has no
+   * panes. A pane opened while waiting is left alone, and the created session
+   * stays in history. Switching away during the create does not pull the new
+   * session into the visible workspace or switch the view back.
+   *
+   * @param {string} [workspaceId]
+   * @returns {Promise<boolean>}
+   */
   async function newInFocusedValue(workspaceId) {
     if (disposed || !registered) return false
     if (!snapshot.active) return false
     const targetWorkspace = workspaceId ?? focusedWorkspaceId()
     if (typeof targetWorkspace !== 'string' || targetWorkspace === '') return false
     if (!ensureWorkspace(targetWorkspace)) return false
-    if (targetWorkspace !== book.getActiveWorkspaceId()) {
-      if (!switchWorkspaceValue(targetWorkspace)) return false
-    }
-    let sessionId
+    const openingFirst = book.layoutOf(targetWorkspace).root === null
+    if (openingFirst && pendingFirstPanes.has(targetWorkspace)) return false
+    if (openingFirst) pendingFirstPanes.add(targetWorkspace)
     try {
-      sessionId = await createSession(targetWorkspace)
-    } catch (error) {
-      emit({ error: messageOf(error) })
-      return false
+      if (targetWorkspace !== book.getActiveWorkspaceId()) {
+        if (!switchWorkspaceValue(targetWorkspace)) return false
+      }
+      let sessionId
+      try {
+        sessionId = await createSession(targetWorkspace)
+      } catch (error) {
+        emit({ error: messageOf(error) })
+        return false
+      }
+      if (disposed) return false
+      if (openingFirst) {
+        // Judge the workspace that started this create, not whichever tree is
+        // visible now. A pane opened while waiting stays put. An empty tree
+        // receives this session where it was requested, without switching the
+        // visible workspace back.
+        const origin = book.layoutOf(targetWorkspace)
+        if (origin.root !== null) return false
+        return openSessionPane(origin, sessionId, targetWorkspace)
+      }
+      const current = book.activeLayout()
+      if (current.activePaneId !== null) return replaceFocusedValue(sessionId)
+      return openSessionPane(current, sessionId, targetWorkspace)
+    } finally {
+      if (openingFirst) pendingFirstPanes.delete(targetWorkspace)
     }
-    if (disposed) return false
-    const current = book.activeLayout()
-    if (current.activePaneId !== null) return replaceFocusedValue(sessionId)
-    const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-    return apply(layoutTree.openPane(current, pane), targetWorkspace)
   }
 
   /**
-   * `+`: a new conversation in a new pane, with the workspace re-tiled into
-   * equal columns. Delegating to `splitPane(..., { tile: true })` keeps the
-   * session/workspace handling single-sourced; the conversation count decides
-   * the width, so a third pane gives three thirds instead of halving one of two.
+   * `+` on the strip: a new conversation in a pane split beside the focused
+   * one. This is the sidebar's split control, so the new pane is an equal
+   * sibling of the reference pane rather than a re-tiled whole row. With no pane
+   * open this opens the first pane instead (the empty-state path). A repeat
+   * while that first session is still being created is ignored. That first
+   * pane is written only if this workspace is still empty when the session
+   * returns.
    */
   async function newPaneValue() {
     if (disposed || !registered) return false
     if (!snapshot.active) return false
     const paneId = book.activeLayout().activePaneId
     if (paneId === null) return newInFocusedValue()
-    return splitPane(paneId, 'row', { tile: true })
+    return splitPane(paneId, 'row')
   }
 
   /** Ctrl+Enter in `/resume`: the chosen conversation in a new pane. */
@@ -987,17 +1184,72 @@ function createPaneController(ctx, options = {}) {
     if (!snapshot.active) return false
     const targetWorkspace = workspaceOf(sessionId) ?? focusedWorkspaceId()
     if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
+      // Load the target tree before deciding. An unloaded layout reads as empty,
+      // which would both miss an already-mounted session and skip the cap.
       if (!ensureWorkspace(targetWorkspace)) return false
+    }
+
+    const holder = book.locatePaneIn(sessionId)
+    if (holder !== null) {
+      const here = book.getActiveWorkspaceId()
+      const focused = book.activeLayout().activePaneId
+      if (holder.workspaceId !== here || holder.paneId !== focused) {
+        focusPaneValue(holder.paneId)
+      }
+      return false
+    }
+
+    if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
+      const target = book.layoutOf(targetWorkspace)
+      // The first pane of an empty workspace is not a split and is not capped.
+      // A full workspace is refused here, before any switch: the visible
+      // workspace stays put and no session is created.
+      if (target.root !== null && paneBudgetSpent(targetWorkspace)) return refuseSplitBudget()
       if (targetWorkspace !== book.getActiveWorkspaceId() && !switchWorkspaceValue(targetWorkspace)) {
         return false
       }
     }
     const paneId = book.activeLayout().activePaneId
-    if (paneId === null) {
-      const pane = { paneId: nextPaneId(), sessionId, view: layoutTree.DEFAULT_VIEW }
-      return apply(layoutTree.openPane(book.activeLayout(), pane))
-    }
-    return splitPane(paneId, 'row', { sessionId, tile: true })
+    if (paneId === null) return openSessionPane(book.activeLayout(), sessionId)
+    return splitPane(paneId, 'row', { sessionId })
+  }
+
+  /**
+   * Change the pane cap shared by every workspace and persist it.
+   *
+   * Invalid input falls back to the default (4); 0 means unlimited. Changing the
+   * value never touches a live layout, so a workspace that already holds more
+   * panes than the new cap simply cannot grow until panes are closed.
+   *
+   * A failed write does not throw and does not roll back the memory value. The
+   * snapshot's `maxPanesError` is then a string (empty when storage itself is
+   * missing) so the settings page can show a failure while `splitBlock` already
+   * uses the new cap. A later successful write clears that field.
+   *
+   * @param {unknown} value non-negative integer, or 0 for unlimited
+   * @returns {number} the normalised value now in effect
+   */
+  function setMaxPanesValue(value) {
+    const next = normalizeMaxPanes(value)
+    maxPanes = next
+    const written = writeMaxPanes(storage, next)
+    const maxPanesError = written.ok ? null : (written.message ?? '')
+    emit({ maxPanes: next, maxPanesError })
+    return maxPanes
+  }
+
+  /**
+   * Why the workspace's split control is blocked, or undefined when it is
+   * available. Mirrors the sidebar's `splitBlock()`: only the pane budget is
+   * checked here (this plugin has no width-measuring rule).
+   *
+   * @param {string|null} [workspaceId] defaults to the visible workspace
+   * @returns {'budget'|undefined}
+   */
+  function splitBlockValue(workspaceId) {
+    if (disposed) return undefined
+    const target = workspaceId ?? book.getActiveWorkspaceId()
+    return paneBudgetSpent(target) ? 'budget' : undefined
   }
 
   /** Ctrl+1..4: focus the open conversation at that strip position. */
@@ -1215,11 +1467,7 @@ function createPaneController(ctx, options = {}) {
       let next = current
       if (next.root === null) {
         if (target !== undefined) {
-          next = layoutTree.openPane(next, {
-            paneId: nextPaneId(),
-            sessionId: target,
-            view: layoutTree.DEFAULT_VIEW,
-          })
+          next = layoutTree.openPane(next, freshPane(target))
         }
       } else if (target !== undefined) {
         const holder = layoutTree.paneOfSession(next, target)
@@ -1315,36 +1563,51 @@ function createPaneController(ctx, options = {}) {
      * already mounted in another pane is focused rather than mounted twice
      * (spec §4.4).
      *
-     * `options.tile` rebuilds the whole workspace into equal-width columns
-     * instead of splitting `paneId` 50/50 (the strip's `+` and `/resume`
-     * Ctrl+Enter path).
+     * The new pane is an equal sibling of `paneId` (the sidebar's split rule);
+     * the rest of the tree and every dragged ratio stay as they are. Once the
+     * workspace has `maxPanes` panes (and the cap is not 0), no pane is created.
      *
      * @param {string} paneId
      * @param {'row'|'col'} dir
-     * @param {{sessionId?: string, tile?: boolean}} [options]
+     * @param {{sessionId?: string}} [options]
      * @returns {Promise<boolean>}
      */
     split: splitPane,
     /**
-     * `+` on the pane strip: a new conversation in a new pane. The new pane is
-     * inserted beside the focused one, then every pane is re-tiled into equal
-     * columns, so the conversation count decides the split. With no pane open
-     * this opens the first pane instead (the empty-state path), so the button
-     * never dead-ends.
+     * `+` on the pane strip: a new conversation in a pane split beside the
+     * focused one. With no pane open this opens the first pane instead (the
+     * empty-state path), so the button never dead-ends.
      *
      * @returns {Promise<boolean>}
      */
     newPane: newPaneValue,
     /**
-     * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane and
-     * re-tile the workspace by conversation count, leaving the current pane
-     * untouched. The conversation is never mounted twice — an already-open one
-     * just takes the focus.
+     * `/resume` + Ctrl+Enter: open a chosen conversation in a new pane split
+     * beside the focused one, leaving the current pane untouched. The
+     * conversation is never mounted twice — an already-open one just takes the
+     * focus. The pane budget applies exactly as it does to `split`. A refusal
+     * leaves the visible workspace where it is.
      *
      * @param {string} sessionId
      * @returns {Promise<boolean>}
      */
     openInNewPane: openInNewPaneValue,
+    /**
+     * Change the workspace pane cap (0 = unlimited) and persist it. The strip
+     * disables its split control at the same threshold.
+     *
+     * @param {unknown} value non-negative integer
+     * @returns {number} the normalised cap now in effect
+     */
+    setMaxPanes: setMaxPanesValue,
+    /**
+     * Why the workspace cannot split right now, or undefined. The strip uses
+     * `'budget'` to disable `+` with a reason.
+     *
+     * @param {string|null} [workspaceId]
+     * @returns {'budget'|undefined}
+     */
+    splitBlock: splitBlockValue,
     /**
      * Ctrl+1..4: focus the open conversation at that strip position. The
      * numbering is the strip's own projection, not a raw leaf walk.

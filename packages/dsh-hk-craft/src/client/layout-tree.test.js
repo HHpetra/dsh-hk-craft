@@ -8,8 +8,6 @@ const {
   createLayout,
   openPane,
   split,
-  evenRow,
-  tile,
   close,
   leaves,
   findLeafPath,
@@ -25,7 +23,6 @@ const {
   renamePanes,
   swap,
 } = require('./layout-tree.js')
-const { computeLayout } = require('./layout-geometry.js')
 
 /** @param {string} paneId @param {string} sessionId */
 function pane(paneId, sessionId) {
@@ -113,65 +110,6 @@ test('splitting an unknown pane or with an unknown direction changes nothing', (
   assert.equal(split(layout, 'missing', 'row', P2), layout)
   assert.equal(split(layout, 'p1', 'diagonal', P2), layout)
   assert.equal(split(layout, 'p1', 'row', P1), layout)
-})
-
-test('an even row gives every pane exactly 1/N of the width', () => {
-  assert.equal(evenRow([]), null)
-  assert.equal(evenRow('p1'), null)
-
-  for (let count = 2; count <= 7; count += 1) {
-    const ids = Array.from({ length: count }, (_, index) => `p${index + 1}`)
-    const root = evenRow(ids)
-    const rects = computeLayout(root).panes
-
-    assert.deepEqual(rects.map((rect) => rect.paneId), ids)
-    for (const rect of rects) {
-      // `computeLayout` rounds fractions to 1e-6.
-      assert.ok(
-        Math.abs(rect.width - 1 / count) < 1e-6,
-        `${count} panes: ${rect.paneId} must be ${1 / count} wide, got ${rect.width}`,
-      )
-      assert.equal(rect.y, 0)
-      assert.equal(rect.height, 1)
-    }
-  }
-})
-
-test('tiling inserts the new pane beside the anchor and re-evenly divides every column', () => {
-  const two = split(single(), 'p1', 'row', P2)
-  // A manually widened pane must not survive the next new conversation.
-  const stretched = resize(two, [], 0.8)
-  const three = tile(stretched, P3, 'p1')
-
-  assert.deepEqual(leaves(three.root), ['p1', 'p3', 'p2'])
-  const rects = computeLayout(three.root).panes
-  for (const rect of rects) assert.ok(Math.abs(rect.width - 1 / 3) < 1e-6)
-  assert.equal(three.activePaneId, 'p3')
-  assert.deepEqual(three.panes.p3, P3)
-})
-
-test('tiling without a known anchor appends the new pane at the end', () => {
-  const two = split(single(), 'p1', 'row', P2)
-  const three = tile(two, P3, 'missing')
-
-  assert.deepEqual(leaves(three.root), ['p1', 'p2', 'p3'])
-  assert.equal(three.activePaneId, 'p3')
-})
-
-test('tiling an empty layout opens the first pane', () => {
-  const layout = tile(createLayout('w1'), P1, 'p1')
-
-  assert.deepEqual(layout.root, { kind: 'leaf', paneId: 'p1' })
-  assert.deepEqual(layout.panes, { p1: P1 })
-  assert.equal(layout.activePaneId, 'p1')
-})
-
-test('tiling an already-open pane or a malformed pane changes nothing', () => {
-  const layout = split(single(), 'p1', 'row', P2)
-
-  assert.equal(tile(layout, P1, 'p1'), layout)
-  assert.equal(tile(layout, null, 'p1'), layout)
-  assert.equal(tile(layout, { paneId: '', sessionId: 's9' }, 'p1'), layout)
 })
 
 test('leaf paths address each node by a/b steps, in render order', () => {
@@ -426,7 +364,6 @@ test('transitions never mutate their input', () => {
   const snapshot = JSON.parse(JSON.stringify(original))
 
   split(original, "p2", "col", P3)
-  tile(original, P3, "p1")
   close(original, "p2")
   resize(original, [], 0.8)
   replaceSession(original, "p1", "s9")

@@ -10,6 +10,8 @@ const {
   createSettingsSection,
   diagnosticsRows,
   paneModeKey,
+  parseMaxPanesDraft,
+  saveMaxPanes,
   togglePaneMode,
 } = require('./settings-view.js')
 const { zh } = require('./locale.js')
@@ -57,6 +59,21 @@ function buttonWithText(node, label) {
   return buttonWithText(node.props?.children, label)
 }
 
+/** @returns {object|undefined} the first element whose props satisfy `predicate` */
+function elementWhere(node, predicate) {
+  if (node === null || node === undefined || node === false) return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = elementWhere(child, predicate)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (typeof node === 'string' || typeof node === 'number') return undefined
+  if (predicate(node)) return node
+  return elementWhere(node.props?.children, predicate)
+}
+
 /**
  * The controller face the settings page consumes: a snapshot, a subscription
  * and the two mode actions. It records every call.
@@ -64,10 +81,11 @@ function buttonWithText(node, label) {
  * @param {{active?: boolean, probe?: object, activateResult?: boolean, activateError?: string, deactivateError?: string}} [options]
  */
 function fakeController(options = {}) {
-  const calls = { activate: 0, deactivate: 0, refreshProbe: 0 }
+  const calls = { activate: 0, deactivate: 0, refreshProbe: 0, setMaxPanes: [] }
   let snapshot = {
     active: options.active === true,
     probe: options.probe ?? { ok: true, status: 'present' },
+    maxPanes: options.maxPanes ?? 4,
     error: null,
   }
   return {
@@ -93,6 +111,11 @@ function fakeController(options = {}) {
         return
       }
       snapshot = { ...snapshot, active: false, error: null }
+    },
+    setMaxPanes(value) {
+      calls.setMaxPanes.push(value)
+      snapshot = { ...snapshot, maxPanes: value }
+      return value
     },
   }
 }
@@ -249,5 +272,75 @@ test('an active pane workspace offers the way back to the native view', () => {
     assert.ok(text.includes(zh['settings.view.split']))
     assert.ok(text.includes(zh['settings.pane.current']))
     assert.notEqual(buttonWithText(view, zh['settings.pane.exit']), undefined)
+  })
+})
+
+test('the pane limit field accepts 0 (unlimited) and positive whole numbers only', () => {
+  assert.equal(parseMaxPanesDraft('0'), 0)
+  assert.equal(parseMaxPanesDraft(' 4 '), 4)
+  assert.equal(parseMaxPanesDraft(6), 6)
+  for (const draft of ['', '  ', '-1', '2.5', 'four', null, undefined, {}]) {
+    assert.equal(parseMaxPanesDraft(draft), null, `draft ${String(draft)}`)
+  }
+})
+
+test('saving the pane limit reports invalid input and controller failures without rejecting', () => {
+  const controller = fakeController()
+
+  assert.deepEqual(saveMaxPanes(controller, 'abc'), { ok: false, reason: 'invalid' })
+  assert.deepEqual(controller.calls.setMaxPanes, [])
+
+  assert.deepEqual(saveMaxPanes(controller, '2'), { ok: true, value: 2 })
+  assert.deepEqual(controller.calls.setMaxPanes, [2])
+  assert.equal(controller.getSnapshot().maxPanes, 2)
+
+  assert.deepEqual(saveMaxPanes({}, '2'), { ok: false, reason: 'unsupported' })
+
+  const exploding = {
+    setMaxPanes() {
+      throw new Error('store exploded')
+    },
+  }
+  assert.deepEqual(saveMaxPanes(exploding, '2'), {
+    ok: false,
+    reason: 'error',
+    message: 'store exploded',
+  })
+
+  let failed = { maxPanes: 4, maxPanesError: null }
+  let writeError = 'quota'
+  const unstored = {
+    getSnapshot: () => failed,
+    setMaxPanes(value) {
+      failed = { maxPanes: value, maxPanesError: writeError }
+      return value
+    },
+  }
+  assert.deepEqual(saveMaxPanes(unstored, '6'), { ok: false, reason: 'error', message: 'quota' })
+  assert.equal(unstored.getSnapshot().maxPanes, 6)
+
+  writeError = ''
+  assert.deepEqual(saveMaxPanes(unstored, '8'), { ok: false, reason: 'error', message: '' })
+  assert.equal(unstored.getSnapshot().maxPanes, 8)
+})
+
+test('the settings page shows the pane limit, its default and the unlimited hint', () => {
+  withFakeReact(fakeReact, () => {
+    const Section = createSettingsSection(fakeController({ maxPanes: 4 }))
+    const view = Section({ t, close: () => {} })
+    const text = textOf(view)
+
+    assert.ok(text.includes(zh['settings.split.title']))
+    assert.ok(text.includes(zh['settings.split.label']))
+    assert.ok(text.includes(zh['settings.split.note']))
+    assert.notEqual(buttonWithText(view, zh['settings.split.save']), undefined)
+
+    const input = elementWhere(view, (node) => node.props?.['data-hkcraft-split-limit'] === '')
+    assert.notEqual(input, undefined)
+    assert.equal(input.type, 'input')
+    assert.equal(input.props.type, 'number')
+    assert.equal(input.props.min, 0)
+    assert.equal(input.props.step, 1)
+    assert.equal(input.props.value, '4')
   })
 })

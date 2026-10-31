@@ -17,8 +17,9 @@
  *
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
  * and thin React views (`pane-view.js`); the HK Craft settings page
- * (`settings-view.js`) is the transitional home of the diagnostics and the
- * split-view switch. Each pane header carries two native controls: the read-only
+ * (`settings-view.js`) is the transitional home of the diagnostics, the pane
+ * limit (`pane-budget.js`) and the split-view switch. Each pane header carries
+ * two native controls: the read-only
  * mode badge (`pane-mode.js` projection, `pane-mode-seat.js` view) and the
  * subagent viewer (`pane-subagents.js` projection, `pane-subagents-view.js` view).
  */
@@ -147,8 +148,8 @@ function apply(ctx) {
   const PaneHost = createPaneHost(controller, { headerSeats })
   const PaneBody = createPaneBody(controller)
 
-  // The HK Craft settings page: diagnostics plus the transitional
-  // split-view switch. `settings.section` is a root list slot declared by
+  // The HK Craft settings page: diagnostics, the pane limit and the
+  // transitional split-view switch. `settings.section` is a root list slot declared by
   // ui-settings-general; `slots.inject` only runs this callback once that slot
   // exists, so a shell without a settings panel simply never shows the page.
   const SettingsSection = createSettingsSection(controller)

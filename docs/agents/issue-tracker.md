@@ -14,6 +14,10 @@
 
 - `.scratch/inception/`（`spec.md` 范围与边界、`roadmap.md` 里程碑与验收）
 
+已清理：
+
+- `.scratch/pane-split-limit/`（局部分栏与可配置分屏上限）。行为以 ADR-0009、ADR-0010、`doc/README.md` 与 `GLOSSARY.md` 为准。
+
 ## 当 skill 说“发布到 issue 跟踪器”
 
 在 `.scratch/<feature-slug>/` 下新建文件（目录不存在则创建）。
