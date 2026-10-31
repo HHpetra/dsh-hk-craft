@@ -7,13 +7,17 @@ const { withFakeReact } = require('./fake-react.js')
 
 const {
   ENTRY_NAME,
+  NOTIFICATION_TYPE_LABEL,
   createSettingsSection,
   diagnosticsRows,
+  notifyFailureText,
   paneModeKey,
   parseMaxPanesDraft,
+  permissionKey,
   saveMaxPanes,
 } = require('./settings-view.js')
 const { zh } = require('./locale.js')
+const { NOTIFICATION_TYPES } = require('./notifications.js')
 
 /** Read the locale table the way a slot `t` does, so assertions carry real copy. */
 const t = (key) => zh[key] ?? key
@@ -229,3 +233,87 @@ test('the settings page shows the pane limit, its default and the unlimited hint
     assert.equal(input.props.value, '4')
   })
 })
+
+test('permission labels cover every state the notifier can report', () => {
+  assert.equal(permissionKey('granted'), 'settings.notify.granted')
+  assert.equal(permissionKey('default'), 'settings.notify.default')
+  assert.equal(permissionKey('denied'), 'settings.notify.denied')
+  assert.equal(permissionKey('unsupported'), 'settings.notify.unsupported')
+  assert.equal(permissionKey(undefined), 'settings.notify.default')
+})
+
+test('a failed test notification explains unsupported and denied states', () => {
+  assert.equal(notifyFailureText('unsupported', t), zh['settings.notify.unsupported'])
+  assert.equal(notifyFailureText('permission', t), zh['settings.notify.denied'])
+  assert.equal(notifyFailureText('error', t), '')
+})
+
+test('the settings page renders one switch per notification type plus the test action', () => {
+  for (const type of NOTIFICATION_TYPES) {
+    assert.equal(typeof NOTIFICATION_TYPE_LABEL[type], 'string', type)
+    assert.notEqual(zh[NOTIFICATION_TYPE_LABEL[type]], undefined, type)
+  }
+  withFakeReact(fakeReact, () => {
+    const notifications = fakeNotifications()
+    const Section = createSettingsSection(fakeController(), { notifications })
+    const view = Section({ t })
+    const text = textOf(view)
+
+    assert.ok(text.includes(zh['settings.notify.title']))
+    assert.ok(text.includes(zh['settings.notify.enable']))
+    assert.ok(text.includes(zh['settings.notify.permission']))
+    assert.ok(text.includes(zh['settings.notify.granted']))
+    assert.ok(text.includes(zh['settings.notify.sound']))
+    assert.ok(text.includes(zh['settings.notify.suppressWhenVisible']))
+    assert.ok(text.includes(zh['settings.notify.suppressHint']))
+    assert.ok(text.includes(zh['settings.notify.note']))
+
+    for (const type of Object.keys(NOTIFICATION_TYPE_LABEL)) {
+      assert.ok(text.includes(zh[NOTIFICATION_TYPE_LABEL[type]]), type)
+      const input = elementWhere(view, (node) => node.props?.['data-hkcraft-notify-type'] === type)
+      assert.notEqual(input, undefined, type)
+      assert.equal(input.props.type, 'checkbox')
+      assert.equal(input.props.checked, true)
+    }
+
+    const master = elementWhere(view, (node) => node.props?.['data-hkcraft-notify-enable'] === '')
+    assert.notEqual(master, undefined)
+    assert.equal(master.props.checked, true)
+    const suppress = elementWhere(view, (node) => node.props?.['data-hkcraft-notify-suppress'] === '')
+    assert.notEqual(suppress, undefined)
+    assert.equal(suppress.props.type, 'checkbox')
+    assert.equal(suppress.props.checked, false)
+    assert.notEqual(buttonWithText(view, zh['settings.notify.test']), undefined)
+  })
+})
+
+test('a shell without the notification face renders no notification section', () => {
+  withFakeReact(fakeReact, () => {
+    const Section = createSettingsSection(fakeController())
+    const text = textOf(Section({ t }))
+    assert.equal(text.includes(zh['settings.notify.title']), false)
+  })
+})
+
+/** The notification face the settings page consumes, without dsh or a DOM. */
+function fakeNotifications() {
+  const settings = {
+    enabled: true,
+    sound: true,
+    suppressWhenVisible: false,
+    types: {
+      approval: true,
+      question: true,
+      'plan-review': true,
+      completed: true,
+      failed: true,
+    },
+  }
+  return {
+    subscribe: () => () => {},
+    getSnapshot: () => ({ settings, supported: true, permission: 'granted' }),
+    setSettings() {},
+    requestPermission: async () => 'granted',
+    sendTest: async () => ({ ok: true }),
+  }
+}

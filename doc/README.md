@@ -93,7 +93,15 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
   `dsh.hkcraft.settings.v1`）；侧栏 footer 不再注入按钮。
   插件加载并注册主面板后进入分屏，设置页不提供回到原生视图的开关。
   写入失败时内存中的上限仍然生效，页面显示失败原因；读失败或值非法回落到 4。
-- **兼容与降级**：新增的可选能力（Agent 预设名册、子代理目录、设置分区）在服务缺失时安静降级；
+- **桌面通知**：五类——等待授权 / 等待回答 / 计划待审阅 / 本轮完成 / 本轮失败。前三种来自
+  `sessionStatus.pendingInteraction.kind`，完成来自 `running` 的 true→false，失败来自
+  `api-session/error`；失败优先于紧随其后的完成，子代理会话不单独通知。默认始终通知；可在设置页
+  勾选“dsh 在前台且该对话可见时不再通知”，此时焦点窗口里已显示的对话（原生主对话或分屏当前
+  工作区任一窗格）不弹系统通知，其它工作区仍通知。点击通知聚焦 dsh 并切到该会话（分屏内
+  聚焦/新开窗格，原生视图走 `openSession`）。设置页有总开关、五类开关、声音、前台抑制、
+  权限状态与测试按钮，设置存 `localStorage["dsh.hkcraft.notifications.v1"]`。
+  通知不改变五态灯与 `completionUnread`；不可用/被拒时安静降级。见 ADR-0012 / ADR-0013。
+- **兼容与降级**：新增的可选能力（Agent 预设名册、子代理目录、设置分区、桌面通知）在服务缺失时安静降级；
   上游契约集中在 [`upstream-contracts.md`](upstream-contracts.md)，升级时按该清单复验。
 
 ## 7. 验证

@@ -296,6 +296,77 @@ returns to idle.
 
 ---
 
+## Desktop notifications (renderer `Notification`)
+
+**Provider:** the Electron renderer's standard `Notification` API, dsh's Electron
+session permission handler (`resources/app.asar` → `lib/main.js`,
+`installMicrophonePermissions`), `@deepseek-ai/dsh-client-ui-session`
+(`uiSession.sessionStatus`), and `@deepseek-ai/dsh-api-session-controller`
+(the forwarded `api-session/error` event).
+
+**Semantics:** dsh exposes no plugin-facing notification service. The only
+`Notification` in the Electron main process is the mandatory-update reminder,
+and the client `Toast` is an in-app overlay. A plugin renderer can still call
+`new Notification(title, options)`: the `dsh-app://` scheme is registered with
+`secure: true`, and the application session's permission handler answers `true`
+for every non-`media` permission (the microphone handler is the only special
+case), so `Notification.permission` is `granted` in the Desktop shell.
+
+The status projection supplies the type inputs without opening conversation
+history:
+
+- `sessionStatus` is a `Map<sessionId, { running, pendingInteraction,
+  completionUnread }>`. A `pendingInteraction` carries `key`, `sessionId` and
+  `kind`; `ui-approval` sets `kind: "approval"`, and `ui-user-questions` sets
+  `kind: "question"` or `kind: "plan-review"` (from the plan intent). `key`
+  identifies one interaction, so a new key is a new request.
+- `running` true → false is one completed turn. `completionUnread` is not used
+  for notifications: it is cleared when the session becomes the current one, so
+  the focused pane's own completion would otherwise never notify.
+- `api-session/error` forwards `(sessionId, message)` for a live `agent/error`
+  (`dsh-agent-loop` `throwError`). It is relayed by the session controller and
+  forwarded with a `session` resource. A failure has no summary bit, so this
+  event is the cheap failure signal; a failed turn also ends with
+  `running: false`, which is why the plugin suppresses the following completion.
+
+`Notification` supports `tag`, `renotify`, `requireInteraction`, `silent`,
+`data` and `onclick` in this renderer; `new Notification` displays immediately
+(no `show()` call). The plugin uses one tag per type + session, keeps waiting
+types on screen, and routes a click back into the pane controller or
+`uiWorkspace.openSession`.
+
+The optional foreground gate is client policy, not a dsh service:
+`document.hasFocus()` and `document.visibilityState` decide whether the dsh
+window is in front; split-view visibility is
+`paneController.paneIndexOf(sessionId) != null` (every pane of the active
+workspace is on screen); the native view uses `mainSessionId(sessions.list)`
+(the `mainView` retention). When the gate is on and the session is visible, no
+toast is raised; other workspaces and a background dsh still notify. The gate
+does not queue suppressed events for later.
+
+**Why we rely on it:** the plugin needs five distinct OS notifications without
+reading every session's history or changing the Electron main process. The
+status map and the error relay are the only public signals that separate
+"waiting for approval", "waiting for an answer", "plan review", "finished" and
+"failed".
+
+**Verified:** the permission handler, the `dsh-app` scheme privileges, the
+`sessionStatus` shape and `pendingInteraction.kind` values, and the
+`api-session/error` emission/forwarding were read in the installed Desktop
+0.2.1-rc.5 bundles (`lib/main.js`, `dsh-client-ui-session`,
+`dsh-client-ui-approval`, `dsh-client-ui-user-questions`,
+`dsh-api-session-controller`). Runtime probe: restart dsh, trigger each of the
+five types, and confirm the settings page's test button shows a Windows toast.
+
+**Windows identity caveat:** the toast's application identity is the Electron
+process AUMID/Start Menu shortcut, not the plugin. The installed shortcut is
+`com.deepseek.dsh`, while the application code does not call
+`app.setAppUserModelId`; the runtime probe above must therefore include a real
+Windows toast (the test button). If Windows suppresses it, the transport needs
+a host/native helper; the five signals and their policy stay unchanged.
+
+---
+
 ## Session preset and optional roster
 
 **Provider:** `@deepseek-ai/dsh-api-session-controller` (the `sessions.list`

@@ -35,6 +35,7 @@ const { createSettingsSection } = require('./settings-view.js')
 const { modeRosterRows } = require('./pane-mode.js')
 const { createModeSeat } = require('./pane-mode-seat.js')
 const { registerCommands } = require('./commands.js')
+const { createNotifier } = require('./notifications.js')
 
 const NS = 'dsh-hk-craft'
 
@@ -144,6 +145,26 @@ function apply(ctx) {
   // developer-tools gate) the panes stay chat-only instead of failing to mount.
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
 
+  // Desktop notifications are a client capability: dsh exposes no notification
+  // service, so the renderer's own Notification API maps to a Windows toast.
+  // The notifier seeds itself from the current status store, so installing or
+  // reloading never replays old approvals/completions as a toast storm.
+  const notifier = createNotifier({
+    ctx,
+    controller,
+    t,
+    NotificationImpl: typeof globalThis.Notification === 'function' ? globalThis.Notification : undefined,
+    documentRef: globalThis.document,
+    windowRef: globalThis.window,
+  })
+  ctx.effect(() => () => notifier.dispose(), 'dsh-hk-craft: notification teardown')
+
+  // `uiSession` owns the per-session running/pending/unread projection; wait for
+  // it so a shell without the package keeps the rest of the plugin working.
+  ctx.inject(['uiSession'], (scope) => {
+    scope.effect(() => notifier.start(), 'dsh-hk-craft: desktop notifications')
+  })
+
   const headerSeats = createHeaderSeats(ctx)
   const PaneHost = createPaneHost(controller, { headerSeats })
   const PaneBody = createPaneBody(controller)
@@ -152,7 +173,7 @@ function apply(ctx) {
   // `settings.section` is a root list slot declared by ui-settings-general;
   // `slots.inject` only runs this callback once that slot exists, so a shell
   // without a settings panel simply never shows the page.
-  const SettingsSection = createSettingsSection(controller)
+  const SettingsSection = createSettingsSection(controller, { notifications: notifier })
   ctx.slots.inject(SETTINGS_SLOT, () =>
     ctx.slots.register(
       {

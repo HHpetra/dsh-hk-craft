@@ -254,3 +254,52 @@
 - 关掉最右侧窗格后，剩下的格子不一定等宽（例如三等分关掉最后一格会留下 1/3 与 2/3）。下一次横向新建才会再次均分。
 - 含旧纵向分割的布局在下一次横向新建后，宽度按子树窗格数分配，不会被拆成一排。
 - 窗格上限、预算只阻止新建、创建进行中的边界，仍以 ADR-0009 与 ADR-0010 为准。
+
+---
+
+## ADR-0012 — 桌面通知由渲染进程发送，按五类会话信号区分
+
+**背景**：dsh 没有面向插件的桌面通知能力：`@deepseek-ai/*` 中没有 notification 包或 `ctx.notify`；Electron 主进程只用 `Notification` 发过强制更新提醒，且没有暴露 IPC；客户端里的 `Toast` 是应用内浮层，不是 Windows 通知。插件客户端本来就在 dsh 的 Electron 渲染进程里，`dsh-app://` 是 secure context，主进程的 `installMicrophonePermissions` 对非 `media` 权限默认放行，因此标准 `Notification` API 可以直达 Windows toast。用户已确认按五种类型区分、始终通知、点击后切到对应会话。
+
+**决策**：
+
+1. **纯客户端发送**：通知由 `src/client/notifications.js` 在渲染进程里用 `new Notification(...)` 发出；不新增 host 服务、路由、端口或 IPC，也不改 dsh 主进程。通知设置存在 origin 级 `localStorage["dsh.hkcraft.notifications.v1"]`，不写 profile。
+2. **五类信号，不读会话历史**：`approval` / `question` / `plan-review` 来自 `uiSession.sessionStatus.pendingInteraction.kind`；`completed` 是 `running` 由 `true` 变 `false`；`failed` 来自 `remote.$on("api-session/error")`。失败优先于紧随其后的完成；子代理会话（`origin === "subagent"`）不单独通知，等父会话结束。
+3. **始终通知**：不做前台/后台门槛；dsh 在前台时也发系统通知。初始订阅只建立基线，不回放历史状态。
+4. **点击回到会话**：先聚焦窗口；分屏面板激活时已打开的会话聚焦所在窗格、未打开的在焦点窗格右侧新开（受窗格上限约束）；原生视图调用 `uiWorkspace.openSession`。
+5. **通知身份与降级**：等待类用 `requireInteraction` 与 `renotify`，完成/失败不常驻；按 `type + sessionId` 打 `tag`，同一会话同一类型的新通知替换旧的。`Notification` 缺失、权限被拒或构造失败时静默降级，设置页显示原因并提供“发送测试通知”。
+6. **设置页承载开关**：总开关、五类开关、声音、权限状态、测试按钮都在 HK Craft 设置页；类型文案随 locale 切换。
+
+**后果 / 约束**：
+
+- Windows toast 的应用身份取决于 Electron 进程的 AUMID 与开始菜单快捷方式；安装包的快捷方式 AUMID 是 `com.deepseek.dsh`，而应用代码没有显式调用 `setAppUserModelId`。首轮实机必须用设置页的“发送测试通知”验证；如果 Windows 不显示，传输层需要换成宿主/原生 helper，但五类信号、文案与点击策略不变。
+- 点击只能 `window.focus()`；渲染进程没有还原托盘窗口的公开桥。窗口被隐藏到托盘时，点击通知可能只聚焦而不还原，后续如需还原要上游提供窗口 IPC。
+- 通知不改变侧栏五态灯与 `completionUnread` 的语义；关掉通知不影响分屏、侧栏与设置页。
+- 新增通知类型（目标、后台任务、调度）需要新的公开信号；不要在客户端读会话历史来推断。
+
+---
+
+## ADR-0013 — 桌面通知增加“前台可见会话不打扰”选项
+
+**背景**：ADR-0012 按用户当时的选择采用“始终通知”，不做前台/后台门槛。实际使用时，如果 dsh 窗口就在前台、触发通知的对话也正显示在窗口里，系统通知是重复的：用户已经能看到回答或审批面板。用户要求增加一个可选开关，按“该对话是否在焦点窗口里可见”来抑制通知。
+
+**取代关系**：本 ADR 只取代 **ADR-0012 决策 3** 中“始终通知、不做前台/后台门槛”的部分。ADR-0012 的五类信号、失败优先、子代理排除、点击回会话、localStorage 设置与降级策略继续有效。
+
+**决策**：
+
+1. **新增设置 `suppressWhenVisible`**，默认 `false`，保持原有“总是通知”的行为；在 HK Craft 设置页“桌面通知”一节中以独立复选框呈现，总开关关闭时禁用。
+2. **抑制判据**：以下两条同时成立才不弹：
+   - dsh 窗口在前台：`document.hasFocus() === true` 且 `document.visibilityState !== "hidden"`；
+   - 该会话在焦点窗口中可见：
+     - 分屏面板激活时，`controller.paneIndexOf(sessionId) != null`。分屏里当前工作区的所有窗格同时可见，因此按“窗口”而不是“焦点窗格”理解：同工作区任一窗格里的对话都算可见；
+     - 原生视图下，`mainSessionId(sessions.list) === sessionId`（dsh 的 `mainView` 保留项）。
+3. **其它情况仍通知**：会话在其它工作区、dsh 不在前台、窗口隐藏/最小化，或分屏面板未激活且不是原生主对话时，都照常发通知。
+4. **作用于五类**：完成、失败、等待授权、等待回答、计划待审阅都受此选项约束；等待类本来就有应用内审批/提问面板，所以抑制不丢失操作入口。
+5. **测试通知不受约束**：设置页的“发送测试通知”是诊断动作，继续绕过总开关与前台抑制，用于验证 Windows toast 身份。
+
+**后果 / 约束**：
+
+- 抑制发生在通知产生之前；被抑制的事件不会排队，等 dsh 失焦后再补发。用户已经看到的内容不再补一条旧通知。
+- 判据依赖渲染进程的 `document.hasFocus()` 与 `visibilityState`；DevTools 获得焦点、或窗口被其它应用覆盖但 Chromium 仍报告 focused 时，行为以浏览器报告为准。
+- 分屏可见性依赖 `paneIndexOf` 的“当前工作区布局”语义；如果未来支持把窗格折叠/隐藏，需要重新定义“可见”。
+- 该选项只影响系统通知，不改变五态灯、`completionUnread`、审批/提问面板与点击回会话。

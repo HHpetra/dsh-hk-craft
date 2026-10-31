@@ -20,9 +20,25 @@ const { createTranslator, react } = require('./react-and-translator.js')
 const { buttonStyle } = require('./pane-styles.js')
 const { normalizeMaxPanes, parseNonNegativeInteger } = require('./pane-budget.js')
 const { messageOf } = require('./shared.js')
+const { NOTIFICATION_TYPES } = require('./notifications.js')
 
 /** The build entry named in the diagnostics. */
 const ENTRY_NAME = 'src/client/index.js'
+
+/** Label key per notification type; the wire id `plan-review` is camel-cased. */
+const NOTIFICATION_TYPE_LABEL = Object.freeze({
+  approval: 'settings.notify.type.approval',
+  question: 'settings.notify.type.question',
+  'plan-review': 'settings.notify.type.planReview',
+  completed: 'settings.notify.type.completed',
+  failed: 'settings.notify.type.failed',
+})
+
+/** Stable no-op store for a shell without the notification face. */
+const ABSENT_NOTIFICATIONS = Object.freeze({
+  subscribe: () => () => {},
+  getSnapshot: () => null,
+})
 
 const pageStyle = {
   display: 'flex',
@@ -186,12 +202,46 @@ function saveMaxPanes(controller, draft) {
 }
 
 /**
+ * Localized permission label for the notification section.
+ *
+ * @param {'granted'|'default'|'denied'|'unsupported'|undefined} permission
+ * @returns {string}
+ */
+function permissionKey(permission) {
+  switch (permission) {
+    case 'granted':
+      return 'settings.notify.granted'
+    case 'denied':
+      return 'settings.notify.denied'
+    case 'unsupported':
+      return 'settings.notify.unsupported'
+    default:
+      return 'settings.notify.default'
+  }
+}
+
+/**
+ * Explain why a test notification did not reach the OS.
+ *
+ * @param {string|undefined} reason
+ * @param {(key: string) => string} t
+ * @returns {string}
+ */
+function notifyFailureText(reason, t) {
+  if (reason === 'unsupported') return t('settings.notify.unsupported')
+  if (reason === 'permission') return t('settings.notify.denied')
+  return ''
+}
+
+/**
  * Build the `settings.section` component for one pane controller.
  *
  * @param {any} controller the pane controller face
+ * @param {{notifications?: any}} [options] the desktop-notification face
  * @returns {(props: { t?: (key: string) => string }) => any}
  */
-function createSettingsSection(controller) {
+function createSettingsSection(controller, options = {}) {
+  const notifications = options.notifications
   return function HkCraftSettings(props) {
     const React = react()
     const h = React.createElement
@@ -201,10 +251,17 @@ function createSettingsSection(controller) {
       controller.getSnapshot,
       controller.getSnapshot,
     )
+    const notifyState = React.useSyncExternalStore(
+      (notifications ?? ABSENT_NOTIFICATIONS).subscribe,
+      (notifications ?? ABSENT_NOTIFICATIONS).getSnapshot,
+      (notifications ?? ABSENT_NOTIFICATIONS).getSnapshot,
+    )
     const maxPanes = normalizeMaxPanes(state?.maxPanes)
     const [limitDraft, setLimitDraft] = React.useState(String(maxPanes))
     /** Outcome of the last save: `{kind: 'saved'}`, `{kind: 'invalid'}` or `{kind: 'error', message}`. */
     const [limitNotice, setLimitNotice] = React.useState(null)
+    /** Outcome of the last test notification: `{kind: 'sent'}` or `{kind: 'error', reason}`. */
+    const [notifyNotice, setNotifyNotice] = React.useState(null)
 
     // The probe is a point-in-time slot snapshot; re-read it when the page opens
     // so the diagnostics describe the shell as it is now, not as it was at load.
@@ -232,6 +289,150 @@ function createSettingsSection(controller) {
     }
 
     const rows = diagnosticsRows(state, t)
+
+    const notifySettings = notifyState?.settings
+    const notifySupported = notifyState?.supported === true
+    const notifyPermission = notifyState?.permission
+
+    const setNotification = (patch) => {
+      if (notifications === undefined || notifications === null) return
+      setNotifyNotice(null)
+      notifications.setSettings(patch)
+    }
+
+    const grantNotificationPermission = () => {
+      if (typeof notifications?.requestPermission !== 'function') return
+      setNotifyNotice(null)
+      Promise.resolve(notifications.requestPermission()).catch(() => {})
+    }
+
+    const sendTestNotification = () => {
+      if (typeof notifications?.sendTest !== 'function') return
+      setNotifyNotice(null)
+      Promise.resolve(notifications.sendTest())
+        .then((result) => {
+          setNotifyNotice(result?.ok === true ? { kind: 'sent' } : { kind: 'error', reason: result?.reason })
+        })
+        .catch((error) => {
+          setNotifyNotice({ kind: 'error', reason: 'error', message: messageOf(error) })
+        })
+    }
+
+    const notificationSection =
+      notifyState === null || notifyState === undefined
+        ? null
+        : h(
+            'section',
+            { style: groupStyle, 'data-hkcraft': 'settings-notifications' },
+            h('h3', { style: groupTitleStyle }, t('settings.notify.title')),
+            h(
+              'label',
+              { style: rowStyle },
+              h('span', { style: labelStyle }, t('settings.notify.enable')),
+              h('input', {
+                type: 'checkbox',
+                checked: notifySettings?.enabled === true,
+                'data-hkcraft-notify-enable': '',
+                onChange: (event) => {
+                  const enabled = event.target.checked
+                  setNotification({ enabled })
+                  // A browser needs a user gesture; enabling the feature is one.
+                  if (enabled && notifyPermission === 'default') grantNotificationPermission()
+                },
+              }),
+            ),
+            h(
+              'div',
+              { style: rowStyle },
+              h('span', { style: labelStyle }, t('settings.notify.permission')),
+              h(
+                'span',
+                { style: { ...valueStyle, display: 'flex', gap: 8, alignItems: 'center' } },
+                t(permissionKey(notifyPermission)),
+                notifyPermission === 'default'
+                  ? h(
+                      'button',
+                      { type: 'button', onClick: grantNotificationPermission, style: actionStyle },
+                      t('settings.notify.grant'),
+                    )
+                  : null,
+              ),
+            ),
+            h(
+              'label',
+              { style: rowStyle },
+              h('span', { style: labelStyle }, t('settings.notify.sound')),
+              h('input', {
+                type: 'checkbox',
+                checked: notifySettings?.sound === true,
+                disabled: notifySettings?.enabled !== true,
+                onChange: (event) => setNotification({ sound: event.target.checked }),
+              }),
+            ),
+            h(
+              'label',
+              { style: rowStyle },
+              h('span', { style: labelStyle }, t('settings.notify.suppressWhenVisible')),
+              h('input', {
+                type: 'checkbox',
+                checked: notifySettings?.suppressWhenVisible === true,
+                disabled: notifySettings?.enabled !== true,
+                'data-hkcraft-notify-suppress': '',
+                onChange: (event) => setNotification({ suppressWhenVisible: event.target.checked }),
+              }),
+            ),
+            h('p', { style: noteStyle }, t('settings.notify.suppressHint')),
+            h('h4', { style: groupTitleStyle }, t('settings.notify.types')),
+            h(
+              'div',
+              { style: rowsStyle },
+              NOTIFICATION_TYPES.map((type) =>
+                h(
+                  'label',
+                  { key: type, style: rowStyle },
+                  h('span', { style: labelStyle }, t(NOTIFICATION_TYPE_LABEL[type])),
+                  h('input', {
+                    type: 'checkbox',
+                    checked: notifySettings?.types?.[type] === true,
+                    disabled: notifySettings?.enabled !== true,
+                    'data-hkcraft-notify-type': type,
+                    onChange: (event) =>
+                      setNotification({ types: { [type]: event.target.checked } }),
+                  }),
+                ),
+              ),
+            ),
+            h(
+              'div',
+              { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  onClick: sendTestNotification,
+                  disabled: notifySupported !== true || notifyPermission === 'denied',
+                  style: actionStyle,
+                },
+                t('settings.notify.test'),
+              ),
+              notifyNotice?.kind === 'sent'
+                ? h('span', { role: 'status', style: noteStyle }, t('settings.notify.testSent'))
+                : null,
+            ),
+            notifyNotice?.kind === 'error'
+              ? h(
+                  'div',
+                  { role: 'alert', style: errorStyle },
+                  withReason(
+                    t('settings.notify.testFailed'),
+                    notifyNotice.reason === 'error'
+                      ? (notifyNotice.message ?? '')
+                      : notifyFailureText(notifyNotice.reason, t),
+                  ),
+                )
+              : null,
+            h('p', { style: noteStyle }, t('settings.notify.note')),
+          )
 
     return h(
       'div',
@@ -309,16 +510,20 @@ function createSettingsSection(controller) {
           : null,
         h('p', { style: noteStyle }, t('settings.split.note')),
       ),
+      notificationSection,
     )
   }
 }
 
 module.exports = {
   ENTRY_NAME,
+  NOTIFICATION_TYPE_LABEL,
   probeStatusKey,
   paneModeKey,
   diagnosticsRows,
   parseMaxPanesDraft,
   saveMaxPanes,
+  permissionKey,
+  notifyFailureText,
   createSettingsSection,
 }
