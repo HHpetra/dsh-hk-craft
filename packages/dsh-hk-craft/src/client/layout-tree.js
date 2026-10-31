@@ -134,10 +134,45 @@ function openPane(layout, pane) {
 }
 
 /**
+ * Give every pane under a horizontal split an equal share of that split's
+ * width. A `row` node's ratio becomes `leaves(a) / leaves(a ∪ b)`. Column
+ * ratios stay as they are, so a vertical split still only halves its own pane.
+ *
+ * A pure row therefore shows each pane at `1 / paneCount`. A column of k panes
+ * keeps one shared width and occupies `k / n` of a surrounding row. Ratios
+ * stay inside `[MIN_RATIO, 1 - MIN_RATIO]`; a spine deeper than ten panes is
+ * clamped and is no longer strictly even. Closing a pane does not call this:
+ * the sibling still just takes the parent's place.
+ *
+ * @param {object|null} node
+ * @returns {{node: object|null, count: number}}
+ */
+function equalizeRowRatios(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return { node, count: 0 }
+  if (node.kind === 'leaf') return { node, count: 1 }
+  if (node.kind !== 'split') return { node, count: 0 }
+  const left = equalizeRowRatios(node.a)
+  const right = equalizeRowRatios(node.b)
+  const count = left.count + right.count
+  const a = left.node
+  const b = right.node
+  if (node.dir !== 'row' || count === 0) {
+    return a === node.a && b === node.b ? { node, count } : { node: { ...node, a, b }, count }
+  }
+  const ratio = clampRatio(left.count / count)
+  if (a === node.a && b === node.b && ratio === node.ratio) return { node, count }
+  return { node: { ...node, a, b, ratio }, count }
+}
+
+/**
  * Split `paneId` beside itself: the original leaf keeps its place as `a`, the
  * new pane becomes `b` (right / bottom) and takes the focus. The new pane is
  * passed in whole because creating its session is the host's job, not this
  * module's.
+ *
+ * A horizontal split then rewrites every `row` ratio so the panes share the
+ * width evenly (one share per pane). A dragged horizontal ratio does not
+ * survive that split. A vertical split still only halves the reference pane.
  *
  * @param {object} layout
  * @param {string} paneId
@@ -153,13 +188,14 @@ function split(layout, paneId, dir, pane) {
   if (layout.panes[pane.paneId] !== undefined) return layout
   const path = findLeafPath(layout.root, paneId)
   if (path === null) return layout
+  const inserted = replaceAtPath(
+    layout.root,
+    path,
+    splitNode(dir, 0.5, leafNode(paneId), leafNode(pane.paneId)),
+  )
   return {
     ...layout,
-    root: replaceAtPath(
-      layout.root,
-      path,
-      splitNode(dir, 0.5, leafNode(paneId), leafNode(pane.paneId)),
-    ),
+    root: dir === 'row' ? equalizeRowRatios(inserted).node : inserted,
     panes: { ...layout.panes, [pane.paneId]: normalizePane(pane) },
     activePaneId: pane.paneId,
   }

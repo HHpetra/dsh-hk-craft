@@ -16,7 +16,7 @@
 
 已清理：
 
-- `.scratch/pane-split-limit/`（局部分栏与可配置分屏上限）。行为以 ADR-0009、ADR-0010、`doc/README.md` 与 `GLOSSARY.md` 为准。
+- `.scratch/pane-split-limit/`（局部分栏与可配置分屏上限）。行为以 ADR-0009、ADR-0010、ADR-0011、`doc/README.md` 与 `GLOSSARY.md` 为准。
 
 ## 当 skill 说“发布到 issue 跟踪器”
 

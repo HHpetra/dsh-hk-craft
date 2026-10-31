@@ -78,6 +78,59 @@ test('splitting a leaf right puts the new pane beside it and focuses the new pan
   assert.deepEqual(Object.keys(layout.panes).sort(), ['p1', 'p2'])
 })
 
+test('splitting right evens the whole row by the new pane count', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p2', 'row', P3)
+  const four = split(three, 'p3', 'row', pane('p4', 's4'))
+
+  assert.deepEqual(leaves(three.root), ['p1', 'p2', 'p3'])
+  assert.equal(three.root.ratio, 1 / 3)
+  assert.equal(three.root.b.ratio, 1 / 2)
+  assert.equal(three.activePaneId, 'p3')
+
+  assert.deepEqual(leaves(four.root), ['p1', 'p2', 'p3', 'p4'])
+  assert.equal(four.root.ratio, 1 / 4)
+  assert.equal(four.root.b.ratio, 1 / 3)
+  assert.equal(four.root.b.b.ratio, 1 / 2)
+})
+
+test('splitting a pane that is not last still gives every pane an equal width', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p1', 'row', P3)
+
+  assert.deepEqual(leaves(three.root), ['p1', 'p3', 'p2'])
+  assert.equal(three.root.ratio, 2 / 3)
+  assert.equal(three.root.a.ratio, 1 / 2)
+  const left = three.root.ratio
+  const inner = three.root.a.ratio
+  const shares = [left * inner, left * (1 - inner), 1 - left]
+  for (const share of shares) assert.ok(Math.abs(share - 1 / 3) < 1e-12)
+})
+
+test('a horizontal split drops a dragged ratio so the row stays even', () => {
+  const dragged = resize(split(single(), 'p1', 'row', P2), [], 0.7)
+  const three = split(dragged, 'p2', 'row', P3)
+
+  assert.equal(dragged.root.ratio, 0.7)
+  assert.equal(three.root.ratio, 1 / 3)
+  assert.equal(three.root.b.ratio, 1 / 2)
+})
+
+test('a vertical split still halves only the reference pane', () => {
+  const dragged = resize(split(single(), 'p1', 'row', P2), [], 0.7)
+  const three = split(dragged, 'p2', 'col', P3)
+
+  assert.equal(three.root.ratio, 0.7)
+  assert.equal(three.root.b.dir, 'col')
+  assert.equal(three.root.b.ratio, 0.5)
+})
+
+test('closing a pane does not even the row again', () => {
+  const three = split(split(single(), 'p1', 'row', P2), 'p2', 'row', P3)
+  const after = close(three, 'p3')
+
+  assert.deepEqual(leaves(after.root), ['p1', 'p2'])
+  assert.equal(after.root.ratio, 1 / 3)
+})
+
 test('splitting down uses a column split', () => {
   const layout = split(single(), 'p1', 'col', P2)
   assert.equal(layout.root.dir, 'col')

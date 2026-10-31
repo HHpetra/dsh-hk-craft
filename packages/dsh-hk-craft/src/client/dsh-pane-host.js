@@ -151,10 +151,13 @@ function defaultStorage() {
  * pane of every loaded workspace stays retained (and mounted-but-hidden by the
  * view layer) so streaming output, scroll position and composer drafts survive.
  *
- * Pane creation follows dsh's sidebar split rule (ADR-0009): split only the
- * referenced pane into equal siblings, and refuse a new pane once the workspace
- * holds `maxPanes` panes (0 = unlimited). The cap lives in
- * `pane-budget.js` and is shared by the strip control and every controller path.
+ * Pane creation (ADR-0009 budget, ADR-0011 widths): the new pane is inserted
+ * to the right of the referenced pane and takes the focus, then every
+ * horizontal ratio is rewritten so a pure row gives each pane `1 / n` of the
+ * width. A dragged ratio lasts until the next horizontal split. A new pane is
+ * refused once the workspace holds `maxPanes` panes (0 = unlimited). The cap
+ * lives in `pane-budget.js` and is shared by the strip control and every
+ * controller path.
  *
  * Reference discipline (the part dsh observes):
  * - every loaded pane holds one `hkcraftPane` retention of its session;
@@ -1073,10 +1076,10 @@ function createPaneController(ctx, options = {}) {
    * Split `paneId` to the right (or down) and open (or create) the conversation
    * in the new pane.
    *
-   * This is the sidebar's split rule, not the retired equal-row tiling: the new
-   * pane is the reference pane's equal sibling, the original pane keeps its
-   * place and ratio, and the new pane takes the focus. Splitting is refused once
-   * the workspace holds `maxPanes` panes (0 means unlimited); focusing a session
+   * A horizontal split keeps the new pane as the reference pane's right
+   * neighbour, then evens the row by the current pane count. A vertical split
+   * still only halves the reference pane. Splitting is refused once the
+   * workspace holds `maxPanes` panes (0 means unlimited); focusing a session
    * that is already mounted is never refused, because it adds no pane.
    *
    * @param {string} paneId
@@ -1217,13 +1220,12 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * `+` on the strip: a new conversation in a pane split beside the focused
-   * one. This is the sidebar's split control, so the new pane is an equal
-   * sibling of the reference pane rather than a re-tiled whole row. With no pane
-   * open this opens the first pane instead (the empty-state path). A repeat
-   * while that first session is still being created is ignored. That first
-   * pane is written only if this workspace is still empty when the session
-   * returns.
+   * `+` on the strip: a new conversation in a pane to the right of the focused
+   * one, with the row then divided evenly by the current pane count. With no
+   * pane open this opens the first pane instead (the empty-state path). A
+   * repeat while that first session is still being created is ignored. That
+   * first pane is written only if this workspace is still empty when the
+   * session returns.
    */
   async function newPaneValue() {
     if (disposed || !registered) return false
@@ -1608,9 +1610,10 @@ function createPaneController(ctx, options = {}) {
      * already mounted in another pane is focused rather than mounted twice
      * (spec §4.4).
      *
-     * The new pane is an equal sibling of `paneId` (the sidebar's split rule);
-     * the rest of the tree and every dragged ratio stay as they are. Once the
-     * workspace has `maxPanes` panes (and the cap is not 0), no pane is created.
+     * The new pane sits to the right of `paneId`. A horizontal split then evens
+     * the row by pane count, which replaces any dragged horizontal ratio. A
+     * vertical split only halves the reference pane. Once the workspace has
+     * `maxPanes` panes (and the cap is not 0), no pane is created.
      *
      * @param {string} paneId
      * @param {'row'|'col'} dir

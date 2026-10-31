@@ -8,8 +8,8 @@
  * left→right / top→bottom). There is no second container level and no
  * per-session list anywhere — the entry set, the order and the keyboard
  * shortcuts all come from the same tree the panes render from. Adding a
- * conversation (`+`) splits the focused pane beside itself (the sidebar's split
- * rule), so the strip order stays the on-screen left-to-right order.
+ * conversation (`+`) splits the focused pane beside itself and then evens the
+ * row by pane count, so the strip order stays the on-screen left-to-right order.
  *
  * dsh shapes never reach this file. `pane-view.js` feeds it the live session
  * list and status map, and paints the plain entries; the pure rules below stay

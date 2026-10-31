@@ -1085,21 +1085,21 @@ test('+ splits the focused pane 50/50 and gives it the new conversation', async 
   controller.dispose()
 })
 
-test('+ splits the focused pane locally and keeps the ratio of the rest of the tree', async () => {
+test('+ evens the row by pane count and drops a dragged ratio', async () => {
   const { fake, controller } = await readyController({
     created: ['s2', 's3', 's4'],
     paneIds: ['p1', 'p2', 'p3', 'p4'],
   })
   await controller.split('p1', 'row')
-  // A dragged ratio survives later splits; only the split's own reference pane
-  // is halved.
   assert.equal(controller.resize([], 0.7), true)
   await controller.split('p2', 'row')
 
   assert.equal(await controller.newPane(), true)
 
   const state = controller.getSnapshot()
-  assert.equal(state.root.ratio, 0.7)
+  assert.equal(state.root.ratio, 1 / 4)
+  assert.equal(state.root.b.ratio, 1 / 3)
+  assert.equal(state.root.b.b.ratio, 1 / 2)
   assert.deepEqual(state.root.a, { kind: 'leaf', paneId: 'p1' })
   assert.deepEqual(state.root.b.a, { kind: 'leaf', paneId: 'p2' })
   assert.deepEqual(state.root.b.b.a, { kind: 'leaf', paneId: 'p3' })
