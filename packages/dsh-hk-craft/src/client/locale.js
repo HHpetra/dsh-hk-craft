@@ -101,7 +101,14 @@ const zh = {
   'settings.split.note':
     '默认 4 格；填 0 表示不限制。修改只影响之后新开的分栏，已打开的窗格不会被关闭。',
   'command.clear.label': '新会话',
-  'command.clear.description': '在当前工作区新开一个会话，旧会话留在历史中',
+  'command.clear.description': '与 /new 当前等价：在当前工作区新开一个会话，旧会话留在历史中',
+  'command.new.label': '新会话',
+  'command.new.description': '与 /clear 当前等价：在当前工作区新开一个会话，旧会话留在历史中',
+  'command.fork.label': '分叉会话',
+  'command.fork.description':
+    '复制当前会话为可恢复副本，原会话不受影响。副本取最后一个已完成回合，不含正在进行的回合；没有已完成回合时无法分叉',
+  'command.trace.label': '轨迹视图',
+  'command.trace.description': '把当前窗格切换到轨迹视图',
   'command.resume.label': '恢复会话',
   'command.resume.description': '切换到当前工作区的历史会话',
   'command.resume.search.placeholder': '搜索标题或首条提问',
@@ -209,7 +216,16 @@ const en = {
   'settings.split.note':
     'Default: 4 panes. Enter 0 for no limit. Changing it only affects new splits; open panes are never closed.',
   'command.clear.label': 'New conversation',
-  'command.clear.description': 'Start a new conversation in this workspace; the old one stays in history',
+  'command.clear.description':
+    'Equivalent to /new today: start a new conversation in this workspace; the old one stays in history',
+  'command.new.label': 'New conversation',
+  'command.new.description':
+    'Equivalent to /clear today: start a new conversation in this workspace; the old one stays in history',
+  'command.fork.label': 'Fork conversation',
+  'command.fork.description':
+    'Copy the current conversation into a restorable copy; the original is unaffected. The copy stops at the last completed turn and leaves out a turn that is still running; a conversation with no completed turn cannot be forked',
+  'command.trace.label': 'Trajectory view',
+  'command.trace.description': 'Switch the current pane to the trajectory view',
   'command.resume.label': 'Resume conversation',
   'command.resume.description': 'Switch to a past conversation in this workspace',
   'command.resume.search.placeholder': 'Search titles and first prompts',

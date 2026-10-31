@@ -61,7 +61,7 @@ const WORKSPACE_SLOT_PRIORITY = -100
 /** Cordis services this plugin needs before `apply` runs. */
 const inject = ['slots', 'locale', 'sessions', 'layout']
 
-/** Services the two slash commands need before they can register. */
+/** Services the slash commands need before they can register. */
 const COMMAND_SERVICES = ['commandUi', 'sessions', 'workspaces', 'uiWorkspace']
 
 /**
@@ -167,11 +167,13 @@ function apply(ctx) {
   )
 
   /**
-   * The pane face the slash commands see: enough to keep `/resume` and `/clear`
-   * inside the split workspace instead of calling the native session navigation,
-   * which resets the active panel. `openInNewPane` is the `/resume` Ctrl+Enter
-   * action (ticket 06); `paneIndexFor` feeds the D10 "已在窗格 N" badge. The
-   * pane strip itself talks to the controller directly.
+   * The pane face the slash commands see: enough to keep `/resume`, `/clear`
+   * and `/new` inside the split workspace instead of calling the native session
+   * navigation, which resets the active panel. `openInNewPane` is the `/resume`
+   * Ctrl+Enter action and the `/fork` "open the copy beside the focus" action.
+   * `canTrace` / `setView` are the `/trace` pass-through to the controller.
+   * `paneIndexFor` feeds the "已在窗格 N" badge. The pane strip itself talks to
+   * the controller directly.
    */
   const paneCommands = {
     active: () => controller.getSnapshot().active,
@@ -180,6 +182,8 @@ function apply(ctx) {
     openInNewPane: (sessionId) => controller.openInNewPane(sessionId),
     newConversation: (workspaceId) => controller.newInFocused(workspaceId),
     paneIndexFor: (sessionId) => controller.paneIndexOf(sessionId),
+    canTrace: () => controller.isTrajectoryAvailable(),
+    setView: (paneId, view) => controller.setView(paneId, view),
   }
 
   ctx.effect(() => {

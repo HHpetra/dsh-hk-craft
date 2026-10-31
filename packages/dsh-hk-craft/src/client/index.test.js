@@ -153,11 +153,15 @@ function entryNamed(ctx, name) {
 }
 
 /** @returns {Record<string, unknown>} a full set of command services plus its stub */
-function commandServices() {
+function commandServices({ fork = true } = {}) {
   const commands = []
+  const base = workspaceServices()
+  const uiWorkspace = { ...base.uiWorkspace }
+  if (fork) uiWorkspace.forkSession = () => Promise.resolve('child')
   return {
     services: {
-      ...workspaceServices(),
+      ...base,
+      uiWorkspace,
       commandUi: {
         register(spec) {
           commands.push(spec)
@@ -346,16 +350,30 @@ test('the workspace entry declares no child slots and no store', () => {
   assert.equal(options.store, undefined)
 })
 
-test('registers /clear and /resume once the command services exist', () => {
+test('registers /clear, /new, /resume, /fork and /trace once the command services exist', () => {
   const { services, commands } = commandServices()
   const ctx = fakeCtx({ services })
   apply(ctx)
   assert.deepEqual(
     commands.map((spec) => spec.name),
-    ['clear', 'resume'],
+    ['clear', 'new', 'resume', 'fork', 'trace'],
   )
-  assert.deepEqual(commands.map((spec) => spec.ui.kind), ['action', 'popupSelect'])
-  assert.equal(commands[1].ui.searchMode, 'fuzzy-label')
+  assert.deepEqual(
+    commands.map((spec) => spec.ui.kind),
+    ['action', 'action', 'popupSelect', 'action', 'action'],
+  )
+  assert.equal(commands[2].ui.searchMode, 'fuzzy-label')
+  for (const spec of commands) assert.equal('execute' in spec.ui, false)
+})
+
+test('skips /fork when the shell has no forkSession and still registers the others', () => {
+  const { services, commands } = commandServices({ fork: false })
+  const ctx = fakeCtx({ services })
+  apply(ctx)
+  assert.deepEqual(
+    commands.map((spec) => spec.name),
+    ['clear', 'new', 'resume', 'trace'],
+  )
 })
 
 test('skips command registration when a command service is missing', () => {

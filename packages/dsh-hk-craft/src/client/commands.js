@@ -1,15 +1,14 @@
 'use strict'
 
 /**
- * `/clear` and `/resume`: two client-only slash commands, plus the pane-aware
- * `Mod+N` binding.
+ * Client-only slash commands: `/clear`, `/new`, `/resume`, `/fork`, `/trace`,
+ * plus the pane-aware `Mod+N` binding.
  *
- * Both commands are registered through `ctx.commandUi.register` and never reach
- * the model: `/clear` is an `action` (the shell consumes the token and calls
- * `run`), `/resume` is a `popupSelect` whose options are loaded once and whose
- * selection calls `onSelect`. Neither calls `command.execute`, so nothing is
- * appended to the session log. The dsh contracts are recorded in
- * `doc/upstream-contracts.md#slash-commands-and-popupselect`.
+ * Every command is registered through `ctx.commandUi.register` and never
+ * reaches the model. `/resume` is a `popupSelect`; the others are `action`s.
+ * None of them calls `command.execute`, so nothing is appended to the session
+ * log. The dsh contracts are recorded in
+ * `doc/upstream-contracts.md`.
  *
  * The descriptors only touch the adapter (`dsh-sessions.js`) and the pure list
  * builder (`resume-list.js`), which keeps this file about wiring, not data.
@@ -17,6 +16,7 @@
 
 const { buildResumeRows } = require('./resume-list.js')
 const {
+  sessionIsBlank,
   workspaceIdOf,
   listConversations,
   openConversation,
@@ -54,7 +54,9 @@ function focusedPane(panes) {
 }
 
 /**
- * Build the `/clear` contribution.
+ * Build the `/clear` or `/new` contribution. The two names share this builder
+ * and the same run path; `/new` is the name carried over from dsh-tui, and
+ * `/clear` stays as the compatible name.
  *
  * When the pane workspace is showing, the new conversation must land in the
  * focused pane. The pane host creates it through `sessions.create`, because the
@@ -66,17 +68,20 @@ function focusedPane(panes) {
  * `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
  *
  * @param {object} deps
+ * @param {'clear'|'new'} [deps.name] registration name
  * @param {(key: string, params?: Record<string, unknown>) => string} deps.t translator
  * @param {(sessionId: string|undefined) => string|undefined} deps.workspaceIdFor workspace lookup
  * @param {(workspaceId: string|undefined) => void} deps.start new-conversation action
  * @param {object} [deps.panes] pane host face (optional: commands work without panes)
  * @returns {object} command contribution
  */
-function buildClearCommand({ t, workspaceIdFor, start, panes }) {
+function buildNewConversationCommand({ name = 'clear', t, workspaceIdFor, start, panes }) {
+  const labelKey = name === 'new' ? 'command.new.label' : 'command.clear.label'
+  const descriptionKey = name === 'new' ? 'command.new.description' : 'command.clear.description'
   return {
-    name: 'clear',
-    label: () => t('command.clear.label'),
-    description: () => t('command.clear.description'),
+    name,
+    label: () => t(labelKey),
+    description: () => t(descriptionKey),
     available: () => true,
     ui: {
       kind: 'action',
@@ -278,8 +283,157 @@ function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes
 }
 
 /**
- * Register both commands (and the pane-aware `Mod+N` binding) onto the client
- * command service.
+ * Diagnostic text for a swallowed `/fork` failure. `SessionForkError` carries
+ * the host code (`session/fork-unavailable`, `session/migration-required`);
+ * anything else is still warned, never rethrown.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function forkFailureText(error) {
+  const code =
+    error instanceof Error && error.name === 'SessionForkError' && typeof error.rpcError?.code === 'string'
+      ? error.rpcError.code
+      : ''
+  const message = error instanceof Error ? error.message : String(error)
+  return code === '' ? message : `${code}: ${message}`
+}
+
+/**
+ * @param {unknown} error
+ */
+function warnForkFailure(error) {
+  console.warn('[dsh-hk-craft] /fork failed:', forkFailureText(error))
+}
+
+/**
+ * Swallow a thenable rejection. `run` is not awaited by the shell, so a
+ * rejection that escapes becomes unhandled.
+ *
+ * @param {unknown} attempt
+ * @param {(error: unknown) => void} onError
+ */
+function whenRejected(attempt, onError) {
+  if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
+    attempt.catch(onError)
+  }
+}
+
+/**
+ * Build the `/fork` contribution.
+ *
+ * This calls the same `uiWorkspace.forkSession` the native sidebar uses, with
+ * `{ allowMigration: false }`, and does not navigate. In the pane workspace the
+ * host's `onCreated` opens the copy beside the focused pane; a refused new pane
+ * leaves the copy in the session list. See
+ * `doc/upstream-contracts.md#forking-a-session-uiworkspaceforksession`.
+ *
+ * @param {object} deps
+ * @param {(key: string, params?: Record<string, unknown>) => string} deps.t translator
+ * @param {object} [deps.panes] pane host face
+ * @param {object} [deps.sessions] ClientSessions service
+ * @param {object} deps.uiWorkspace workspace navigation service
+ * @returns {object} command contribution
+ */
+function buildForkCommand({ t, panes, sessions, uiWorkspace }) {
+  return {
+    name: 'fork',
+    label: () => t('command.fork.label'),
+    description: () => t('command.fork.description'),
+    available: (session) => !sessionIsBlank(sessions, session?.sessionId),
+    ui: {
+      kind: 'action',
+      run: (session) => {
+        const sessionId = session?.sessionId
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        const onCreated = panePanelActive(panes)
+          ? (childId) => {
+              // `sessions.fork` renames the child after `onCreated`. A throw here
+              // would skip that rename and look like a failed fork, even though
+              // the copy already exists. A refused pane returns false instead.
+              try {
+                if (typeof panes?.openInNewPane !== 'function') return
+                whenRejected(panes.openInNewPane(childId), () => {})
+              } catch (_error) {
+                // The copy stays in the session list.
+              }
+            }
+          : undefined
+        try {
+          whenRejected(uiWorkspace.forkSession(sessionId, onCreated, { allowMigration: false }), warnForkFailure)
+        } catch (error) {
+          warnForkFailure(error)
+        }
+      },
+    },
+  }
+}
+
+/**
+ * The focused pane id, or undefined when there is no focused pane.
+ *
+ * @param {object} [panes] pane host face
+ * @returns {string|undefined}
+ */
+function focusedPaneId(panes) {
+  const focused = focusedPane(panes)
+  if (focused === null || typeof focused.paneId !== 'string' || focused.paneId === '') return undefined
+  return focused.paneId
+}
+
+/**
+ * Whether `/trace` can act: the pane workspace is showing, a pane is focused,
+ * and the host still offers the trajectory view.
+ *
+ * @param {object} [panes] pane host face
+ * @returns {boolean}
+ */
+function traceReady(panes) {
+  if (!panePanelActive(panes) || focusedPaneId(panes) === undefined) return false
+  try {
+    return panes.canTrace() === true
+  } catch (_error) {
+    return false
+  }
+}
+
+/**
+ * Build the `/trace` contribution.
+ *
+ * One-way switch of the focused pane to the trajectory view. Already being
+ * there is a no-op inside `setView`. The command does not change which session
+ * is mounted, and a `false` return (the developer-tools gate closed after the
+ * menu opened) is ignored.
+ *
+ * @param {object} deps
+ * @param {(key: string, params?: Record<string, unknown>) => string} deps.t translator
+ * @param {object} deps.panes pane host face
+ * @returns {object} command contribution
+ */
+function buildTraceCommand({ t, panes }) {
+  return {
+    name: 'trace',
+    label: () => t('command.trace.label'),
+    description: () => t('command.trace.description'),
+    available: () => traceReady(panes),
+    ui: {
+      kind: 'action',
+      run: () => {
+        const paneId = focusedPaneId(panes)
+        if (paneId === undefined) return
+        try {
+          panes.setView(paneId, 'trajectory')
+        } catch (_error) {
+          // The developer-tools gate can close after the menu opened.
+        }
+      },
+    },
+  }
+}
+
+/**
+ * Register the slash commands (and the pane-aware `Mod+N` binding) onto the
+ * client command service.
  *
  * @param {object} services
  * @param {object} services.commandUi `commandUi` client service
@@ -311,11 +465,22 @@ function registerCommands(services) {
   const newPaneRequested = services.newPaneRequested ?? (() => tracker.consume())
 
   const disposers = [
-    commandUi.register(buildClearCommand({ t, workspaceIdFor, start, panes })),
+    commandUi.register(buildNewConversationCommand({ t, workspaceIdFor, start, panes })),
+    commandUi.register(buildNewConversationCommand({ name: 'new', t, workspaceIdFor, start, panes })),
     commandUi.register(
       buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes, newPaneRequested }),
     ),
   ]
+  if (typeof services.uiWorkspace?.forkSession === 'function') {
+    disposers.push(
+      commandUi.register(
+        buildForkCommand({ t, panes, sessions: services.sessions, uiWorkspace: services.uiWorkspace }),
+      ),
+    )
+  }
+  if (typeof panes?.canTrace === 'function' && typeof panes?.setView === 'function') {
+    disposers.push(commandUi.register(buildTraceCommand({ t, panes })))
+  }
   if (tracker !== null) disposers.push(() => tracker.dispose())
   // `Mod+N` only has a pane-aware meaning while the pane host exists.
   if (panes !== undefined && panes !== null) {
@@ -326,7 +491,7 @@ function registerCommands(services) {
 }
 
 module.exports = {
-  buildClearCommand,
+  buildNewConversationCommand,
   buildResumeCommand,
   createCtrlEnterTracker,
   createNewConversationBinding,

@@ -1,7 +1,8 @@
 'use strict'
 
 /**
- * Every dsh assumption behind `/clear` and `/resume` lives here.
+ * Every dsh assumption behind `/clear`, `/new`, `/resume` and the `/fork`
+ * blank check lives here.
  *
  * Components and command handlers only ever see the plain rows this module
  * returns; if one of the assumed shapes changes upstream, this is the only file
@@ -42,6 +43,26 @@ const MAX_PROMPT_LOOKUPS = 6
 
 /** How many older history pages one first-prompt lookup may pull. */
 const MAX_PROMPT_PAGES = 4
+
+/**
+ * Whether the catalog row explicitly says this session has never sent a message.
+ *
+ * A missing row, a snapshot that throws, or any value other than `blank === true`
+ * is not blank. `/fork` uses that to stay out of the menu without treating an
+ * unloaded summary as empty.
+ *
+ * @param {object} [sessions] ClientSessions service
+ * @param {unknown} sessionId
+ * @returns {boolean}
+ */
+function sessionIsBlank(sessions, sessionId) {
+  try {
+    const row = sessions?.list?.getSnapshot?.()?.byId?.[sessionId]
+    return row?.blank === true
+  } catch (_error) {
+    return false
+  }
+}
 
 /**
  * Resolve the workspace that owns a session.
@@ -254,6 +275,7 @@ module.exports = {
   SOURCE,
   MAX_PROMPT_LOOKUPS,
   MAX_PROMPT_PAGES,
+  sessionIsBlank,
   workspaceIdOf,
   conversationsOf,
   firstUserPromptOf,

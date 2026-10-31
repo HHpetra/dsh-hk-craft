@@ -9,12 +9,19 @@ const {
   createNewConversationBinding,
   isModN,
 } = require('./commands.js')
+const { zh, en } = require('./locale.js')
 
 /** @param {object} table */
 function fakeT(table) {
   const base = {
     'command.clear.label': 'New conversation',
     'command.clear.description': 'Start a new conversation in this workspace.',
+    'command.new.label': 'New conversation',
+    'command.new.description': 'Equivalent to /clear today.',
+    'command.fork.label': 'Fork conversation',
+    'command.fork.description': 'Copy the current conversation into a restorable copy.',
+    'command.trace.label': 'Trajectory view',
+    'command.trace.description': 'Switch the current pane to the trajectory view.',
     'command.resume.label': 'Resume conversation',
     'command.resume.description': 'Switch to a past conversation in this workspace.',
     'command.resume.search.placeholder': 'Search titles and first prompts',
@@ -44,7 +51,10 @@ function fakeCommandUi() {
     registered,
     register(spec) {
       registered.push(spec)
-      return () => {}
+      return () => {
+        const index = registered.indexOf(spec)
+        if (index !== -1) registered.splice(index, 1)
+      }
     },
   }
 }
@@ -85,11 +95,11 @@ function command(h, name) {
   return h.commandUi.registered.find((spec) => spec.name === name)
 }
 
-test('registerCommands registers /clear and /resume with localized copy', () => {
+test('registerCommands registers /clear, /new and /resume with localized copy', () => {
   const h = harness()
   assert.deepEqual(
     h.commandUi.registered.map((spec) => spec.name),
-    ['clear', 'resume'],
+    ['clear', 'new', 'resume'],
   )
   for (const spec of h.commandUi.registered) {
     assert.equal(typeof spec.label, 'function')
@@ -98,9 +108,11 @@ test('registerCommands registers /clear and /resume with localized copy', () => 
     assert.equal(spec.available({ sessionId: 's1' }), true)
     assert.notEqual(spec.label(), spec.description())
     assert.equal(spec.label().startsWith('command.'), false)
+    assert.equal(spec.description().startsWith('command.'), false)
   }
-  // Two command registrations plus the Ctrl+Enter modifier tracker.
-  assert.equal(h.disposers.length, 3)
+  // Three command registrations plus the Ctrl+Enter modifier tracker.
+  // /fork and /trace stay unregistered until their optional services exist.
+  assert.equal(h.disposers.length, 4)
 })
 
 test('/clear is a local action that starts a session in the triggering workspace', () => {
@@ -115,6 +127,21 @@ test('/clear is a local action that starts a session in the triggering workspace
 test('/clear falls back to the shell current workspace when the session has none', () => {
   const h = harness({ workspaces: fakeWorkspaces([{ workspaceId: 'w1', sessionIds: ['other'] }]) })
   command(h, 'clear').ui.run({ sessionId: 's1' })
+  assert.deepEqual(h.calls.started, [undefined])
+})
+
+test('/new starts a session in the triggering workspace the same way /clear does', () => {
+  const h = harness()
+  const spec = command(h, 'new')
+  assert.equal(spec.ui.kind, 'action')
+  spec.ui.run({ sessionId: 's1' })
+  assert.deepEqual(h.calls.started, ['w1'])
+  assert.deepEqual(h.calls.opened, [])
+})
+
+test('/new falls back to the shell current workspace when the session has none', () => {
+  const h = harness({ workspaces: fakeWorkspaces([{ workspaceId: 'w1', sessionIds: ['other'] }]) })
+  command(h, 'new').ui.run({ sessionId: 's1' })
   assert.deepEqual(h.calls.started, [undefined])
 })
 
@@ -183,14 +210,23 @@ test('/resume selecting a row reveals that conversation', async () => {
 })
 
 test('registerCommands never talks to the model', () => {
-  const h = harness()
-  const clear = command(h, 'clear')
-  const resume = command(h, 'resume')
-  // Action and popupSelect specs are purely client-local: no `execute`, no
-  // `command()`-style host round-trip is reachable from them.
-  assert.equal('execute' in clear.ui, false)
-  assert.equal('execute' in resume.ui, false)
-  assert.equal('run' in resume.ui, false)
+  const h = harness({
+    panes: fakePanes(),
+    uiWorkspace: { forkSession: () => Promise.resolve('child') },
+  })
+  assert.deepEqual(
+    h.commandUi.registered.map((spec) => spec.name),
+    ['clear', 'new', 'resume', 'fork', 'trace'],
+  )
+  for (const spec of h.commandUi.registered) {
+    // Action and popupSelect specs are purely client-local: no `execute`, no
+    // `command()`-style host round-trip is reachable from them.
+    assert.equal('execute' in spec.ui, false)
+  }
+  assert.equal('run' in command(h, 'resume').ui, false)
+  assert.equal(command(h, 'new').ui.kind, 'action')
+  assert.equal(command(h, 'fork').ui.kind, 'action')
+  assert.equal(command(h, 'trace').ui.kind, 'action')
 })
 
 // ---------------------------------------------------------------------------
@@ -198,9 +234,16 @@ test('registerCommands never talks to the model', () => {
 // ---------------------------------------------------------------------------
 
 /** A stand-in for the pane host face the commands call. */
-function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' }, paneIndexOf } = {}) {
-  const calls = { replaced: [], newConversation: [], openedInNewPane: [], focused: [] }
-  return {
+function fakePanes({
+  active = true,
+  focused = { paneId: 'p2', sessionId: 's1' },
+  paneIndexOf,
+  canTrace = true,
+  trace = true,
+  openResult = Promise.resolve(true),
+} = {}) {
+  const calls = { replaced: [], newConversation: [], openedInNewPane: [], focused: [], setView: [] }
+  const face = {
     calls,
     active: () => active,
     focused: () => focused,
@@ -215,9 +258,17 @@ function fakePanes({ active = true, focused = { paneId: 'p2', sessionId: 's1' },
     },
     openInNewPane: (sessionId) => {
       calls.openedInNewPane.push(sessionId)
-      return Promise.resolve(true)
+      return openResult
     },
   }
+  if (trace) {
+    face.canTrace = () => canTrace
+    face.setView = (paneId, view) => {
+      calls.setView.push([paneId, view])
+      return true
+    }
+  }
+  return face
 }
 
 test('/clear puts a new conversation in the focused pane instead of closing the split view', () => {
@@ -233,6 +284,24 @@ test('/clear still uses the native path when the pane workspace is not showing',
   const panes = fakePanes({ active: false })
   const h = harness({ panes })
   command(h, 'clear').ui.run({ sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.newConversation, [])
+  assert.deepEqual(h.calls.started, ['w1'])
+})
+
+test('/new puts a new conversation in the focused pane instead of closing the split view', () => {
+  const panes = fakePanes()
+  const h = harness({ panes })
+  command(h, 'new').ui.run({ sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.newConversation, ['w1'])
+  assert.deepEqual(h.calls.started, [])
+})
+
+test('/new still uses the native path when the pane workspace is not showing', () => {
+  const panes = fakePanes({ active: false })
+  const h = harness({ panes })
+  command(h, 'new').ui.run({ sessionId: 's1' })
 
   assert.deepEqual(panes.calls.newConversation, [])
   assert.deepEqual(h.calls.started, ['w1'])
@@ -355,8 +424,8 @@ test('registerCommands binds Mod+N only when a pane host exists', () => {
   const target = fakeEventTarget()
   const panes = fakePanes()
   const h = harness({ panes, keyTarget: target })
-  // /clear + /resume + Ctrl+Enter tracker + Mod+N binding.
-  assert.equal(h.disposers.length, 4)
+  // /clear + /new + /resume + /trace + Ctrl+Enter tracker + Mod+N binding.
+  assert.equal(h.disposers.length, 6)
 
   target.dispatch('keydown', { key: 'n', ctrlKey: true, preventDefault() {}, stopPropagation() {} })
   assert.equal(panes.calls.newConversation.length, 1)
@@ -443,6 +512,257 @@ test('a tracker without a document is a harmless no-op', () => {
   const tracker = createCtrlEnterTracker(undefined)
   assert.equal(tracker.consume(), false)
   tracker.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// /fork and /trace (slash conversation commands)
+// ---------------------------------------------------------------------------
+
+/** @param {object} [overrides] */
+function forkHarness(overrides = {}) {
+  const forks = []
+  const uiWorkspace = {
+    forkSession(sessionId, onCreated, options) {
+      forks.push({ sessionId, onCreated, options })
+      return Promise.resolve('child-1')
+    },
+    ...overrides.uiWorkspace,
+  }
+  const h = harness({ panes: fakePanes(), ...overrides, uiWorkspace })
+  return { ...h, forks }
+}
+
+test('/fork is absent when the shell cannot fork a session', () => {
+  const h = harness({ panes: fakePanes() })
+  assert.equal(command(h, 'fork'), undefined)
+  assert.equal(command(h, 'new').name, 'new')
+  assert.equal(command(h, 'trace').name, 'trace')
+})
+
+test('/fork copies the current session without navigating away from the native view', () => {
+  const panes = fakePanes({ active: false })
+  const h = forkHarness({ panes })
+  command(h, 'fork').ui.run({ sessionId: 's1' })
+
+  assert.deepEqual(h.forks, [
+    { sessionId: 's1', onCreated: undefined, options: { allowMigration: false } },
+  ])
+  assert.deepEqual(panes.calls.openedInNewPane, [])
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(h.calls.opened, [])
+  assert.deepEqual(h.calls.started, [])
+})
+
+test('/fork opens the copy in a new pane and leaves the focused pane alone', () => {
+  const panes = fakePanes()
+  const h = forkHarness({ panes })
+  command(h, 'fork').ui.run({ sessionId: 's1' })
+
+  assert.equal(h.forks[0].sessionId, 's1')
+  assert.deepEqual(h.forks[0].options, { allowMigration: false })
+  h.forks[0].onCreated('child-9')
+
+  assert.deepEqual(panes.calls.openedInNewPane, ['child-9'])
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(h.calls.opened, [])
+  assert.deepEqual(h.calls.started, [])
+})
+
+test('/fork keeps the copy when a new pane is refused', async () => {
+  const warnings = []
+  const original = console.warn
+  console.warn = (...args) => {
+    warnings.push(args)
+  }
+  try {
+    const panes = fakePanes({ openResult: Promise.resolve(false) })
+    const h = forkHarness({ panes })
+    command(h, 'fork').ui.run({ sessionId: 's1' })
+    await h.forks[0].onCreated('child-9')
+    assert.deepEqual(panes.calls.openedInNewPane, ['child-9'])
+    assert.deepEqual(panes.calls.replaced, [])
+    assert.deepEqual(warnings, [])
+  } finally {
+    console.warn = original
+  }
+})
+
+test('/fork is hidden for a blank conversation and shown once the conversation has content', () => {
+  const h = forkHarness({
+    sessions: {
+      list: {
+        getSnapshot: () => ({
+          byId: {
+            blank: { id: 'blank', blank: true },
+            used: { id: 'used', blank: false },
+          },
+        }),
+      },
+    },
+  })
+  const spec = command(h, 'fork')
+  assert.equal(spec.available({ sessionId: 'blank' }), false)
+  assert.equal(spec.available({ sessionId: 'used' }), true)
+  assert.equal(spec.available({ sessionId: 'missing' }), true)
+})
+
+test('/fork stays quiet when the host rejects the fork', async () => {
+  const cases = [
+    Object.assign(new Error('no completed turn'), {
+      name: 'SessionForkError',
+      rpcError: { code: 'session/fork-unavailable' },
+    }),
+    Object.assign(new Error('migrate first'), {
+      name: 'SessionForkError',
+      rpcError: { code: 'session/migration-required' },
+    }),
+    new Error('fork child rename failed'),
+  ]
+  const unhandled = []
+  const onUnhandled = (error) => {
+    unhandled.push(error)
+  }
+  process.on('unhandledRejection', onUnhandled)
+  const original = console.warn
+  try {
+    for (const error of cases) {
+      const warnings = []
+      console.warn = (...args) => {
+        warnings.push(args)
+      }
+      const panes = fakePanes()
+      const h = forkHarness({
+        panes,
+        uiWorkspace: {
+          forkSession() {
+            return Promise.reject(error)
+          },
+        },
+      })
+      command(h, 'fork').ui.run({ sessionId: 's1' })
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.deepEqual(panes.calls.openedInNewPane, [], error.message)
+      assert.equal(warnings.length, 1, error.message)
+      const text = warnings[0].map((part) => String(part)).join(' ')
+      if (error.rpcError !== undefined) assert.match(text, new RegExp(error.rpcError.code))
+    }
+
+    const warnings = []
+    console.warn = (...args) => {
+      warnings.push(args)
+    }
+    const panes = fakePanes()
+    const h = forkHarness({
+      panes,
+      uiWorkspace: {
+        forkSession() {
+          throw new Error('sync boom')
+        },
+      },
+    })
+    assert.doesNotThrow(() => command(h, 'fork').ui.run({ sessionId: 's1' }))
+    assert.equal(warnings.length, 1)
+    assert.deepEqual(panes.calls.openedInNewPane, [])
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(unhandled, [])
+  } finally {
+    console.warn = original
+    process.off('unhandledRejection', onUnhandled)
+  }
+})
+
+test('/trace switches the focused pane to the trajectory view and does not change the session', () => {
+  const panes = fakePanes()
+  const h = harness({ panes })
+  const spec = command(h, 'trace')
+  assert.equal(spec.ui.kind, 'action')
+  assert.equal(spec.available({ sessionId: 's1' }), true)
+  spec.ui.run({ sessionId: 's1' })
+  spec.ui.run({ sessionId: 's1' })
+
+  assert.deepEqual(panes.calls.setView, [
+    ['p2', 'trajectory'],
+    ['p2', 'trajectory'],
+  ])
+  assert.deepEqual(panes.calls.replaced, [])
+  assert.deepEqual(panes.calls.newConversation, [])
+  assert.deepEqual(h.calls.opened, [])
+  assert.deepEqual(h.calls.started, [])
+})
+
+test('/trace is offered only for a focused pane in the split while trajectory is available', () => {
+  assert.equal(command(harness({ panes: fakePanes({ canTrace: false }) }), 'trace').available(), false)
+  assert.equal(
+    command(harness({ panes: fakePanes({ focused: null }) }), 'trace').available(),
+    false,
+  )
+  assert.equal(
+    command(harness({ panes: fakePanes({ active: false }) }), 'trace').available(),
+    false,
+  )
+})
+
+test('/trace ends quietly when the view switch is refused', () => {
+  const panes = fakePanes()
+  panes.setView = () => false
+  const h = harness({ panes })
+  assert.doesNotThrow(() => command(h, 'trace').ui.run({ sessionId: 's1' }))
+  assert.deepEqual(h.calls.opened, [])
+})
+
+test('/trace is absent when the pane host cannot switch views', () => {
+  const h = harness({
+    panes: fakePanes({ trace: false }),
+    uiWorkspace: { forkSession: () => Promise.resolve('child') },
+  })
+  assert.equal(command(h, 'trace'), undefined)
+  assert.equal(command(h, 'fork').name, 'fork')
+  assert.equal(command(h, 'new').name, 'new')
+})
+
+test('/new, /fork and /trace show localized menu copy', () => {
+  for (const table of [zh, en]) {
+    const h = harness({
+      t: (key) => table[key] ?? key,
+      panes: fakePanes(),
+      uiWorkspace: { forkSession: () => Promise.resolve('child') },
+    })
+    for (const name of ['new', 'fork', 'trace']) {
+      const spec = command(h, name)
+      assert.equal(spec.label().startsWith('command.'), false, name)
+      assert.equal(spec.description().startsWith('command.'), false, name)
+      assert.notEqual(spec.label(), spec.description())
+    }
+  }
+  assert.equal(zh['command.new.label'], '新会话')
+  assert.equal(en['command.new.label'], 'New conversation')
+  assert.match(zh['command.new.description'], /与 \/clear 当前等价/)
+  assert.match(en['command.new.description'], /\/clear/)
+  assert.match(zh['command.clear.description'], /与 \/new 当前等价/)
+  assert.match(en['command.clear.description'], /\/new/)
+  assert.equal(zh['command.fork.label'], '分叉会话')
+  assert.equal(en['command.fork.label'], 'Fork conversation')
+  assert.match(zh['command.fork.description'], /复制当前会话为可恢复副本，原会话不受影响/)
+  assert.match(en['command.fork.description'], /original is unaffected/)
+  assert.match(zh['command.fork.description'], /已完成回合/)
+  assert.match(en['command.fork.description'], /last completed turn/)
+  assert.equal(zh['command.trace.label'], '轨迹视图')
+  assert.equal(en['command.trace.label'], 'Trajectory view')
+  assert.equal(zh['command.trace.description'], '把当前窗格切换到轨迹视图')
+  assert.equal(en['command.trace.description'], 'Switch the current pane to the trajectory view')
+})
+
+test('releasing the registrations drops /clear, /new, /resume, /fork and /trace', () => {
+  const h = harness({
+    panes: fakePanes(),
+    uiWorkspace: { forkSession: () => Promise.resolve('child') },
+  })
+  assert.deepEqual(
+    h.commandUi.registered.map((spec) => spec.name),
+    ['clear', 'new', 'resume', 'fork', 'trace'],
+  )
+  for (const dispose of h.disposers) dispose()
+  assert.deepEqual(h.commandUi.registered, [])
 })
 
 /** Tiny EventTarget stand-in: listeners are kept by type so tests can dispatch. */

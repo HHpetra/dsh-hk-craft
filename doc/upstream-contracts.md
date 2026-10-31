@@ -235,8 +235,9 @@ to the model. `ui.kind: "popupSelect"` opens the shell's own overlay, which owns
 `badge` are display-only. `onSelect(option, context)` receives no keyboard
 event, so modifiers must be tracked separately.
 
-**Why we rely on it:** `/clear` and `/resume` are pure client commands, and the
-pane-aware `Ctrl+Enter` (open in a new pane) has to be observed around the
+**Why we rely on it:** `/clear`, `/new`, `/resume`, `/fork` and `/trace` are
+pure client commands. `/resume` is the `popupSelect`; the others are `action`s.
+The pane-aware `Ctrl+Enter` (open in a new pane) has to be observed around the
 shell's own handler because the shell ignores event modifiers.
 
 **Verified:** registration, popup dispatch, label-only ranking and the missing
@@ -455,6 +456,75 @@ use only outside the pane workspace.
 **Verified:** create's publication order and the reveal path were read in the
 session controller and ui-workspace. Runtime probe: `/clear` inside a split,
 then check the sidebar and `/resume` see the new session.
+
+---
+
+## Forking a session (`uiWorkspace.forkSession`)
+
+**Provider:** `@deepseek-ai/dsh-client-ui-workspace` (`uiWorkspace.forkSession`)
+over `@deepseek-ai/dsh-api-session-controller` (`sessions.fork`). The cut and
+the migration preflight live in `dsh-api-session-controller/lib/index.js`. The
+workspace puts the child on its session list in `@deepseek-ai/dsh-workspace`
+(`attachSession`).
+
+**Semantics:** `forkSession(sessionId, onCreated?, options?)` returns a Promise
+of the child session id. It calls
+
+```js
+sessions.fork({
+  sessionId,
+  increaseTitle: true,
+  // onCreated is omitted when the argument is undefined
+  // allowMigration is omitted unless the caller set it
+})
+```
+
+and nothing else. It does not call `openSession` or `replaceMain`, does not
+`retain` the child, and does not open the child's history.
+
+`sessions.fork` does not pass `atSeq`. The host then cuts at the latest
+completed-turn prefix: the last `turn/end`, plus events after it until a
+`turn/start`, an appending `user/message`, or `agent/inbox/spliced`. A turn
+that is still open is not copied. A source with no `turn/end` is rejected as
+`SessionForkError` with `rpcError.code === "session/fork-unavailable"`.
+
+`options.allowMigration === false` — the value the native sidebar Fork item
+passes — makes the host reject with `session/migration-required` when the
+source is not loaded and its stored log still needs a format migration, instead
+of migrating it. Omitting the flag keeps that automatic migration. `/fork`
+passes `false`, the same as the sidebar.
+
+On success the workspace prepends the child id onto `sessionIds`, so the copy
+is listed ahead of the source. The client calls `onCreated(childId)` before
+it renames the child, which is why a new pane can show the inherited title for
+a moment. `increaseTitle` reads the source summary's `title` and renames the
+child: a trailing ` (n)` or `（n）` increments, and any other title gains
+` (1)`. A rename failure rejects after `onCreated` has already run; the child
+still exists.
+
+`SessionForkError` is an `Error` with `name === "SessionForkError"`,
+`rpcError.code`, and `sourceSessionId`.
+
+dsh-tui describes `/fork` as a copy of the whole conversation. This path can
+leave out a turn that is still running, because that is what the sidebar does.
+The plugin does not invent its own cut.
+
+**Why we rely on it:** `/fork` must match the sidebar Fork item (cut, title,
+list position, no navigation, same error codes). The plugin calls
+`uiWorkspace.forkSession` and does not call `sessions.fork` itself. In the pane
+workspace, `onCreated` opens the child in a new pane; in the native view the
+callback is omitted, so the copy only shows up in the session list. A new pane
+that the pane budget refuses does not roll the fork back.
+
+**Verified:** read in Desktop `0.2.1-rc.5` (`resources/app.asar`):
+`dsh-client-ui-workspace/lib/client.js` (`forkSession`, and the sidebar call
+with `{ allowMigration: false }`), `dsh-api-session-controller/lib/client.js`
+(`ClientSessions.fork`, `increasedForkTitle`, `SessionForkError`),
+`dsh-api-session-controller/lib/index.js` (`latestCompletedPrefixBoundary` and
+the `allowMigration: false` preflight), and `dsh-workspace/lib/index.js`
+(`attachSession` prepends). Runtime probe: `/fork` in the native view and in a
+split, including a blank session, a session with no completed turn, and a
+workspace already at its pane cap.
 
 ---
 
