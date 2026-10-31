@@ -62,5 +62,4 @@ env/
 
 # Local scratch
 tmp/
-.scratch/_tmp/
-.scratch/_worktrees/
+.scratch/
