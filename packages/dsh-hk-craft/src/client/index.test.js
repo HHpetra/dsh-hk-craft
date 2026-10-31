@@ -322,7 +322,8 @@ test('the workspace entry injects the callbacks, the reorder callback and the pa
   assert.equal(typeof injected.panes.isWorkspaceEnabled, 'function')
   assert.equal(typeof injected.panes.getSnapshot, 'function')
   assert.equal(typeof injected.panes.subscribe, 'function')
-  assert.equal(injected.panes.isWorkspaceEnabled('w1'), false, 'nothing opened in split yet')
+  assert.equal(injected.panes.getSnapshot().active, true, 'split view is on after the plugin loads')
+  assert.equal(injected.panes.isWorkspaceEnabled('w1'), true, 'entering split view loads the current workspace')
   assert.equal(typeof injected.panes.subscribe(() => {}), 'function')
 })
 

@@ -200,6 +200,12 @@ function apply(ctx) {
       )
       yield ctx.slots.register({ name: PANE_SLOT, locale: NS }, PaneBody)
       controller.markRegistered()
+      // Split view is the default once the plugin has loaded. `activate` needs
+      // the `main` entry to exist, which `markRegistered` has just recorded.
+      // A failure leaves the native conversation selected; the settings switch
+      // can still enter or leave split view for the rest of this run. The next
+      // load enters split view again.
+      controller.activate()
     })
 
     return () => {
