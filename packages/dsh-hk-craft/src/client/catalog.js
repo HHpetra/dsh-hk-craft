@@ -352,9 +352,11 @@ function buildCatalog(input) {
    * *how* they combine into a light stays there.
    *
    * `running` reads the live status first and the summary row second, so a
-   * shell without the status store still reports a running session. `started`
-   * comes from the row (`blank` inverted), never from a status entry: only the
-   * Host knows whether a message was ever sent.
+   * shell without the status store still reports a running session. A
+   * disagreement resolves towards running: that is the safe direction for a
+   * stop or close confirmation. `started` comes from the row (`blank`
+   * inverted), never from a status entry: only the Host knows whether a
+   * message was ever sent.
    *
    * @param {string} sessionId
    * @returns {Readonly<{running: boolean, waiting: boolean, started: boolean, unread: boolean}>}

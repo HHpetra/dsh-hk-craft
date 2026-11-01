@@ -38,6 +38,27 @@ const { useWorkspaceDrag } = require('./workspace-drag.js')
 /** Neutral fallback for an unexpected light value, so a bad row never renders blank. */
 const LIGHT_FALLBACK = LIGHT_COLORS.gray
 
+/**
+ * Where focus goes after the delete dialog closes.
+ *
+ * A workspace row that has left the list stores `null` on unmount (React calls
+ * the ref with null). That is missing, the same as a row that was never
+ * mounted, and focus falls back to Add. An element that is still mounted is
+ * focused directly.
+ *
+ * @param {{kind: string, workspaceId?: string}|null|undefined} focusTarget
+ * @param {Record<string, {focus?: Function}|null|undefined>|null|undefined} nodes
+ * @returns {{kind: 'retarget'}|{kind: 'focus', node: any}|null}
+ */
+function resolveFocusRestore(focusTarget, nodes) {
+  if (focusTarget === null || focusTarget === undefined) return null
+  const node = focusTarget.kind === 'add' ? nodes?.add : nodes?.[focusTarget.workspaceId]
+  if (focusTarget.kind === 'workspace' && (node === undefined || node === null)) {
+    return { kind: 'retarget' }
+  }
+  return { kind: 'focus', node }
+}
+
 /** No-op store for the pane subscription when no controller is wired. */
 const noSubscribe = () => () => {}
 const noSnapshot = () => undefined
@@ -412,17 +433,16 @@ function WorkspaceSection(props) {
   // the new order asynchronously still lands on the right control. If the
   // preferred row is gone, fall back to the add entry instead of dropping focus.
   React.useEffect(() => {
-    if (focusTarget === null) return
-    const node =
-      focusTarget.kind === 'add'
-        ? focusTargets.current.add
-        : focusTargets.current[focusTarget.workspaceId]
-    if (node === undefined && focusTarget.kind === 'workspace') {
+    const decision = resolveFocusRestore(focusTarget, focusTargets.current)
+    if (decision === null) return
+    if (decision.kind === 'retarget') {
       setFocusTarget({ kind: 'add' })
       return
     }
     setFocusTarget(null)
-    if (node !== null && node !== undefined && typeof node.focus === 'function') node.focus()
+    if (decision.node !== null && decision.node !== undefined && typeof decision.node.focus === 'function') {
+      decision.node.focus()
+    }
   }, [focusTarget, rows])
 
   const openRow = (row) => {
@@ -597,4 +617,4 @@ function WorkspaceSection(props) {
   )
 }
 
-module.exports = { WorkspaceSection }
+module.exports = { WorkspaceSection, resolveFocusRestore }

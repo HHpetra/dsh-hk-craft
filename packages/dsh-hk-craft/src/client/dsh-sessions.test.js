@@ -171,6 +171,27 @@ test('firstPromptOf pages older history until the first prompt is found', async 
   assert.equal(sessions.calls.using[0].options.source, SOURCE)
 })
 
+test('firstPromptOf pages past a user message that is already in the tail', async () => {
+  const { session, state } = fakeSession([
+    [userEntry('fix the typo')],
+    [userEntry('open the file')],
+  ])
+  const sessions = fakeSessions(sessionsSnapshot([sessionRow({ id: 'a' })]), { a: session })
+  assert.equal(await firstPromptOf(sessions, 'a', undefined, { maxPages: 4 }), 'open the file')
+  assert.equal(state.loadOlderCalls, 1)
+})
+
+test('firstPromptOf keeps a tail prompt when the page budget stops on an empty page', async () => {
+  const { session, state } = fakeSession([
+    [userEntry('recent')],
+    [turnEntry()],
+    [userEntry('first')],
+  ])
+  const sessions = fakeSessions(sessionsSnapshot([sessionRow({ id: 'a' })]), { a: session })
+  assert.equal(await firstPromptOf(sessions, 'a', undefined, { maxPages: 1 }), 'recent')
+  assert.equal(state.loadOlderCalls, 1)
+})
+
 test('firstPromptOf stops after the page budget', async () => {
   const { session, state } = fakeSession([[turnEntry()], [turnEntry()], [userEntry('first')]])
   const sessions = fakeSessions(sessionsSnapshot([sessionRow({ id: 'a' })]), { a: session })

@@ -98,8 +98,9 @@ function firstUserPromptOf(entries) {
 }
 
 /**
- * Best-effort first prompt for one session: read the tail window, page older
- * history a bounded number of times, and never reject.
+ * Best-effort first prompt for one session: read the tail window, page toward
+ * the start of the history a bounded number of times, and never reject. A user
+ * message already in the tail is not the first prompt.
  *
  * @param {object} sessions ClientSessions service
  * @param {string} sessionId session to read
@@ -113,14 +114,21 @@ async function firstPromptOf(sessions, sessionId, signal, options = {}) {
     return await sessions.using(sessionId, { source: SOURCE, signal }, async (reference) => {
       const session = reference?.binding?.session
       if (session === undefined || session === null) return ''
-      let prompt = firstUserPromptOf(session.eventSource?.getSnapshot?.().entries)
+      const readPrompt = () => firstUserPromptOf(session.eventSource?.getSnapshot?.().entries)
+      // The open window is the tail. A user message already in it is a recent
+      // turn, not the conversation's first prompt, so keep paging while older
+      // history exists. An older page replaces the candidate when it has human
+      // text; a page budget that stops on an empty page keeps the prompt found
+      // so far.
+      let prompt = readPrompt()
       let pages = 0
-      while (prompt === '' && session.hasMore === true && pages < maxPages) {
+      while (session.hasMore === true && pages < maxPages) {
         // `loadOlder` is the Session's own page-back request; it swallows remote
         // failures and returns undefined, so the loop re-reads the window after.
         await session.loadOlder()
         pages += 1
-        prompt = firstUserPromptOf(session.eventSource.getSnapshot().entries)
+        const older = readPrompt()
+        if (older !== '') prompt = older
       }
       return prompt
     })

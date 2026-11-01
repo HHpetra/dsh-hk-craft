@@ -302,9 +302,41 @@ test('the first pane of an empty workspace is guarded, not reserved against the 
 test('/clear replaces the focused conversation instead of opening a pane', async () => {
   const holder = withBudget({ cap: 4, open: 2 })
 
+  assert.equal(holder.layoutFor('w1').activePaneId, 'p2')
   assert.equal(await holder.budget.newInFocused('w1'), true)
-  assert.deepEqual(holder.calls.replace, ['new-1'])
+  assert.equal(holder.layoutFor('w1').panes.p2.sessionId, 'new-1')
+  assert.equal(holder.layoutFor('w1').panes.p1.sessionId, 's1')
+  assert.deepEqual(holder.calls.apply, ['w1'])
   assert.deepEqual(holder.calls.openSession, [])
+  assert.deepEqual(holder.calls.replace, [])
+})
+
+test('/clear stays on the pane it started in when focus moves before create resolves', async () => {
+  const holder = withBudget({ cap: 4, open: 2, defer: true })
+  const creating = holder.budget.newInFocused('w1')
+  holder.layoutFor('w1').activePaneId = 'p1'
+
+  holder.pending[0].resolve('new-1')
+  assert.equal(await creating, true)
+  const layout = holder.layoutFor('w1')
+  assert.equal(layout.activePaneId, 'p1')
+  assert.equal(layout.panes.p2.sessionId, 'new-1')
+  assert.equal(layout.panes.p1.sessionId, 's1')
+})
+
+test('/clear does not write into another pane when its pane is gone', async () => {
+  const holder = withBudget({ cap: 4, open: 2, defer: true })
+  const creating = holder.budget.newInFocused('w1')
+  const layout = holder.layoutFor('w1')
+  layout.panes = { p1: layout.panes.p1 }
+  layout.root = { kind: 'leaf', paneId: 'p1' }
+  layout.activePaneId = 'p1'
+
+  holder.pending[0].resolve('new-1')
+  assert.equal(await creating, false)
+  assert.equal(holder.layoutFor('w1').panes.p1.sessionId, 's1')
+  assert.equal(holder.layoutFor('w1').panes.p2, undefined)
+  assert.deepEqual(holder.calls.apply, [])
 })
 
 test('openInNewPane refuses a full workspace before switching to it', async () => {

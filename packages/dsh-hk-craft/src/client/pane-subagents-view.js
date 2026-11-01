@@ -185,10 +185,10 @@ function createSubagentSeat(options = {}) {
           return
         }
         setOpen(false)
-        // Focus returns to the trigger on every close path.
-        if (typeof queueMicrotask === 'function') {
-          queueMicrotask(() => triggerRef.current?.focus?.())
-        }
+        // An outside press already moved focus to whatever was pressed. Putting
+        // it back on the trigger steals that click, including a click that
+        // opened another pane's menu. Escape and a row selection still return
+        // focus, through `closeMenu(true)`.
       }
       document.addEventListener('pointerdown', onPointerDown)
       return () => document.removeEventListener('pointerdown', onPointerDown)

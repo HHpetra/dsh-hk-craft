@@ -16,6 +16,22 @@
 const { messageOf } = require('./shared.js')
 
 /**
+ * The Host reports a refused cancel as `{ ok: false }` instead of throwing.
+ * `conversation.cancel()` forwards to that same binding, so both routes have
+ * to turn the result into a rejection or the pane closes while the turn runs.
+ *
+ * @param {any} result
+ * @returns {Error|null}
+ */
+function cancelFailure(result) {
+  if (result === null || result === undefined || result.ok !== false) return null
+  const error = result.error ?? {}
+  return new Error(
+    `session.cancel failed: ${error.code ?? 'unknown'}: ${error.message ?? 'unknown error'}`,
+  )
+}
+
+/**
  * Interrupt the running turn of one session through the public client route the
  * shell's own stop button uses.
  *
@@ -32,20 +48,16 @@ async function interruptSession(sessions, sessionId) {
     const scoped = sessions.scope(sessionId)
     const conversation = scoped?.get?.('conversation')
     if (conversation !== undefined && typeof conversation.cancel === 'function') {
-      await conversation.cancel()
+      const failure = cancelFailure(await conversation.cancel())
+      if (failure !== null) throw failure
       return
     }
   }
   if (typeof sessions?.binding === 'function') {
     const session = sessions.binding(sessionId)?.session
     if (session !== undefined && typeof session.cancel === 'function') {
-      const result = await session.cancel()
-      if (result !== null && result !== undefined && result.ok === false) {
-        const error = result.error ?? {}
-        throw new Error(
-          `session.cancel failed: ${error.code ?? 'unknown'}: ${error.message ?? 'unknown error'}`,
-        )
-      }
+      const failure = cancelFailure(await session.cancel())
+      if (failure !== null) throw failure
       return
     }
   }

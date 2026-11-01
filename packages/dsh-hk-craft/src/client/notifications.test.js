@@ -240,6 +240,23 @@ test('diffSessionStatus sees a new pending key and a running-to-idle transition'
   ])
 })
 
+test('diffSessionStatus reports a pending interaction that was cleared', () => {
+  const previous = {
+    s1: { running: true, pendingInteraction: { key: 'a', kind: 'approval' } },
+  }
+  assert.deepEqual(diffSessionStatus(previous, { s1: { running: true, pendingInteraction: null } }), [
+    { kind: 'cleared', sessionId: 's1' },
+  ])
+  assert.deepEqual(diffSessionStatus(previous, {}), [{ kind: 'cleared', sessionId: 's1' }])
+  assert.deepEqual(
+    diffSessionStatus(previous, { s1: { running: false, pendingInteraction: null } }),
+    [
+      { kind: 'cleared', sessionId: 's1' },
+      { kind: 'completed', sessionId: 's1' },
+    ],
+  )
+})
+
 test('diffSessionStatus does not replay a seed or repeat an unchanged pending interaction', () => {
   const seed = { s1: { running: false }, s2: { running: true, pendingInteraction: { key: 'a', kind: 'approval' } } }
   assert.deepEqual(diffSessionStatus(seed, seed), [])
@@ -447,6 +464,45 @@ test('each pending kind has its own toast and the interaction key dedupes it', (
   assert.equal(FakeNotification.instances.length, 3)
   assert.equal(FakeNotification.instances[2].title, '计划待审阅')
   assert.equal(FakeNotification.instances[1].closed, true)
+  notifier.dispose()
+})
+
+test('a resolved approval closes its toast while the turn is still running', () => {
+  FakeNotification.reset()
+  const env = fakeEnv({
+    status: { s1: { running: true } },
+    byId: { s1: { title: 'S' } },
+  })
+  const { notifier } = createTestNotifier(env)
+  env.status.set({
+    s1: { running: true, pendingInteraction: { key: 'a1', kind: 'approval' } },
+  })
+  assert.equal(FakeNotification.instances.length, 1)
+  assert.equal(FakeNotification.instances[0].closed, false)
+
+  env.status.set({ s1: { running: true, pendingInteraction: null } })
+  assert.equal(FakeNotification.instances[0].closed, true)
+  assert.equal(FakeNotification.instances.length, 1)
+  notifier.dispose()
+})
+
+test('clearing a pending interaction as the turn finishes still shows completion', () => {
+  FakeNotification.reset()
+  const env = fakeEnv({
+    status: { s1: { running: true } },
+    byId: { s1: { title: 'S' } },
+  })
+  const { notifier } = createTestNotifier(env)
+  env.status.set({
+    s1: { running: true, pendingInteraction: { key: 'a1', kind: 'approval' } },
+  })
+  assert.equal(FakeNotification.instances.length, 1)
+
+  env.status.set({ s1: { running: false, pendingInteraction: null } })
+  assert.equal(FakeNotification.instances[0].closed, true)
+  assert.equal(FakeNotification.instances.length, 2)
+  assert.equal(FakeNotification.instances[1].title, '本轮完成')
+  assert.equal(FakeNotification.instances[1].closed, false)
   notifier.dispose()
 })
 

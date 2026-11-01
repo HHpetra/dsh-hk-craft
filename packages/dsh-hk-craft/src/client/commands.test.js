@@ -409,6 +409,42 @@ test('Mod+N opens a new conversation in the focused pane while the pane workspac
   binding.dispose()
 })
 
+test('Mod+N while a modal is open does not start a conversation or reach the native handler', () => {
+  const previous = globalThis.document
+  globalThis.document = {
+    querySelector(selector) {
+      return selector === '[role="dialog"][aria-modal="true"]' ? {} : null
+    },
+  }
+  try {
+    const target = fakeEventTarget()
+    const panes = fakePanes()
+    const binding = createNewConversationBinding(target, panes)
+    let native = 0
+    target.addEventListener('keydown', () => {
+      native += 1
+    })
+    const event = {
+      key: 'n',
+      ctrlKey: true,
+      prevented: false,
+      preventDefault() {
+        this.prevented = true
+      },
+      stopPropagation() {},
+    }
+    target.dispatch('keydown', event)
+
+    assert.equal(native, 0)
+    assert.equal(event.prevented, true)
+    assert.deepEqual(panes.calls.newConversation, [])
+    binding.dispose()
+  } finally {
+    if (previous === undefined) delete globalThis.document
+    else globalThis.document = previous
+  }
+})
+
 test('Mod+N outside the pane workspace keeps dsh\'s native meaning', () => {
   const target = fakeEventTarget()
   const panes = fakePanes({ active: false })
@@ -781,7 +817,16 @@ function fakeEventTarget() {
       if (set.size === 0) listeners.delete(type)
     },
     dispatch(type, event) {
-      for (const listener of [...(listeners.get(type) ?? [])]) listener(event)
+      let stopped = false
+      const stopNow = event.stopImmediatePropagation
+      event.stopImmediatePropagation = () => {
+        stopped = true
+        stopNow?.()
+      }
+      for (const listener of [...(listeners.get(type) ?? [])]) {
+        listener(event)
+        if (stopped) break
+      }
     },
   }
 }

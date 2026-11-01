@@ -17,7 +17,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { withFakeReact } = require('./fake-react.js')
-const { WorkspaceSection } = require('./sidebar-workspaces.js')
+const { WorkspaceSection, resolveFocusRestore } = require('./sidebar-workspaces.js')
 const { zh } = require('./locale.js')
 
 /**
@@ -518,4 +518,20 @@ test('only one reorder request may be in flight at a time', () => {
 
     assert.equal(reorders.length, 1, 'a second drag must not race the first request')
   })
+})
+
+test('delete focus falls back to Add when the preferred row ref was cleared', () => {
+  const button = { focus() {} }
+  assert.deepEqual(resolveFocusRestore({ kind: 'workspace', workspaceId: 'w2' }, { w2: null }), {
+    kind: 'retarget',
+  })
+  assert.deepEqual(resolveFocusRestore({ kind: 'workspace', workspaceId: 'w2' }, {}), {
+    kind: 'retarget',
+  })
+  assert.deepEqual(resolveFocusRestore({ kind: 'workspace', workspaceId: 'w2' }, { w2: button }), {
+    kind: 'focus',
+    node: button,
+  })
+  assert.deepEqual(resolveFocusRestore({ kind: 'add' }, { add: button }), { kind: 'focus', node: button })
+  assert.equal(resolveFocusRestore(null, {}), null)
 })

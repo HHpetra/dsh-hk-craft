@@ -205,7 +205,11 @@ function PaneShortcuts({ controller, workspaceId }) {
     const onKeyDown = (event) => {
       const action = paneShortcutAction(event)
       if (action === null) return
-      if (document.querySelector('[role="dialog"][aria-modal="true"]') !== null) return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]') !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
 
       if (action.kind === 'focus') {
         event.preventDefault()
@@ -573,6 +577,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
       'data-hkcraft-pane': pane.paneId,
       'data-hkcraft-pane-active': focused ? 'true' : 'false',
       onPointerDownCapture: focus,
+      onFocusCapture: focus,
     },
     header,
     h('div', { style: bodyStyle }, body),
@@ -850,6 +855,9 @@ function PaneStrip({
           cursor: drag === null ? 'pointer' : 'grabbing',
         },
         onClick: () => focusEntry(entry),
+        onFocus: () => {
+          if (!entry.focused) controller.layout.focusPane(entry.paneId)
+        },
         onKeyDown: (event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()

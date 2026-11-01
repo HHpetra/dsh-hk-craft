@@ -182,9 +182,14 @@ function statusMap(snapshot) {
  * passed as both arguments (the runtime seeds itself that way), otherwise every
  * already-finished session would look like it just completed.
  *
+ * A pending interaction that disappears is `cleared`, so a waiting toast can
+ * close when the approval or question is answered and the turn keeps running.
+ * A completion in the same snapshot is left to that event: it either replaces
+ * the toast or, after a failure, leaves the failure toast in place.
+ *
  * @param {Map<string, any>|Record<string, any>} previous
  * @param {Map<string, any>|Record<string, any>} next
- * @returns {Array<{kind: 'pending', sessionId: string, interaction: any} | {kind: 'completed', sessionId: string}>}
+ * @returns {Array<{kind: 'pending', sessionId: string, interaction: any} | {kind: 'completed', sessionId: string} | {kind: 'cleared', sessionId: string}>}
  */
 function diffSessionStatus(previous, next) {
   const before = statusMap(previous)
@@ -198,9 +203,17 @@ function diffSessionStatus(previous, next) {
       if (interactionKey(pending) !== interactionKey(prior?.pendingInteraction)) {
         events.push({ kind: 'pending', sessionId, interaction: pending })
       }
+    } else if (prior?.pendingInteraction !== null && prior?.pendingInteraction !== undefined) {
+      events.push({ kind: 'cleared', sessionId })
     }
     if (prior?.running === true && status?.running === false) {
       events.push({ kind: 'completed', sessionId })
+    }
+  }
+  for (const [sessionId, prior] of before) {
+    if (after.has(sessionId)) continue
+    if (prior?.pendingInteraction !== null && prior?.pendingInteraction !== undefined) {
+      events.push({ kind: 'cleared', sessionId })
     }
   }
   return events
@@ -549,6 +562,17 @@ function createNotifier(options) {
     return release
   }
 
+  /** Close the toast currently shown for one session, if any. */
+  function dismissSession(sessionId) {
+    const current = sessionNotifications.get(sessionId)
+    if (current === undefined) return
+    try {
+      current.close?.()
+    } catch (_error) {
+      // The toast is already gone.
+    }
+  }
+
   function show(title, body, extra, sessionId) {
     if (!NotificationImpl) return { ok: false, reason: 'unsupported' }
     if (permissionState() !== 'granted') return { ok: false, reason: 'permission' }
@@ -600,10 +624,16 @@ function createNotifier(options) {
     const events = diffSessionStatus(previous, next)
     previous = next
     const pendingSessions = new Set()
-    for (const event of events) if (event.kind === 'pending') pendingSessions.add(event.sessionId)
+    const completingSessions = new Set()
+    for (const event of events) {
+      if (event.kind === 'pending') pendingSessions.add(event.sessionId)
+      else if (event.kind === 'completed') completingSessions.add(event.sessionId)
+    }
     for (const event of events) {
       try {
-        if (event.kind === 'pending') onPending(event)
+        if (event.kind === 'cleared') {
+          if (!completingSessions.has(event.sessionId)) dismissSession(event.sessionId)
+        } else if (event.kind === 'pending') onPending(event)
         else if (!pendingSessions.has(event.sessionId)) onCompleted(event)
       } catch (error) {
         console.error('[dsh-hk-craft] notification failed', error)

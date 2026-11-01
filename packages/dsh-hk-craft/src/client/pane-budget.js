@@ -201,7 +201,6 @@ function paneBudgetBlocked(layout, maxPanes) {
  * @param {(sessionId: string) => object} deps.freshPane
  * @param {(layout: object, sessionId: string, workspaceId?: string|null) => boolean} deps.openSessionPane
  * @param {(paneId: string) => boolean} deps.focusPane
- * @param {(sessionId: string) => boolean} deps.replaceFocused
  * @param {(workspaceId: string|null) => boolean} deps.switchWorkspace
  * @param {(workspaceId: string) => Promise<string>} deps.createSession
  */
@@ -221,7 +220,6 @@ function createSplitBudget(deps) {
     freshPane,
     openSessionPane,
     focusPane,
-    replaceFocused,
     switchWorkspace,
     createSession,
   } = deps
@@ -454,8 +452,9 @@ function createSplitBudget(deps) {
    * stays in history. Switching away during the create does not pull the new
    * session into the visible workspace or switch the view back. A `/clear`
    * that already had a focused pane replaces that same pane in the workspace
-   * it started in, even if another workspace is on screen when the session
-   * arrives.
+   * it started in. Moving the focus to another pane, or putting another
+   * workspace on screen, does not retarget it. If that pane is gone when the
+   * session arrives, the session stays in history and no other pane is changed.
    *
    * @param {string} [workspaceId]
    * @returns {Promise<boolean>}
@@ -474,7 +473,7 @@ function createSplitBudget(deps) {
         if (!switchWorkspace(targetWorkspace)) return false
       }
       // The pane `/clear` is aimed at, after any switch onto this workspace.
-      // Captured before the await so a later workspace change cannot retarget it.
+      // Captured before the await so a later focus or workspace change cannot retarget it.
       const originPaneId = book.layoutOf(targetWorkspace).activePaneId
       let sessionId
       try {
@@ -493,16 +492,13 @@ function createSplitBudget(deps) {
         if (origin.root !== null) return false
         return openSessionPane(origin, sessionId, targetWorkspace)
       }
-      if (book.getActiveWorkspaceId() !== targetWorkspace) {
-        const origin = book.layoutOf(targetWorkspace)
-        if (typeof originPaneId !== 'string' || origin.panes[originPaneId] === undefined) return false
-        const next = replaceSession(origin, originPaneId, sessionId)
-        if (next === origin) return true
-        return apply(next, targetWorkspace)
-      }
-      const current = book.activeLayout()
-      if (current.activePaneId !== null) return replaceFocused(sessionId)
-      return openSessionPane(current, sessionId, targetWorkspace)
+      // The pane captured before create, whether or not it is still focused
+      // and whether or not its workspace is the one on screen.
+      const origin = book.layoutOf(targetWorkspace)
+      if (typeof originPaneId !== 'string' || origin.panes[originPaneId] === undefined) return false
+      const next = replaceSession(origin, originPaneId, sessionId)
+      if (next === origin) return true
+      return apply(next, targetWorkspace)
     } finally {
       if (openingFirst) pendingFirstPanes.delete(targetWorkspace)
     }

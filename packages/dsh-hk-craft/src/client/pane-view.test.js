@@ -246,6 +246,76 @@ function headerController({ trajectory = true, calls = [] } = {}) {
   }
 }
 
+test('keyboard focus inside a pane focuses that pane', () => {
+  withFakeReact(fakeReact, () => {
+    const calls = []
+    const controller = headerController()
+    controller.layout.focusPane = (paneId) => calls.push(paneId)
+    const frame = PaneFrame({
+      controller,
+      pane: pane('p1', 's1'),
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      focused: false,
+      kit: { SessionProvider: () => null, renderSlot: () => null },
+      t: (key) => key,
+    })
+    frame.props.onFocusCapture()
+    assert.deepEqual(calls, ['p1'])
+
+    const focused = PaneFrame({
+      controller,
+      pane: pane('p1', 's1'),
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      focused: true,
+      kit: { SessionProvider: () => null, renderSlot: () => null },
+      t: (key) => key,
+    })
+    focused.props.onFocusCapture()
+    assert.deepEqual(calls, ['p1'])
+  })
+})
+
+test('focusing a strip tab focuses that pane', () => {
+  withFakeReact(fakeReact, () => {
+    const calls = []
+    const controller = {
+      close: { request: () => {} },
+      budget: { newPane: () => {} },
+      layout: {
+        focusPane: (paneId) => calls.push(paneId),
+        swapPanes: () => {},
+      },
+    }
+    const state = {
+      root: {
+        kind: 'split',
+        dir: 'row',
+        ratio: 0.5,
+        a: { kind: 'leaf', paneId: 'p1' },
+        b: { kind: 'leaf', paneId: 'p2' },
+      },
+      panes: {
+        p1: { paneId: 'p1', sessionId: 's1', view: 'chat' },
+        p2: { paneId: 'p2', sessionId: 's2', view: 'chat' },
+      },
+      activePaneId: 'p1',
+    }
+    const view = PaneStrip({
+      controller,
+      state,
+      maxPanes: 4,
+      kit: {
+        useSessions: (selector) => selector({ byId: { s1: { title: 'One' }, s2: { title: 'Two' } } }),
+        useSessionStatus: (selector) => selector({}),
+      },
+      t: (key) => key,
+    })
+    const tab = elementWhere(view, (node) => node.props?.['data-hkcraft-strip-item'] === 'p2')
+    tab.props.onFocus()
+    assert.deepEqual(calls, ['p2'])
+  })
+})
+
 test('the pane header offers a view toggle and a close button when no seats are supplied', () => {
   withFakeReact(fakeReact, () => {
     const controller = headerController()

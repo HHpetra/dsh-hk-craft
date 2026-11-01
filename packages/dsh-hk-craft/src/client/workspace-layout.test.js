@@ -908,6 +908,44 @@ test('a membership gap does not drop a running conversation onto an older one', 
   controller.dispose()
 })
 
+test('the first restore keeps a running conversation the ready catalog omitted', () => {
+  const layout = split(openPane(createLayout('w1'), pane('p1', 'old')), 'p1', 'row', pane('p2', 'live'))
+  const storage = memoryStorage({ w1: layout })
+  const { controller } = readyController({
+    storage,
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['old'] }],
+    rows: {
+      old: { id: 'old', blank: false, running: false, updatedAt: 1 },
+      live: { id: 'live', blank: false, running: true, updatedAt: 50 },
+    },
+  })
+
+  assert.equal(controller.activate('old'), true)
+  assert.equal(controller.getSnapshot().panes.p2.sessionId, 'live')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'old')
+  assert.equal(storage.read('w1').panes.p2.sessionId, 'live')
+  controller.dispose()
+})
+
+test('the first restore still drops a finished conversation the catalog no longer lists', () => {
+  const layout = split(openPane(createLayout('w1'), pane('p1', 'old')), 'p1', 'row', pane('p2', 'gone'))
+  const storage = memoryStorage({ w1: layout })
+  const { controller } = readyController({
+    storage,
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['old'] }],
+    rows: {
+      old: { id: 'old', blank: false, running: false, updatedAt: 1 },
+      gone: { id: 'gone', blank: false, running: false, updatedAt: 2 },
+    },
+  })
+
+  assert.equal(controller.activate('old'), true)
+  assert.equal(controller.getSnapshot().panes.p2, undefined)
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'old')
+  assert.equal(storage.read('w1').panes.p2, undefined)
+  controller.dispose()
+})
+
 test('switching workspace does not replace a running conversation that is not started yet', () => {
   const storage = memoryStorage({
     w1: openPane(createLayout('w1'), pane('p1', 's1')),
@@ -932,6 +970,36 @@ test('switching workspace does not replace a running conversation that is not st
 
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.equal(controller.getSnapshot().sessionId, 'draft')
+  assert.equal(controller.getSnapshot().panes.p2.sessionId, 'draft')
+  controller.dispose()
+})
+
+test('switching workspace keeps a blank draft that is not running', () => {
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 's1')),
+    w2: openPane(createLayout('w2'), pane('p2', 'draft')),
+  })
+  const rows = {
+    ...CONVERSATION_ROWS,
+    draft: { id: 'draft', blank: true, running: false, updatedAt: 5 },
+  }
+  const { controller } = readyController({
+    storage,
+    rows,
+    workspaces: [
+      { workspaceId: 'w1', sessionIds: ['s1', 's2'] },
+      { workspaceId: 'w2', sessionIds: ['draft', 's3', 's4'] },
+      { workspaceId: 'w3', sessionIds: [] },
+    ],
+  })
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+  assert.equal(controller.getSnapshot().sessionId, 'draft')
+  assert.equal(controller.getSnapshot().panes.p2.sessionId, 'draft')
+
+  assert.equal(controller.switchWorkspace('w1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
   assert.equal(controller.getSnapshot().panes.p2.sessionId, 'draft')
   controller.dispose()
 })

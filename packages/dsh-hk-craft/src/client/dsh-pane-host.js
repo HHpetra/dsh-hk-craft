@@ -300,7 +300,6 @@ function createPaneController(ctx, options = {}) {
     freshPane: (sessionId) => freshPane(sessionId),
     openSessionPane: (layout, sessionId, workspaceId) => openSessionPane(layout, sessionId, workspaceId),
     focusPane: (paneId) => layoutRuntime.layout.focusPane(paneId),
-    replaceFocused: (sessionId) => layoutRuntime.layout.replaceFocusedSession(sessionId),
     switchWorkspace: (workspaceId) => switchWorkspaceValue(workspaceId),
     createSession: (workspaceId) => createSession(workspaceId),
   })
@@ -657,10 +656,11 @@ function createPaneController(ctx, options = {}) {
   /**
    * Make one workspace's layout available, restoring it on first use.
    *
-   * The restore prune can only run against a ready catalog. When the layout was
-   * first loaded while `workspaces.list` was still loading, every pane was
-   * kept; the prune must therefore be able to re-run later, so this also prunes
-   * an already-loaded workspace whenever the catalog is now ready (spec §9).
+   * The restore prune can only run against a ready catalog. The first read keeps
+   * every pane: pruning inside that read would drop a running session this
+   * snapshot's membership omits, and persist that loss, before the
+   * running-session guard can see the pane. `pruneWorkspace` applies the
+   * catalog afterwards, and a later ready snapshot can prune again (spec §9).
    *
    * @param {string} workspaceId
    * @returns {boolean}
@@ -669,9 +669,8 @@ function createPaneController(ctx, options = {}) {
     if (typeof workspaceId !== 'string' || workspaceId === '') return false
     ensureCatalogSubscription()
     const known = knownSessionsOf(workspaceId)
-    const already = book.hasWorkspace(workspaceId)
-    if (!book.ensureWorkspace(workspaceId, known)) return false
-    if (already) pruneWorkspace(workspaceId, known)
+    if (!book.ensureWorkspace(workspaceId, null)) return false
+    pruneWorkspace(workspaceId, known)
     return true
   }
 
@@ -1097,14 +1096,25 @@ function createPaneController(ctx, options = {}) {
    * pane still holds another workspace's session, leaves the previous
    * transcript on screen. This opens the workspace's latest conversation when
    * none of its panes already shows one, and focuses an existing one when the
-   * focused pane does not. A tree that already shows one of its conversations
-   * is left alone, so a split the user arranged is not rebuilt. Nothing here
+   * focused pane does not. A focused pane that still belongs to this workspace
+   * stays, including a blank draft from `/clear`, so switching away and back
+   * does not replace it with an older conversation. An archived session, or a
+   * session that belongs to another workspace, is still replaced. Nothing here
    * calls the native reveal — that would move the shell's current session
    * instead of switching this workspace's tree.
    *
    * @param {string} workspaceId
    * @returns {boolean} whether the layout changed
    */
+  function keepsFocusedSession(catalog, workspaceId, sessionId) {
+    // A turn that is still running has to stay put even when this snapshot has
+    // dropped it from membership. Replacing it is how an in-progress
+    // conversation lands on a finished one.
+    if (isSessionRunning(sessionId)) return true
+    if (catalog.memberIds(workspaceId).includes(sessionId) !== true) return false
+    return catalog.session(sessionId)?.archived !== true
+  }
+
   function focusOrOpenWorkspaceConversation(workspaceId) {
     if (disposed) return false
     const catalog = catalogNow()
@@ -1113,11 +1123,7 @@ function createPaneController(ctx, options = {}) {
     const layout = book.layoutOf(workspaceId)
     const focused = layout.activePaneId == null ? undefined : layout.panes[layout.activePaneId]
     const own = (candidate) => isWorkspaceConversation(catalog, workspaceId, candidate)
-    // A turn that is still running has to stay put even when the catalog has
-    // not marked it started yet, or still lists an older conversation as the
-    // one a workspace click would reveal. Replacing it is how an in-progress
-    // conversation lands on a finished one.
-    if (focused !== undefined && (own(focused.sessionId) || isSessionRunning(focused.sessionId))) return false
+    if (focused !== undefined && keepsFocusedSession(catalog, workspaceId, focused.sessionId)) return false
 
     const holder = layoutTree.paneOfSession(layout, sessionId)
     if (holder !== undefined) {

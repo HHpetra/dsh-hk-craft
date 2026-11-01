@@ -137,7 +137,14 @@ function createNewConversationBinding(target, panes) {
     if (!isModN(event)) return
     if (!panePanelActive(panes)) return
     if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
-      if (document.querySelector('[role="dialog"][aria-modal="true"]') !== null) return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]') !== null) {
+        // This capture listener runs before dsh's `session.new`. Returning
+        // without stopping the event opens a native session under the dialog.
+        event.preventDefault()
+        event.stopImmediatePropagation?.()
+        event.stopPropagation?.()
+        return
+      }
     }
     event.preventDefault()
     event.stopImmediatePropagation?.()

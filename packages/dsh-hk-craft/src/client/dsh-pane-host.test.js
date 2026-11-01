@@ -109,6 +109,21 @@ test('interruptSession falls back to the session cancel binding', async () => {
   assert.deepEqual(calls, ['s1'])
 })
 
+test('interruptSession turns a scoped cancel failure into a rejection', async () => {
+  const sessions = {
+    scope: () => ({
+      get: () => ({
+        cancel: () => Promise.resolve({ ok: false, error: { code: 'session/not-running', message: 'no turn' } }),
+      }),
+    }),
+    binding() {
+      throw new Error('binding must not run when the scoped route exists')
+    },
+  }
+
+  await assert.rejects(() => interruptSession(sessions, 's1'), /no turn/)
+})
+
 test('interruptSession turns a binding failure result into a rejection', async () => {
   const sessions = {
     scope: () => ({ get: () => undefined }),
@@ -1821,6 +1836,34 @@ test('a /clear that resolves after a workspace switch stays in the workspace it 
     false,
   )
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
+  controller.dispose()
+})
+
+test('a /clear that resolves after the focus moves stays in the pane it started in', async () => {
+  const { fake, controller } = await readyController({
+    created: ['s2', 's-new'],
+    paneIds: ['p1', 'p2', 'p3'],
+  })
+  assert.equal(await controller.budget.split('p1', 'row'), true)
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+  assert.equal(controller.layout.focusPane('p1'), true)
+
+  const originalCreate = fake.ctx.sessions.create.bind(fake.ctx.sessions)
+  let releaseCreate
+  fake.ctx.sessions.create = (options) =>
+    new Promise((resolve, reject) => {
+      releaseCreate = () => originalCreate(options).then(resolve, reject)
+    })
+
+  const creating = controller.budget.newInFocused('w1')
+  assert.equal(controller.layout.focusPane('p2'), true)
+  releaseCreate()
+  assert.equal(await creating, true)
+
+  const landed = controller.getSnapshot()
+  assert.equal(landed.activePaneId, 'p2')
+  assert.equal(landed.panes.p1.sessionId, 's-new')
+  assert.equal(landed.panes.p2.sessionId, 's2')
   controller.dispose()
 })
 

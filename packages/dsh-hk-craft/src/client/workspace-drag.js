@@ -138,7 +138,13 @@ function useWorkspaceDrag(React, options) {
 
   const onRowPointerDown = (row) => (event) => {
     if (event.button !== undefined && event.button !== 0) return
-    if (insideWorkspaceAction(event.target)) return
+    if (insideWorkspaceAction(event.target)) {
+      // A press that slipped off the row before it became a drag is still in
+      // `dragRef`. The action's pointerup bubbles to the row and would submit
+      // that gesture. Starting on the action slot abandons it.
+      dragRef.current = null
+      return
+    }
     if (reorderBusy.current) return
     // Do NOT capture the pointer here. The select control is a child of the
     // row, and pointer capture retargets the compatibility click to the capture
@@ -161,6 +167,13 @@ function useWorkspaceDrag(React, options) {
   const onRowPointerMove = (event) => {
     const current = dragRef.current
     if (current === null) return
+    // Capture starts only after the threshold, so a pointerup outside the row
+    // never clears a press that stayed a click. A later move with the button
+    // already up must not promote that press into a drag.
+    if (!current.active && event.buttons === 0) {
+      dragRef.current = null
+      return
+    }
     if (!current.active && !crossedDragThreshold(current.startX, current.startY, event.clientX, event.clientY)) {
       return
     }

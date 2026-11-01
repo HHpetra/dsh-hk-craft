@@ -45,10 +45,13 @@ function pointerEvent(clientX, clientY, currentTarget) {
 }
 
 /** @param {string[]} [order] */
-function gesture(order = ['w1', 'w2']) {
+function gesture(order = ['w1', 'w2'], reorders = []) {
   return useWorkspaceDrag(fakeReact(), {
     order,
-    reorderWorkspace: () => Promise.resolve(),
+    reorderWorkspace: (sourceId, beforeId) => {
+      reorders.push([sourceId, beforeId])
+      return Promise.resolve()
+    },
   })
 }
 
@@ -113,6 +116,70 @@ test('a row whose capture is unavailable still starts and ends a drag', () => {
     drag.onRowPointerMove(pointerEvent(10, 30, {}))
     drag.onRowPointerUp(pointerEvent(10, 30, {}))
   })
+})
+
+/** Point every hit-test at one workspace row, then restore `document`. */
+function withRowUnderPointer(workspaceId, body) {
+  const previous = globalThis.document
+  globalThis.document = {
+    elementFromPoint() {
+      return {
+        closest(selector) {
+          return selector === '[data-hkcraft-workspace-row]' ? this : null
+        },
+        getAttribute(name) {
+          return name === 'data-hkcraft-workspace-row' ? workspaceId : null
+        },
+        getBoundingClientRect() {
+          return { top: 0, height: 40 }
+        },
+      }
+    },
+  }
+  try {
+    body()
+  } finally {
+    if (previous === undefined) delete globalThis.document
+    else globalThis.document = previous
+  }
+}
+
+test('a press released outside the row is not promoted into a drag by a later move', () => {
+  const reorders = []
+  const drag = gesture(['w1', 'w2'], reorders)
+  const calls = []
+  const target = captureTarget(calls)
+  withRowUnderPointer('w2', () => {
+    drag.onRowPointerDown({ workspaceId: 'w1' })(pointerEvent(10, 10, target))
+    drag.onRowPointerMove({ ...pointerEvent(10, 30, target), buttons: 0 })
+    drag.onRowPointerUp(pointerEvent(10, 30, target))
+  })
+
+  assert.deepEqual(calls, [])
+  assert.deepEqual(reorders, [])
+})
+
+test('a click on the action slot does not submit a drag whose pointerup was lost', () => {
+  const reorders = []
+  const drag = gesture(['w1', 'w2'], reorders)
+  const calls = []
+  const target = captureTarget(calls)
+  const action = {
+    closest(selector) {
+      return selector === '[data-hkcraft-workspace-action]' ? {} : null
+    },
+  }
+  withRowUnderPointer('w2', () => {
+    drag.onRowPointerDown({ workspaceId: 'w1' })({ ...pointerEvent(10, 10, target), buttons: 1 })
+    drag.onRowPointerMove({ ...pointerEvent(10, 30, target), buttons: 1 })
+    drag.onRowPointerDown({ workspaceId: 'w2' })({
+      ...pointerEvent(10, 30, target),
+      target: action,
+    })
+    drag.onRowPointerUp(pointerEvent(10, 30, target))
+  })
+
+  assert.deepEqual(reorders, [])
 })
 
 test('a press on the row action slot never starts the gesture', () => {
