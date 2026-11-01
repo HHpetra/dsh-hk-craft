@@ -1,48 +1,24 @@
 'use strict'
 
 /**
- * Workspace drag reordering is decided by two pure rules: how far a
- * pointer must travel before a press becomes a drag, and where a drop lands in
- * the host's workspace order.
+ * Workspace drag reordering is decided by one pure rule: where a drop lands in
+ * the host's workspace order. (The other rule — how far the pointer must travel
+ * before a press becomes a drag — is shared with the pane strip and pinned in
+ * `drag-threshold.test.js`.)
  *
- * These tests pin those rules to worked examples, not to the implementation, so
- * the pointer plumbing in `sidebar-workspaces.js` can change without rewriting
- * them. The gesture itself (capture, indicator, click suppression) is covered by
- * the component tests below and the manual smoke list.
+ * These tests pin the rule to worked examples, not to the implementation, so the
+ * pointer plumbing in `workspace-drag.js` can change without rewriting them.
+ * The gesture itself (capture, indicator, click suppression) is covered by the
+ * `workspace-drag.test.js` cases and the manual smoke list.
  */
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const {
-  REORDER_DRAG_THRESHOLD_PX,
-  crossedDragThreshold,
   dropSideFor,
   dropAnchor,
 } = require('./workspace-reorder.js')
-
-test('a press becomes a workspace drag only after it moves more than six pixels', () => {
-  assert.equal(REORDER_DRAG_THRESHOLD_PX, 6)
-  assert.equal(crossedDragThreshold(10, 10, 15, 10), false, '5px is still a click')
-  assert.equal(crossedDragThreshold(10, 10, 10, 15), false)
-  assert.equal(crossedDragThreshold(10, 10, 16, 10), false, 'exactly 6px is still a click')
-  assert.equal(crossedDragThreshold(10, 10, 10, 16), false)
-  assert.equal(crossedDragThreshold(10, 10, 16.01, 10), true, 'more than 6px starts the drag')
-  assert.equal(crossedDragThreshold(10, 10, 16, 18), true, 'distance, not per-axis travel')
-})
-
-test('the threshold is a distance and accepts an explicit value', () => {
-  assert.equal(crossedDragThreshold(0, 0, 3, 4), false, 'a 5px diagonal stays a click')
-  assert.equal(crossedDragThreshold(0, 0, 0, 9, 10), false, 'under a custom 10px threshold')
-  assert.equal(crossedDragThreshold(0, 0, 0, 10, 10), false, 'the threshold itself is still a click')
-  assert.equal(crossedDragThreshold(0, 0, 0, 10.01, 10), true, 'just past the custom threshold starts it')
-  assert.equal(crossedDragThreshold(0, 0, 0, 7), true, 'just past the default 6px threshold')
-})
-
-test('a malformed pointer sample never starts a drag', () => {
-  assert.equal(crossedDragThreshold(undefined, 0, 10, 0), false)
-  assert.equal(crossedDragThreshold(0, 0, Number.NaN, 0), false)
-})
 
 test("the drop side is the row's upper or lower half", () => {
   // Row box: 30px tall starting at y=100, so the midpoint is y=115.

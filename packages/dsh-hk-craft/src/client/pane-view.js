@@ -18,6 +18,7 @@
 
 const { createTranslator } = require('./react-and-translator.js')
 const { openCatalog } = require('./catalog.js')
+const { usePaneStripDrag } = require('./pane-strip-drag.js')
 const {
   CONTENT_FACTORY,
   PANE_SLOT,
@@ -644,31 +645,6 @@ function PaneSeparator({ controller, separator }) {
   )
 }
 
-/** Drags shorter than this stay clicks (spec §5's 6px threshold). */
-const STRIP_DRAG_THRESHOLD_PX = 6
-
-/** @param {any} target event target @returns {boolean} */
-function insideStripClose(target) {
-  return typeof target?.closest === 'function' && target.closest('[data-hkcraft-strip-close]') !== null
-}
-
-/**
- * The pane whose strip entry is under the pointer, or null. Pointer capture
- * keeps the move events on the source entry, so the drop target has to be
- * hit-tested.
- *
- * @param {number} clientX
- * @param {number} clientY
- * @returns {string|null}
- */
-function stripPaneIdAt(clientX, clientY) {
-  if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null
-  const element = document.elementFromPoint(clientX, clientY)
-  const entry = typeof element?.closest === 'function' ? element.closest('[data-hkcraft-strip-item]') : null
-  const paneId = entry?.getAttribute?.('data-hkcraft-strip-item')
-  return typeof paneId === 'string' && paneId !== '' ? paneId : null
-}
-
 /**
  * Whether `+` should read as unavailable.
  *
@@ -767,11 +743,12 @@ function PaneStrip({
   const catalog = openCatalog({ sessions, statuses })
   const [hovered, setHovered] = React.useState(null)
   const [creating, setCreating] = React.useState(false)
-  const [drag, setDrag] = React.useState(null)
-  /** The in-flight pointer drag; state above only drives the visible feedback. */
-  const dragRef = React.useRef(null)
-  /** A drag's pointerup is followed by a click; that click must not re-focus. */
-  const suppressClick = React.useRef(false)
+  // Pointer capture, hit testing and click suppression live in their own hook;
+  // the strip only paints the entries and forwards the drag state.
+  const stripDrag = usePaneStripDrag(React, {
+    onSwap: (sourcePaneId, targetPaneId) => controller.swapPanes(sourcePaneId, targetPaneId),
+  })
+  const drag = stripDrag.drag
 
   const entries = projectStrip(state, catalog, t('session.untitled'))
   const budgetBlocked = splitBlocked(controller, state, workspaceId, maxPanes)
@@ -793,75 +770,8 @@ function PaneStrip({
       .then(() => setCreating(false))
   }
 
-  const clearDrag = () => {
-    dragRef.current = null
-    setDrag(null)
-  }
-
-  /**
-   * Start a pointer drag. The close button keeps its own click; a drag must
-   * never steal it.
-   */
-  const onEntryPointerDown = (entry) => (event) => {
-    if (event.button !== undefined && event.button !== 0) return
-    if (insideStripClose(event.target)) return
-    dragRef.current = {
-      sourcePaneId: entry.paneId,
-      startX: event.clientX,
-      startY: event.clientY,
-      active: false,
-      targetPaneId: null,
-    }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-  }
-
-  const onEntryPointerMove = (event) => {
-    const current = dragRef.current
-    if (current === null) return
-    if (!current.active) {
-      const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY)
-      if (distance < STRIP_DRAG_THRESHOLD_PX) return
-      current.active = true
-      setDrag({ sourcePaneId: current.sourcePaneId, targetPaneId: null })
-    }
-    const over = stripPaneIdAt(event.clientX, event.clientY)
-    const targetPaneId = over === null || over === current.sourcePaneId ? null : over
-    if (targetPaneId !== current.targetPaneId) {
-      current.targetPaneId = targetPaneId
-      setDrag({ sourcePaneId: current.sourcePaneId, targetPaneId })
-    }
-    event.preventDefault()
-  }
-
-  const onEntryPointerUp = (event) => {
-    const current = dragRef.current
-    if (current === null) return
-    clearDrag()
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
-    if (!current.active) return
-    // Dropping anywhere but another strip entry is a complete no-op: no swap,
-    // no focus change, no layout write. The following click is swallowed once.
-    suppressClick.current = true
-    if (current.targetPaneId !== null) {
-      controller.swapPanes(current.sourcePaneId, current.targetPaneId)
-    }
-    if (typeof globalThis.setTimeout === 'function') {
-      globalThis.setTimeout(() => {
-        suppressClick.current = false
-      }, 0)
-    }
-  }
-
-  const onEntryPointerCancel = (event) => {
-    clearDrag()
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
-  }
-
   const focusEntry = (entry) => {
-    if (suppressClick.current) {
-      suppressClick.current = false
-      return
-    }
+    if (stripDrag.consumeSuppressedClick()) return
     controller.focusPane(entry.paneId)
   }
 
@@ -911,10 +821,10 @@ function PaneStrip({
           event.preventDefault()
           focusEntry(entry)
         },
-        onPointerDown: onEntryPointerDown(entry),
-        onPointerMove: onEntryPointerMove,
-        onPointerUp: onEntryPointerUp,
-        onPointerCancel: onEntryPointerCancel,
+        onPointerDown: stripDrag.onEntryPointerDown(entry),
+        onPointerMove: stripDrag.onEntryPointerMove,
+        onPointerUp: stripDrag.onEntryPointerUp,
+        onPointerCancel: stripDrag.onEntryPointerCancel,
         onMouseEnter: () => setHovered(entry.paneId),
         onMouseLeave: () => setHovered((current) => (current === entry.paneId ? null : current)),
       },

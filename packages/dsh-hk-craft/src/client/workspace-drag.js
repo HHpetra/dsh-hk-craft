@@ -5,17 +5,19 @@
  * indicator and click suppression after a drop.
  *
  * This is the one part of `sidebar-workspaces.js` that changes for pointer
- * reasons rather than rendering reasons, so it lives in its own hook. The math
- * it applies (threshold, which half of a row, the host anchor) is pure and lives
- * in `workspace-reorder.js`; the host is the only order writer, so nothing here
- * stores an order.
+ * reasons rather than rendering reasons, so it lives in its own hook. The
+ * "past the threshold" rule is shared with the pane strip
+ * (`drag-threshold.js`); the workspace-specific math — which half of a row, the
+ * host anchor — is pure and lives in `workspace-reorder.js`; the host is the
+ * only order writer, so nothing here stores an order.
  *
  * The hook is deliberately dumb about failure: it calls `onReorderStart` before a
  * write and `onReorderError(reason)` if the host rejects, leaving the copy and
  * the error line to the section.
  */
 
-const { crossedDragThreshold, dropAnchor, dropSideFor } = require('./workspace-reorder.js')
+const { crossedDragThreshold } = require('./drag-threshold.js')
+const { dropAnchor, dropSideFor } = require('./workspace-reorder.js')
 
 /**
  * True when the press belongs to a row action. The action slot holds the delete

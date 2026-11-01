@@ -1,13 +1,15 @@
 'use strict'
 
 /**
- * Workspace drag reordering, as two pure rules.
+ * Workspace drag reordering, as pure rules.
  *
- * `sidebar-workspaces.js` owns the pointer plumbing (capture, hit testing,
- * indicator, click suppression); this module owns the math that is worth
- * pinning down: when a press becomes a drag, and which host anchor a release
- * produces. dsh's `workspaces.insertBefore` is the writer; the component never
- * keeps an order of its own.
+ * The pointer plumbing (capture, hit testing, indicator, click suppression) is
+ * `workspace-drag.js`; the "did this become a drag" rule is shared with every
+ * other drag in the plugin (`drag-threshold.js`). What is left here is specific
+ * to the workspace section: which host anchor a release produces.
+ *
+ * dsh's `workspaces.insertBefore` is the writer; the component never keeps an
+ * order of its own.
  *
  * The host order is `workspaces.list().items` (`doc/upstream-contracts.md#
  * workspace-display-order`). A drop is described by the row under the pointer
@@ -15,33 +17,6 @@
  * before that row, the lower half before the row after it, which makes the
  * lower half of the last row an append.
  */
-
-/** Drags shorter than this stay clicks (the 6px threshold). */
-const REORDER_DRAG_THRESHOLD_PX = 6
-
-/**
- * Has the pointer travelled farther than the threshold, so the press counts as
- * a drag?
- *
- * "移动超过 6px" is literal: exactly 6px still opens the workspace, and only a
- * move *past* the threshold starts a reorder.
- *
- * Distance, not axis travel: a press that wanders diagonally must cross the
- * threshold the same way a horizontal one does. A malformed sample never starts
- * a drag, so a synthetic event without coordinates cannot swallow a click.
- *
- * @param {number} startX
- * @param {number} startY
- * @param {number} clientX
- * @param {number} clientY
- * @param {number} [threshold] defaults to the spec's 6px
- * @returns {boolean}
- */
-function crossedDragThreshold(startX, startY, clientX, clientY, threshold = REORDER_DRAG_THRESHOLD_PX) {
-  const values = [startX, startY, clientX, clientY, threshold]
-  if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) return false
-  return Math.hypot(clientX - startX, clientY - startY) > threshold
-}
 
 /**
  * Which half of a row the pointer is over.
@@ -96,8 +71,6 @@ function dropAnchor(order, sourceId, targetId, side) {
 }
 
 module.exports = {
-  REORDER_DRAG_THRESHOLD_PX,
-  crossedDragThreshold,
   dropSideFor,
   dropAnchor,
 }
