@@ -730,6 +730,63 @@ test('a workspace switch made before the session catalog is ready is the one tha
   controller.dispose()
 })
 
+test('a membership gap does not drop a running conversation onto an older one', () => {
+  const layout = split(openPane(createLayout('w1'), pane('p1', 'old')), 'p1', 'row', pane('p2', 'live'))
+  const storage = memoryStorage({ w1: layout })
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: ['old', 'live'] },
+    { workspaceId: 'w2', sessionIds: ['s3'] },
+  ]
+  const rows = {
+    old: { id: 'old', blank: false, running: false, updatedAt: 1 },
+    live: { id: 'live', blank: false, running: true, updatedAt: 50 },
+    s3: { id: 's3', blank: false, running: false, updatedAt: 2 },
+  }
+  const { controller, fake } = readyController({ storage, workspaces, rows })
+
+  assert.equal(controller.activate('live'), true)
+  assert.equal(controller.getSnapshot().sessionId, 'live')
+
+  // The host reindexes cwd asynchronously and can publish a workspace view
+  // that omits the conversation currently running. That snapshot is not a delete.
+  workspaces[0].sessionIds = ['old']
+  fake.setSessions(rows)
+
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+  assert.equal(controller.getSnapshot().sessionId, 'live')
+  assert.equal(controller.getSnapshot().panes.p2.sessionId, 'live')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'old')
+  controller.dispose()
+})
+
+test('switching workspace does not replace a running conversation that is not started yet', () => {
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 's1')),
+    w2: openPane(createLayout('w2'), pane('p2', 'draft')),
+  })
+  const rows = {
+    ...CONVERSATION_ROWS,
+    draft: { id: 'draft', blank: true, running: true, updatedAt: 5 },
+  }
+  const { controller } = readyController({
+    storage,
+    rows,
+    workspaces: [
+      { workspaceId: 'w1', sessionIds: ['s1', 's2'] },
+      { workspaceId: 'w2', sessionIds: ['draft', 's3', 's4'] },
+      { workspaceId: 'w3', sessionIds: [] },
+    ],
+  })
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, 'draft')
+  assert.equal(controller.getSnapshot().panes.p2.sessionId, 'draft')
+  controller.dispose()
+})
+
 test('the prune re-runs when the workspace catalog becomes ready', () => {
   const layout = split(
     openPane(createLayout('w1'), pane('p1', 's1')),

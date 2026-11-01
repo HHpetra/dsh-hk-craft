@@ -677,8 +677,33 @@ function createPaneController(ctx, options = {}) {
    * @param {string} workspaceId
    * @param {Set<string>|null} knownSessionIds
    */
+  /**
+   * Membership used to drop vanished panes.
+   *
+   * A running conversation can disappear from one workspace snapshot while the
+   * host reindexes that session's directory. Treating that gap as a delete
+   * closes the pane and leaves an older, already finished conversation focused.
+   * A session that is actually gone is not running, so the next catalog tick
+   * still drops it.
+   *
+   * @param {string} workspaceId
+   * @param {Set<string>|null} knownSessionIds
+   * @returns {Set<string>|null}
+   */
+  function knownSessionsForPrune(workspaceId, knownSessionIds) {
+    if (!(knownSessionIds instanceof Set)) return knownSessionIds
+    const layout = book.layoutOf(workspaceId)
+    let kept = null
+    for (const pane of Object.values(layout.panes ?? {})) {
+      if (!isSessionRunning(pane.sessionId) || knownSessionIds.has(pane.sessionId)) continue
+      if (kept === null) kept = new Set(knownSessionIds)
+      kept.add(pane.sessionId)
+    }
+    return kept ?? knownSessionIds
+  }
+
   function pruneWorkspace(workspaceId, knownSessionIds) {
-    const pruned = book.pruneCandidate(workspaceId, knownSessionIds)
+    const pruned = book.pruneCandidate(workspaceId, knownSessionsForPrune(workspaceId, knownSessionIds))
     if (pruned === null) return
     apply(pruned, workspaceId)
   }
@@ -1062,7 +1087,11 @@ function createPaneController(ctx, options = {}) {
     const layout = book.layoutOf(workspaceId)
     const focused = layout.activePaneId == null ? undefined : layout.panes[layout.activePaneId]
     const own = (candidate) => isWorkspaceConversation(catalog, workspaceId, candidate)
-    if (focused !== undefined && own(focused.sessionId)) return false
+    // A turn that is still running has to stay put even when the catalog has
+    // not marked it started yet, or still lists an older conversation as the
+    // one a workspace click would reveal. Replacing it is how an in-progress
+    // conversation lands on a finished one.
+    if (focused !== undefined && (own(focused.sessionId) || isSessionRunning(focused.sessionId))) return false
 
     const holder = layoutTree.paneOfSession(layout, sessionId)
     if (holder !== undefined) {
@@ -1199,6 +1228,12 @@ function createPaneController(ctx, options = {}) {
    * first when that pane is elsewhere. An unknown session replaces the focused
    * pane. With no pane open it becomes the first pane. Notifications caused by
    * this controller's own `mainView` retain are ignored.
+   *
+   * A running conversation is left alone when the shell's current id names an
+   * idle session. dsh keeps "current" on whichever session still has a
+   * `mainView` retain, and the session restored at startup often still has
+   * one. Following that id replaces the turn on screen with a conversation
+   * that already finished.
    */
   function syncCurrent() {
     if (routingDepth > 0 || disposed || !snapshot.active) return
@@ -1206,6 +1241,13 @@ function createPaneController(ctx, options = {}) {
     if (sessionId === null) return
     const focused = focusedPane()
     if (focused !== null && focused.sessionId === sessionId) return
+    if (
+      focused !== null &&
+      isSessionRunning(focused.sessionId) &&
+      !isSessionRunning(sessionId)
+    ) {
+      return
+    }
     routingDepth += 1
     try {
       const holder = book.locatePaneIn(sessionId)

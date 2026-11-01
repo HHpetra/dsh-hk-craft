@@ -584,6 +584,43 @@ test('a current session that no pane holds replaces the focused pane', async () 
   controller.dispose()
 })
 
+test('shell current does not replace a running conversation with an idle one', async () => {
+  const { controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: true, blank: false, updatedAt: 100 },
+      s9: { id: 's9', running: false, blank: false, updatedAt: 1 },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's9'] }],
+  })
+  const current = sessionCurrent()
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+  controller.dispose()
+})
+
+test('shell current still follows another running conversation', async () => {
+  const { controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: true, blank: false, updatedAt: 100 },
+      s9: { id: 's9', running: true, blank: false, updatedAt: 90 },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's9'] }],
+  })
+  const current = sessionCurrent()
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+
+  assert.equal(controller.getSnapshot().sessionId, 's9')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's9')
+  controller.dispose()
+})
+
 test('a current session that a pane already holds focuses that pane', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
