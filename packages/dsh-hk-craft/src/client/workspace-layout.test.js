@@ -250,7 +250,7 @@ test('splitting in one workspace never rewrites the other workspace layout', asy
   // Load both workspaces, then work in w1 only.
   controller.switchWorkspace('w2')
   controller.switchWorkspace('w1')
-  assert.equal(await controller.split('p1', 'row'), true)
+  assert.equal(await controller.budget.split('p1', 'row'), true)
   const w1 = controller.getSnapshot().layouts.w1
   assert.deepEqual(leaves(w1.root), ['p1', 'p3'])
   assert.deepEqual(controller.getSnapshot().layouts.w2, layouts.w2)
@@ -607,7 +607,7 @@ test('splitting a session mounted in another workspace focuses that workspace pa
   const { fake, controller } = readyController({ storage })
 
   controller.activate('s1')
-  assert.equal(await controller.split('p1', 'row', { sessionId: 's3' }), false)
+  assert.equal(await controller.budget.split('p1', 'row', { sessionId: 's3' }), false)
 
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.equal(controller.getSnapshot().activePaneId, 'p2')

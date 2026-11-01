@@ -211,14 +211,14 @@ function PaneShortcuts({ controller, workspaceId }) {
       if (action.kind === 'new') {
         event.preventDefault()
         event.stopPropagation()
-        runAttempt(controller.newInFocused(workspaceId ?? undefined))
+        runAttempt(controller.budget.newInFocused(workspaceId ?? undefined))
         return
       }
       const pane = controller.focusedPane()
       if (pane === null) return
       event.preventDefault()
       event.stopPropagation()
-      if (action.kind === 'split') runAttempt(controller.split(pane.paneId, action.dir))
+      if (action.kind === 'split') runAttempt(controller.budget.split(pane.paneId, action.dir))
       else if (action.kind === 'close') controller.close.request(pane.paneId)
     }
     document.addEventListener('keydown', onKeyDown, true)
@@ -281,7 +281,7 @@ function PaneEmptyState({ controller, workspaceId, visible, error = null, t }) {
   }, [controller, workspaceId, visible])
 
   const startNew = () => {
-    runAttempt(controller.newInFocused(workspaceId ?? undefined))
+    runAttempt(controller.budget.newInFocused(workspaceId ?? undefined))
   }
 
   return h(
@@ -660,8 +660,8 @@ function PaneSeparator({ controller, separator }) {
  * @returns {boolean}
  */
 function splitBlocked(controller, state, workspaceId, maxPanes) {
-  if (typeof controller?.splitBlock === 'function') {
-    return controller.splitBlock(workspaceId) === 'budget'
+  if (typeof controller?.budget?.splitBlock === 'function') {
+    return controller.budget.splitBlock(workspaceId) === 'budget'
   }
   return paneBudgetBlocked(state, maxPanes)
 }
@@ -765,7 +765,7 @@ function PaneStrip({
   const createEntry = () => {
     if (creating || splitBlocked(controller, state, workspaceId, maxPanes)) return
     setCreating(true)
-    Promise.resolve(controller.newPane())
+    Promise.resolve(controller.budget.newPane())
       .catch(() => {})
       .then(() => setCreating(false))
   }

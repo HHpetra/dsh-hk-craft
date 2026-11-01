@@ -467,7 +467,7 @@ function elementWhere(node, predicate) {
 function stripPlus(maxPanes) {
   const controller = {
     close: { request: () => {} },
-    newPane: () => {},
+    budget: { newPane: () => {} },
     focusPane: () => {},
     swapPanes: () => {},
   }
@@ -512,7 +512,7 @@ function stripWithRightbar({
 }) {
   const controller = {
     close: { request: () => {} },
-    newPane: () => {},
+    budget: { newPane: () => {} },
     focusPane: () => {},
     swapPanes: () => {},
     panel: { toggle, openTool },
@@ -638,7 +638,7 @@ test('an empty workspace explains a split-mode error', () => {
       controller: {
         watchConversations: () => () => {},
         recentConversations: async () => [],
-        newInFocused: () => {},
+        budget: { newInFocused: () => {} },
       },
       workspaceId: null,
       layout: { root: null, panes: {}, activePaneId: null },

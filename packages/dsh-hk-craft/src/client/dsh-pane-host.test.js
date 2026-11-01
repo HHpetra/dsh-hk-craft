@@ -586,7 +586,7 @@ test('a current session that no pane holds replaces the focused pane', async () 
 
 test('a current session that a pane already holds focuses that pane', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   const current = sessionCurrent()
   controller.attachSessionSelection(current)
   const retainsBefore = fake.calls.retain.length
@@ -713,7 +713,7 @@ async function readyController(options = {}) {
 test('splitting creates a new session beside the pane and moves the main view to it', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
 
-  assert.equal(await controller.split('p1', 'row'), true)
+  assert.equal(await controller.budget.split('p1', 'row'), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.root, {
@@ -743,7 +743,7 @@ test('splitting creates a new session beside the pane and moves the main view to
 
 test('focusing another pane releases the old main view and takes the new one', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   assert.equal(controller.focusPane('p1'), true)
 
@@ -758,7 +758,7 @@ test('focusing another pane releases the old main view and takes the new one', a
 
 test('closing a pane releases both of its references and promotes the sibling', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   assert.equal(controller.close.request('p2'), true)
 
@@ -774,8 +774,8 @@ test('closing a pane releases both of its references and promotes the sibling', 
 
 test('closing the focused pane of three moves focus and the main view to the neighbour', async () => {
   const { fake, controller } = await readyController({ created: ['s2', 's3'] })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'col')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'col')
 
   // row(p1, col(p2, p3)); p3 is focused and bottom-right.
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
@@ -942,7 +942,7 @@ test('replacing the focused session swaps its references and keeps the pane iden
 
 test('replacing with a session already open elsewhere focuses that pane instead of mounting twice', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   assert.equal(controller.replaceFocusedSession('s1'), true)
 
@@ -956,7 +956,7 @@ test('replacing with a session already open elsewhere focuses that pane instead 
 test('/clear in a focused pane creates a conversation and swaps it into that pane', async () => {
   const { fake, controller } = await readyController()
 
-  assert.equal(await controller.newInFocused('w1'), true)
+  assert.equal(await controller.budget.newInFocused('w1'), true)
 
   assert.deepEqual(fake.calls.create, [{ workspaceId: 'w1' }])
   assert.deepEqual(controller.getSnapshot().panes.p1, {
@@ -972,7 +972,7 @@ test('/clear with no pane creates the first pane instead of leaving the workspac
   const { fake, controller } = await readyController()
   controller.close.request('p1')
 
-  assert.equal(await controller.newInFocused('w1'), true)
+  assert.equal(await controller.budget.newInFocused('w1'), true)
   const activePaneId = controller.getSnapshot().activePaneId
   assert.equal(activePaneId, 'p2')
   assert.equal(controller.getSnapshot().panes[activePaneId].sessionId, 'created-1')
@@ -986,7 +986,7 @@ test('/clear is refused before split mode is active', async () => {
   controller.markRegistered()
 
   assert.equal(controller.getSnapshot().active, false)
-  assert.equal(await controller.newInFocused('w1'), false)
+  assert.equal(await controller.budget.newInFocused('w1'), false)
   assert.deepEqual(fake.calls.create, [])
   controller.dispose()
 })
@@ -994,7 +994,7 @@ test('/clear is refused before split mode is active', async () => {
 test('splitting with an explicit session opens it without creating a new one', async () => {
   const { fake, controller } = await readyController()
 
-  assert.equal(await controller.split('p1', 'col', { sessionId: 's9' }), true)
+  assert.equal(await controller.budget.split('p1', 'col', { sessionId: 's9' }), true)
 
   assert.deepEqual(fake.calls.create, [])
   assert.deepEqual(controller.getSnapshot().panes.p2, { paneId: 'p2', sessionId: 's9', view: 'chat' })
@@ -1005,9 +1005,9 @@ test('splitting with an explicit session opens it without creating a new one', a
 
 test('splitting with a session that is already open focuses its pane and adds no pane', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
-  assert.equal(await controller.split('p2', 'row', { sessionId: 's1' }), false)
+  assert.equal(await controller.budget.split('p2', 'row', { sessionId: 's1' }), false)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
   assert.deepEqual(fake.calls.create, [{ workspaceId: 'w1' }])
@@ -1017,7 +1017,7 @@ test('splitting with a session that is already open focuses its pane and adds no
 test('a split whose new session cannot be retained is aborted, not half-built', async () => {
   const { fake, controller } = await readyController({ created: ['s2'], retainFailsFor: { s2: true } })
 
-  assert.equal(await controller.split('p1', 'row'), false)
+  assert.equal(await controller.budget.split('p1', 'row'), false)
 
   assert.deepEqual(controller.getSnapshot().root, { kind: 'leaf', paneId: 'p1' })
   assert.deepEqual(Object.keys(controller.getSnapshot().panes), ['p1'])
@@ -1030,7 +1030,7 @@ test('a split whose new session cannot be retained is aborted, not half-built', 
 test('a split without a resolvable workspace reports an error and adds no pane', async () => {
   const { fake, controller } = await readyController({ workspaces: [] })
 
-  assert.equal(await controller.split('p1', 'row'), false)
+  assert.equal(await controller.budget.split('p1', 'row'), false)
 
   assert.deepEqual(fake.calls.create, [])
   assert.deepEqual(Object.keys(controller.getSnapshot().panes), ['p1'])
@@ -1040,7 +1040,7 @@ test('a split without a resolvable workspace reports an error and adds no pane',
 
 test('a view change drives only that pane and keeps the layout a pure update', async () => {
   const { controller, viewSwitch } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   assert.equal(controller.setView('p1', 'trajectory'), true)
   assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
@@ -1061,7 +1061,7 @@ test('a view change drives only that pane and keeps the layout a pure update', a
 
 test('switching a pane view never re-retains its session or touches the tree', async () => {
   const { fake, controller, viewSwitch } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   const reference = controller.paneReference('p1')
   const retained = fake.calls.retain.length
   const rootBefore = controller.getSnapshot().root
@@ -1104,7 +1104,7 @@ test('a failed View activation keeps the remembered view and surfaces the error'
 
 test('mounting a pane re-asserts its remembered view on that session binding', async () => {
   const { controller, viewSwitch } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   controller.setView('p1', 'trajectory')
   viewSwitch.calls.length = 0
 
@@ -1136,7 +1136,7 @@ test('re-enabling developer tools re-applies the pane trajectory memory', async 
 
 test('another panel does not leave split mode; activate keeps the focused pane', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   const layoutBefore = controller.getSnapshot()
 
   fake.setPanel('settings')
@@ -1159,7 +1159,7 @@ test('another panel does not leave split mode; activate keeps the focused pane',
 
 test('an external panel change keeps the layout and the pane references', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   fake.setPanel(null)
 
@@ -1173,7 +1173,7 @@ test('an external panel change keeps the layout and the pane references', async 
 
 test('every pane exposes its retained reference for rendering', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   assert.equal(controller.paneReference('p1').sessionId, 's1')
   assert.equal(controller.paneReference('p2').sessionId, 's2')
@@ -1185,8 +1185,8 @@ test('every pane exposes its retained reference for rendering', async () => {
 
 test('dispose releases every pane reference in a multi-pane layout', async () => {
   const { fake, controller } = await readyController({ created: ['s2', 's3'] })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'col')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'col')
 
   controller.dispose()
 
@@ -1197,7 +1197,7 @@ test('dispose releases every pane reference in a multi-pane layout', async () =>
 
 test('closing a pane by its session is how the conversation fallbacks escape', async () => {
   const { controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   assert.equal(controller.close.bySession('s1'), true)
   assert.deepEqual(Object.keys(controller.getSnapshot().panes), ['p2'])
@@ -1213,7 +1213,7 @@ test('/clear can open the first pane from the empty state without a session', as
   assert.equal(controller.activate(), true)
   assert.equal(controller.getSnapshot().root, null)
 
-  assert.equal(await controller.newInFocused(), true)
+  assert.equal(await controller.budget.newInFocused(), true)
 
   assert.deepEqual(fake.calls.create, [{ workspaceId: 'w1' }])
   assert.equal(controller.getSnapshot().activePaneId, 'p9')
@@ -1262,8 +1262,8 @@ test('switching workspace dismisses the staged close of the workspace being left
 
 test('focusPaneAt focuses the strip position, using the strip projection', async () => {
   const { controller } = await readyController({ created: ['s2', 's3'] })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'col')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'col')
 
   // row(p1, col(p2, p3)): p3 is focused.
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
@@ -1282,7 +1282,7 @@ test('focusPaneAt focuses the strip position, using the strip projection', async
 test('+ splits the focused pane 50/50 and gives it the new conversation', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
 
-  assert.equal(await controller.newPane(), true)
+  assert.equal(await controller.budget.newPane(), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.root, {
@@ -1303,11 +1303,11 @@ test('+ evens the row by pane count and drops a dragged ratio', async () => {
     created: ['s2', 's3', 's4'],
     paneIds: ['p1', 'p2', 'p3', 'p4'],
   })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   assert.equal(controller.resize([], 0.7), true)
-  await controller.split('p2', 'row')
+  await controller.budget.split('p2', 'row')
 
-  assert.equal(await controller.newPane(), true)
+  assert.equal(await controller.budget.newPane(), true)
 
   const state = controller.getSnapshot()
   assert.equal(state.root.ratio, 1 / 4)
@@ -1346,21 +1346,21 @@ test('the default four-pane budget refuses a fifth pane and frees up after a clo
     created: ['s2', 's3', 's4', 's5'],
     paneIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
-  await controller.split('p3', 'row')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
+  await controller.budget.split('p3', 'row')
 
   assert.equal(controller.getSnapshot().maxPanes, 4)
-  assert.equal(controller.splitBlock(), 'budget')
+  assert.equal(controller.budget.splitBlock(), 'budget')
   const creates = fake.calls.create.length
-  assert.equal(await controller.newPane(), false)
-  assert.equal(await controller.split('p2', 'row'), false)
+  assert.equal(await controller.budget.newPane(), false)
+  assert.equal(await controller.budget.split('p2', 'row'), false)
   assert.equal(fake.calls.create.length, creates)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 4)
 
   assert.equal(controller.close.request('p4'), true)
-  assert.equal(controller.splitBlock(), undefined)
-  assert.equal(await controller.newPane(), true)
+  assert.equal(controller.budget.splitBlock(), undefined)
+  assert.equal(await controller.budget.newPane(), true)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 4)
   controller.dispose()
 })
@@ -1370,14 +1370,14 @@ test('a limit of 0 removes the pane budget', async () => {
     created: ['s2', 's3', 's4', 's5'],
     paneIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
-  await controller.split('p3', 'row')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
+  await controller.budget.split('p3', 'row')
 
-  assert.equal(controller.setMaxPanes(0), 0)
+  assert.equal(controller.budget.setMaxPanes(0), 0)
   assert.equal(controller.getSnapshot().maxPanes, 0)
-  assert.equal(controller.splitBlock(), undefined)
-  assert.equal(await controller.newPane(), true)
+  assert.equal(controller.budget.splitBlock(), undefined)
+  assert.equal(await controller.budget.newPane(), true)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 5)
   controller.dispose()
 })
@@ -1386,7 +1386,7 @@ test('the pane limit persists in the settings key and is re-read by a new contro
   const storage = memoryStorage()
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, workspaces: WORKSPACE })
   const first = createPaneController(fake.ctx, { storage, nextPaneId: () => 'p1' })
-  first.setMaxPanes(2)
+  first.budget.setMaxPanes(2)
 
   const raw = storage.getItem(PANE_SETTINGS_KEY)
   assert.deepEqual(JSON.parse(raw), { version: PANE_SETTINGS_VERSION, maxPanes: 2 })
@@ -1402,17 +1402,17 @@ test('an invalid pane limit falls back to the default and lowering it never clos
     created: ['s2', 's3'],
     paneIds: ['p1', 'p2', 'p3'],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
 
-  assert.equal(controller.setMaxPanes(-3), 4)
-  assert.equal(controller.setMaxPanes(1.5), 4)
-  assert.equal(controller.setMaxPanes('four'), 4)
+  assert.equal(controller.budget.setMaxPanes(-3), 4)
+  assert.equal(controller.budget.setMaxPanes(1.5), 4)
+  assert.equal(controller.budget.setMaxPanes('four'), 4)
   assert.equal(controller.getSnapshot().maxPanes, 4)
 
-  assert.equal(controller.setMaxPanes(2), 2)
+  assert.equal(controller.budget.setMaxPanes(2), 2)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 3)
-  assert.equal(controller.splitBlock(), 'budget')
+  assert.equal(controller.budget.splitBlock(), 'budget')
   controller.dispose()
 })
 
@@ -1422,20 +1422,20 @@ test('a session already open is focused when the pane budget is spent', async ()
     paneIds: ['p1', 'p2', 'p3', 'p4'],
     workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2', 's3', 's4'] }],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
-  await controller.split('p3', 'row')
-  assert.equal(controller.splitBlock(), 'budget')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
+  await controller.budget.split('p3', 'row')
+  assert.equal(controller.budget.splitBlock(), 'budget')
   assert.equal(controller.getSnapshot().activePaneId, 'p4')
 
   const creates = fake.calls.create.length
   assert.equal(controller.focusPane('p1'), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
 
-  assert.equal(await controller.openInNewPane('s2'), false)
+  assert.equal(await controller.budget.openInNewPane('s2'), false)
   assert.equal(controller.getSnapshot().activePaneId, 'p2')
 
-  assert.equal(await controller.split('p4', 'row', { sessionId: 's1' }), false)
+  assert.equal(await controller.budget.split('p4', 'row', { sessionId: 's1' }), false)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 4)
   assert.equal(fake.calls.create.length, creates)
@@ -1448,17 +1448,17 @@ test('an empty workspace opens its first pane without spending the split budget'
     paneIds: ['p1', 'p2', 'p3'],
   })
   assert.equal(controller.close.request('p1'), true)
-  assert.equal(controller.setMaxPanes(1), 1)
-  assert.equal(controller.splitBlock(), undefined)
+  assert.equal(controller.budget.setMaxPanes(1), 1)
+  assert.equal(controller.budget.splitBlock(), undefined)
 
-  assert.equal(await controller.newPane(), true)
+  assert.equal(await controller.budget.newPane(), true)
 
   const state = controller.getSnapshot()
   assert.equal(state.root.kind, 'leaf')
   assert.equal(Object.keys(state.panes).length, 1)
-  assert.equal(controller.splitBlock(), 'budget')
+  assert.equal(controller.budget.splitBlock(), 'budget')
   const creates = fake.calls.create.length
-  assert.equal(await controller.newPane(), false)
+  assert.equal(await controller.budget.newPane(), false)
   assert.equal(fake.calls.create.length, creates)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
   controller.dispose()
@@ -1473,25 +1473,25 @@ test('each workspace spends its own pane budget', async () => {
       { workspaceId: 'w2', sessionIds: ['s5', 's6'] },
     ],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
-  await controller.split('p3', 'row')
-  assert.equal(controller.splitBlock('w1'), 'budget')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
+  await controller.budget.split('p3', 'row')
+  assert.equal(controller.budget.splitBlock('w1'), 'budget')
 
   assert.equal(controller.switchWorkspace('w2'), true)
-  assert.equal(controller.splitBlock(), undefined)
-  assert.equal(controller.splitBlock('w1'), 'budget')
+  assert.equal(controller.budget.splitBlock(), undefined)
+  assert.equal(controller.budget.splitBlock('w1'), 'budget')
 
-  assert.equal(await controller.newPane(), true)
+  assert.equal(await controller.budget.newPane(), true)
   assert.equal(controller.getSnapshot().root.kind, 'leaf')
-  assert.equal(await controller.newPane(), true)
+  assert.equal(await controller.budget.newPane(), true)
   assert.equal(controller.getSnapshot().root.dir, 'row')
   assert.equal(controller.getSnapshot().root.ratio, 0.5)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
   assert.equal(Object.keys(controller.getSnapshot().layouts.w1.panes).length, 4)
 
   const creates = fake.calls.create.length
-  assert.equal(await controller.split('p1', 'row'), false)
+  assert.equal(await controller.budget.split('p1', 'row'), false)
   assert.equal(fake.calls.create.length, creates)
   assert.equal(Object.keys(controller.getSnapshot().layouts.w1.panes).length, 4)
   controller.dispose()
@@ -1502,13 +1502,13 @@ test('overlapping splits cannot create a pane past the cap', async () => {
     created: ['s2', 's3', 's4'],
     paneIds: ['p1', 'p2', 'p3', 'p4'],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
 
   const creates = fake.calls.create.length
-  const first = controller.newPane()
-  assert.equal(controller.splitBlock(), 'budget')
-  const second = controller.newPane()
+  const first = controller.budget.newPane()
+  assert.equal(controller.budget.splitBlock(), 'budget')
+  const second = controller.budget.newPane()
 
   assert.equal(await first, true)
   assert.equal(await second, false)
@@ -1522,14 +1522,14 @@ test('overlapping splits still fill every remaining slot under the cap', async (
     created: ['s2', 's3', 's4'],
     paneIds: ['p1', 'p2', 'p3', 'p4'],
   })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   const creates = fake.calls.create.length
-  const first = controller.newPane()
-  assert.equal(controller.splitBlock(), undefined)
-  const second = controller.newPane()
-  assert.equal(controller.splitBlock(), 'budget')
-  const third = controller.newPane()
+  const first = controller.budget.newPane()
+  assert.equal(controller.budget.splitBlock(), undefined)
+  const second = controller.budget.newPane()
+  assert.equal(controller.budget.splitBlock(), 'budget')
+  const third = controller.budget.newPane()
 
   assert.equal(await first, true)
   assert.equal(await second, true)
@@ -1544,7 +1544,7 @@ test('a split that already cleared the budget still lands when the cap drops whi
     created: ['s2', 's3'],
     paneIds: ['p1', 'p2', 'p3'],
   })
-  assert.equal(controller.setMaxPanes(2), 2)
+  assert.equal(controller.budget.setMaxPanes(2), 2)
 
   const attempted = []
   const originalCreate = fake.ctx.sessions.create.bind(fake.ctx.sessions)
@@ -1558,13 +1558,13 @@ test('a split that already cleared the budget still lands when the cap drops whi
     })
   }
 
-  const first = controller.newPane()
-  assert.equal(controller.splitBlock(), 'budget')
-  assert.equal(controller.setMaxPanes(1), 1)
+  const first = controller.budget.newPane()
+  assert.equal(controller.budget.splitBlock(), 'budget')
+  assert.equal(controller.budget.setMaxPanes(1), 1)
   assert.equal(controller.getSnapshot().maxPanes, 1)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
 
-  const second = controller.newPane()
+  const second = controller.budget.newPane()
   assert.equal(await second, false)
   assert.equal(attempted.length, 1)
   assert.equal(fake.calls.create.length, 0)
@@ -1574,7 +1574,7 @@ test('a split that already cleared the budget still lands when the cap drops whi
   assert.equal(await first, true)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
   assert.equal(controller.getSnapshot().panes.p2.sessionId, 's2')
-  assert.equal(controller.splitBlock(), 'budget')
+  assert.equal(controller.budget.splitBlock(), 'budget')
   assert.equal(attempted.length, 1)
   assert.equal(fake.calls.create.length, 1)
   controller.dispose()
@@ -1598,9 +1598,9 @@ test('a second new conversation is ignored while an empty workspace is still ope
     })
   }
 
-  const opening = controller.newPane()
-  const againByPane = controller.newPane()
-  const againByFocused = controller.newInFocused('w1')
+  const opening = controller.budget.newPane()
+  const againByPane = controller.budget.newPane()
+  const againByFocused = controller.budget.newInFocused('w1')
 
   assert.equal(attempted.length, 1)
   assert.equal(fake.calls.create.length, 0)
@@ -1620,14 +1620,14 @@ test('a second new conversation is ignored while an empty workspace is still ope
   assert.equal(opened.panes.p2.sessionId, 's2')
   assert.equal(opened.activePaneId, 'p2')
 
-  await controller.newInFocused('w1')
+  await controller.budget.newInFocused('w1')
   const replaced = controller.getSnapshot()
   assert.equal(Object.keys(replaced.panes).length, 1)
   assert.equal(fake.calls.create.length, 2)
   assert.deepEqual(replaced.root, { kind: 'leaf', paneId: 'p2' })
   assert.equal(replaced.panes.p2.sessionId, 's3')
 
-  await controller.newPane()
+  await controller.budget.newPane()
   const split = controller.getSnapshot()
   assert.equal(Object.keys(split.panes).length, 2)
   assert.equal(fake.calls.create.length, 3)
@@ -1658,7 +1658,7 @@ test('an empty workspace\'s first session lands in that workspace only while it 
       releaseReplaced = () => replacedCreate(options).then(resolve, reject)
     })
 
-  const openingReplaced = replaced.controller.newInFocused('w1')
+  const openingReplaced = replaced.controller.budget.newInFocused('w1')
   assert.equal(replaced.controller.activate('s1'), true)
   const waitingReplaced = replaced.controller.getSnapshot()
   assert.equal(waitingReplaced.workspaceId, 'w1')
@@ -1707,7 +1707,7 @@ test('an empty workspace\'s first session lands in that workspace only while it 
       releaseSwitched = () => switchedCreate(options).then(resolve, reject)
     })
 
-  const openingSwitched = switched.controller.newPane()
+  const openingSwitched = switched.controller.budget.newPane()
   assert.equal(switched.controller.switchWorkspace('w2'), true)
   const waitingSwitched = switched.controller.getSnapshot()
   assert.equal(waitingSwitched.workspaceId, 'w2')
@@ -1750,21 +1750,21 @@ test('a refused open in a new pane does not switch into the full workspace', asy
       { workspaceId: 'w2', sessionIds: ['s5'] },
     ],
   })
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
-  await controller.split('p3', 'row')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
+  await controller.budget.split('p3', 'row')
   assert.equal(controller.switchWorkspace('w2'), true)
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
 
   const creates = fake.calls.create.length
-  assert.equal(await controller.openInNewPane('s9'), false)
+  assert.equal(await controller.budget.openInNewPane('s9'), false)
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.match(controller.getSnapshot().error, /pane limit/)
   assert.equal(Object.keys(controller.getSnapshot().layouts.w1.panes).length, 4)
   assert.equal(fake.calls.create.length, creates)
 
   // An already-mounted session still focuses, including the workspace switch.
-  assert.equal(await controller.openInNewPane('s2'), false)
+  assert.equal(await controller.budget.openInNewPane('s2'), false)
   assert.equal(controller.getSnapshot().workspaceId, 'w1')
   assert.equal(controller.getSnapshot().activePaneId, 'p2')
   assert.equal(fake.calls.create.length, creates)
@@ -1801,10 +1801,10 @@ test('a restored layout wider than the cap stays operable and cannot grow', asyn
   assert.equal(controller.getSnapshot().root.b.dir, 'col')
   assert.equal(controller.getSnapshot().root.b.ratio, 0.4)
   assert.equal(controller.getSnapshot().root.ratio, 0.7)
-  assert.equal(controller.splitBlock(), 'budget')
+  assert.equal(controller.budget.splitBlock(), 'budget')
 
   const creates = fake.calls.create.length
-  assert.equal(await controller.newPane(), false)
+  assert.equal(await controller.budget.newPane(), false)
   assert.equal(fake.calls.create.length, creates)
   assert.deepEqual(leaves(controller.getSnapshot().root), ['p1', 'p2', 'p3', 'p4', 'p5'])
   controller.dispose()
@@ -1833,30 +1833,30 @@ test('a failed settings write keeps the in-memory cap and reports the failure', 
   })
   controller.markRegistered()
   controller.activate('s1')
-  await controller.split('p1', 'row')
-  await controller.split('p2', 'row')
+  await controller.budget.split('p1', 'row')
+  await controller.budget.split('p2', 'row')
 
-  assert.equal(controller.setMaxPanes(2), 2)
+  assert.equal(controller.budget.setMaxPanes(2), 2)
   assert.equal(controller.getSnapshot().maxPanes, 2)
   assert.equal(controller.getSnapshot().maxPanesError, 'quota')
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 3)
-  assert.equal(controller.splitBlock(), 'budget')
+  assert.equal(controller.budget.splitBlock(), 'budget')
   const creates = fake.calls.create.length
-  assert.equal(await controller.newPane(), false)
+  assert.equal(await controller.budget.newPane(), false)
   assert.equal(fake.calls.create.length, creates)
 
   const unread = createPaneController(fake.ctx, { storage, nextPaneId: () => 'p9' })
   assert.equal(unread.getSnapshot().maxPanes, 4)
 
   fail = false
-  assert.equal(controller.setMaxPanes(3), 3)
+  assert.equal(controller.budget.setMaxPanes(3), 3)
   assert.equal(controller.getSnapshot().maxPanesError, null)
   const reread = createPaneController(fake.ctx, { storage, nextPaneId: () => 'p9' })
   assert.equal(reread.getSnapshot().maxPanes, 3)
 
   const missing = { getItem: () => null }
   const bare = createPaneController(fake.ctx, { storage: missing, nextPaneId: () => 'p1' })
-  assert.equal(bare.setMaxPanes(6), 6)
+  assert.equal(bare.budget.setMaxPanes(6), 6)
   assert.equal(bare.getSnapshot().maxPanes, 6)
   assert.equal(bare.getSnapshot().maxPanesError, '')
 
@@ -1874,7 +1874,7 @@ test('+ aborts instead of writing a pane when the controller is disposed mid-cre
       resolveCreate = resolve
     })
 
-  const pending = controller.newPane()
+  const pending = controller.budget.newPane()
   controller.dispose()
   resolveCreate('s9')
 
@@ -1886,7 +1886,7 @@ test('+ from the empty state opens the first pane instead of doing nothing', asy
   const { fake, controller } = await readyController({ created: ['s2'] })
   controller.close.request('p1')
 
-  assert.equal(await controller.newPane(), true)
+  assert.equal(await controller.budget.newPane(), true)
 
   const activePaneId = controller.getSnapshot().activePaneId
   assert.equal(activePaneId, 'p2')
@@ -1897,7 +1897,7 @@ test('+ from the empty state opens the first pane instead of doing nothing', asy
 
 test('paneIndexOf reports the strip position used by the /resume badge', async () => {
   const { controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   // row(p1, p2): p1 is position 1, p2 position 2.
   assert.equal(controller.paneIndexOf('s1'), 1)
@@ -1910,7 +1910,7 @@ test('paneIndexOf reports the strip position used by the /resume badge', async (
 test('Ctrl+Enter opens a chosen conversation in a new pane beside the focused one', async () => {
   const { fake, controller } = await readyController()
 
-  assert.equal(await controller.openInNewPane('s9'), true)
+  assert.equal(await controller.budget.openInNewPane('s9'), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.root.a, { kind: 'leaf', paneId: 'p1' })
@@ -1924,10 +1924,10 @@ test('Ctrl+Enter opens a chosen conversation in a new pane beside the focused on
 
 test('Ctrl+Enter on a conversation already open focuses its pane instead of duplicating it', async () => {
   const { controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   assert.equal(controller.getSnapshot().activePaneId, 'p2')
 
-  assert.equal(await controller.openInNewPane('s1'), false)
+  assert.equal(await controller.budget.openInNewPane('s1'), false)
 
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
@@ -1940,7 +1940,7 @@ test('Ctrl+Enter on a conversation already open focuses its pane instead of dupl
 
 test('swapping two panes exchanges sessions and views, keeping the tree and the focus', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   assert.equal(controller.setView('p1', 'trajectory'), true)
   const rootBefore = controller.getSnapshot().root
 
@@ -1963,7 +1963,7 @@ test('swapping two panes exchanges sessions and views, keeping the tree and the 
 
 test('a swap acquires both pane references before releasing either session', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
 
   // Record every retain/release from now on, including the releases of the
   // references the split created above.
@@ -1997,7 +1997,7 @@ test('a swap acquires both pane references before releasing either session', asy
 
 test('swapping a pane with itself or an unknown pane is a no-op', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  await controller.split('p1', 'row')
+  await controller.budget.split('p1', 'row')
   const before = controller.getSnapshot()
   const retains = fake.calls.retain.length
 
@@ -2020,7 +2020,7 @@ test('swapping panes of two different workspaces is refused', async () => {
   const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
   controller.markRegistered()
   controller.activate('s1')
-  assert.equal(await controller.newInFocused('w2'), true)
+  assert.equal(await controller.budget.newInFocused('w2'), true)
   assert.deepEqual(Object.keys(controller.getSnapshot().layouts).sort(), ['w1', 'w2'])
 
   const before = controller.getSnapshot()

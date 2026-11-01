@@ -272,9 +272,11 @@ test('every subagent label the seat paints exists in both dictionaries', () => {
 test('picking a navigable child opens it in a pane while external rows stay inert', () => {
   const opened = []
   const controller = {
-    openInNewPane(sessionId) {
-      opened.push(sessionId)
-      return { catch() {} }
+    budget: {
+      openInNewPane(sessionId) {
+        opened.push(sessionId)
+        return { catch() {} }
+      },
     },
   }
 

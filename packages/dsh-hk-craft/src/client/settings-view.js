@@ -187,9 +187,9 @@ function parseMaxPanesDraft(draft) {
 function saveMaxPanes(controller, draft) {
   const value = parseMaxPanesDraft(draft)
   if (value === null) return { ok: false, reason: 'invalid' }
-  if (typeof controller?.setMaxPanes !== 'function') return { ok: false, reason: 'unsupported' }
+  if (typeof controller?.budget?.setMaxPanes !== 'function') return { ok: false, reason: 'unsupported' }
   try {
-    const applied = controller.setMaxPanes(value)
+    const applied = controller.budget.setMaxPanes(value)
     const snap = typeof controller.getSnapshot === 'function' ? controller.getSnapshot() : null
     if (snap !== null && snap !== undefined && typeof snap.maxPanesError === 'string') {
       return { ok: false, reason: 'error', message: snap.maxPanesError }

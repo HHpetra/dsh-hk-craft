@@ -98,10 +98,12 @@ function fakeController(options = {}) {
     refreshProbe() {
       calls.refreshProbe += 1
     },
-    setMaxPanes(value) {
-      calls.setMaxPanes.push(value)
-      snapshot = { ...snapshot, maxPanes: value }
-      return value
+    budget: {
+      setMaxPanes(value) {
+        calls.setMaxPanes.push(value)
+        snapshot = { ...snapshot, maxPanes: value }
+        return value
+      },
     },
   }
 }
@@ -186,8 +188,10 @@ test('saving the pane limit reports invalid input and controller failures withou
   assert.deepEqual(saveMaxPanes({}, '2'), { ok: false, reason: 'unsupported' })
 
   const exploding = {
-    setMaxPanes() {
-      throw new Error('store exploded')
+    budget: {
+      setMaxPanes() {
+        throw new Error('store exploded')
+      },
     },
   }
   assert.deepEqual(saveMaxPanes(exploding, '2'), {
@@ -200,9 +204,11 @@ test('saving the pane limit reports invalid input and controller failures withou
   let writeError = 'quota'
   const unstored = {
     getSnapshot: () => failed,
-    setMaxPanes(value) {
-      failed = { maxPanes: value, maxPanesError: writeError }
-      return value
+    budget: {
+      setMaxPanes(value) {
+        failed = { maxPanes: value, maxPanesError: writeError }
+        return value
+      },
     },
   }
   assert.deepEqual(saveMaxPanes(unstored, '6'), { ok: false, reason: 'error', message: 'quota' })

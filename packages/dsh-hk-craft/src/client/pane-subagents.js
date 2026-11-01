@@ -183,11 +183,11 @@ function requestCatalogRefresh(refreshCatalog, sessionId) {
  */
 function openSubagentInPane(controller, row) {
   if (row === null || row === undefined || row.navigable !== true) return false
-  if (typeof controller?.openInNewPane !== 'function') return false
+  if (typeof controller?.budget?.openInNewPane !== 'function') return false
   try {
     // A direct child is just a Session id here: `sessions.retain` derives the
     // subagent address from the parent catalog (upstream contracts).
-    const attempt = controller.openInNewPane(row.id)
+    const attempt = controller.budget.openInNewPane(row.id)
     if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
       attempt.catch(() => {})
     }

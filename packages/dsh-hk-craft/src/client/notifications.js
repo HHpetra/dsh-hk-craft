@@ -504,10 +504,10 @@ function createNotifier(options) {
     }
     try {
       const paneActive = controller?.getSnapshot?.()?.active === true
-      if (paneActive && typeof controller?.openInNewPane === 'function') {
+      if (paneActive && typeof controller?.budget?.openInNewPane === 'function') {
         // Already-open sessions are focused; a new pane is capped like any
         // other split. A refusal leaves the shell where it is.
-        Promise.resolve(controller.openInNewPane(sessionId)).catch(() => {})
+        Promise.resolve(controller.budget.openInNewPane(sessionId)).catch(() => {})
         return
       }
     } catch (_error) {

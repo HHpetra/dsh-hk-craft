@@ -512,9 +512,11 @@ test('clicking a toast in pane mode opens the session in a pane', () => {
     byId: { s1: { title: 'S' } },
     controller: {
       getSnapshot: () => ({ active: true }),
-      openInNewPane(sessionId) {
-        opened.push(sessionId)
-        return Promise.resolve(true)
+      budget: {
+        openInNewPane(sessionId) {
+          opened.push(sessionId)
+          return Promise.resolve(true)
+        },
       },
     },
   })
