@@ -231,7 +231,10 @@ function subscribeList(list, listener) {
  * Persistence and the per-workspace registry live in `pane-layouts.js`; every
  * change writes `dsh.hkcraft.layout.v1.<workspaceId>` (best-effort), and a
  * workspace's layout is read back from that key the first time the workspace is
- * shown. Panes whose session is gone are dropped at restore time, and the prune
+ * shown. The visible workspace id is remembered separately
+ * (`dsh.hkcraft.active-workspace.v1`), so a plugin reload or restart restores
+ * the tree that was on screen instead of dsh's native selection (ADR-0020).
+ * Panes whose session is gone are dropped at restore time, and the prune
  * re-runs if the catalog was still loading when the layout was first read.
  *
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
@@ -320,6 +323,12 @@ function createPaneController(ctx, options = {}) {
    */
   let bootOwned = true
   let bootSettled = false
+  /**
+   * The first activation restored a pane this plugin had persisted. That tree
+   * is the view the user was looking at, so boot settlement must not move the
+   * focus to a different (older) conversation the shell still calls current.
+   */
+  let bootRestored = false
   /**
    * The native right bar, which owns its own state and snapshot fields
    * (`pane-panel.js`). Created below, once `emit` exists, because the panel
@@ -965,7 +974,24 @@ function createPaneController(ctx, options = {}) {
     if (bootSettled || disposed || !registered || !snapshot.active) return
     const catalog = catalogNow()
     if (catalog.complete() !== true) return
-    const active = book.getActiveWorkspaceId()
+    let active = book.getActiveWorkspaceId()
+    // A workspace the ready catalog no longer lists is gone, even if its stored
+    // tree survived (deleted outside this plugin). Drop it instead of keeping a
+    // hidden pane retained under a host id that does not exist.
+    if (typeof active === 'string' && active !== '' && catalog.workspace(active) === undefined) {
+      book.forget(active)
+      releaseOrphanedPanes()
+      book.setActiveWorkspace(null)
+      active = null
+      bootOwned = true
+    } else if (bootRestored && focusedPane() !== null) {
+      // A restored tree is the view the user was looking at. Keep its focus even
+      // when the conversation is still blank: dsh's current can name an older
+      // native selection, and replacing the blank one is the same jump the
+      // running/idle guard prevents elsewhere.
+      bootSettled = true
+      return
+    }
     const target = bootOwned ? bootWorkspaceId(catalog, active) : active
     if (typeof target !== 'string' || target === '') return
     // Set before opening. Retaining the conversation notifies the session
@@ -1265,6 +1291,40 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
+  /**
+   * The workspace a fresh controller should restore before it reads the shell's
+   * current session.
+   *
+   * The per-workspace layout keys cannot say which tree was visible, so the
+   * view layer remembers the id (`layout-store.js`). It is only a hint: a
+   * workspace the ready catalog no longer lists, or one whose layout key went
+   * away with a delete, is ignored and the shell's current session decides.
+   *
+   * @returns {string|null}
+   */
+  function rememberedWorkspaceId() {
+    const remembered = book.getActiveWorkspaceId()
+    if (typeof remembered !== 'string' || remembered === '') return null
+    const catalog = catalogNow()
+    if (catalog.complete() && catalog.workspace(remembered) === undefined) return null
+    if (!book.hasWorkspace(remembered) && !hasLayoutKey(storage, remembered)) return null
+    return remembered
+  }
+
+  /**
+   * The focused pane's session in one loaded layout, or undefined when the
+   * tree is empty.
+   *
+   * @param {string} workspaceId
+   * @returns {string|undefined}
+   */
+  function focusedSessionOf(workspaceId) {
+    const layout = book.layoutOf(workspaceId)
+    if (layout.activePaneId === null) return undefined
+    const pane = layout.panes[layout.activePaneId]
+    return pane === undefined ? undefined : pane.sessionId
+  }
+
   const face = {
     getSnapshot: () => snapshot,
     subscribe(listener) {
@@ -1316,10 +1376,13 @@ function createPaneController(ctx, options = {}) {
     /**
      * Enter or restore split mode for the workspace the target session belongs to.
      *
-     * Omitted `sessionId` means "the session dsh currently treats as the
-     * conversation". With panes already open in that workspace, a known session
-     * focuses its pane and an unknown one replaces the focused pane's content.
-     * A session of another workspace switches the visible workspace first.
+     * Omitted `sessionId` restores the tree this plugin persisted. A plugin
+     * reload or restart must show the conversation that was on screen; dsh's
+     * current can still name an older native selection, so it is only the
+     * fallback for a workspace with no restored pane. With panes already open,
+     * a known session focuses its pane and an unknown one replaces the focused
+     * pane's content. A session of another workspace switches the visible
+     * workspace first.
      *
      * This never calls `layout.selectPanel`. The conversation cell is shadowed,
      * so `activePanelId` stays null. A failure still leaves split mode active
@@ -1334,13 +1397,36 @@ function createPaneController(ctx, options = {}) {
         emit({ error: 'pane main entry is not registered yet' })
         return false
       }
-      if (typeof sessionId === 'string' && sessionId !== '') bootOwned = false
+      const explicit = typeof sessionId === 'string' && sessionId !== ''
+      if (explicit) bootOwned = false
       ensureCatalogSubscription()
       refreshProbe()
       pruneLoadedWorkspaces()
-      const target = sessionId ?? catalogNow().current()
-      const targetWorkspace =
-        target === undefined ? focusedWorkspaceId() : (workspaceOf(target) ?? focusedWorkspaceId())
+
+      let target
+      let targetWorkspace
+      let fallbackTarget
+      if (explicit) {
+        target = sessionId
+        targetWorkspace = workspaceOf(target) ?? focusedWorkspaceId()
+      } else {
+        // Restore the workspace this plugin itself persisted before following
+        // the shell's current. A plugin reload builds a new controller while
+        // dsh still points current at the native selection from before the
+        // split view; that older conversation is not what the panes were
+        // showing.
+        const remembered = rememberedWorkspaceId()
+        if (remembered !== null) {
+          targetWorkspace = remembered
+        } else {
+          fallbackTarget = catalogNow().current()
+          targetWorkspace =
+            fallbackTarget === undefined
+              ? focusedWorkspaceId()
+              : (workspaceOf(fallbackTarget) ?? focusedWorkspaceId())
+        }
+      }
+
       if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
         if (!ensureWorkspace(targetWorkspace)) {
           emit({
@@ -1351,6 +1437,23 @@ function createPaneController(ctx, options = {}) {
           return false
         }
         book.setActiveWorkspace(targetWorkspace)
+        if (!explicit) {
+          // The restored focused pane is the view the user was looking at, even
+          // when the workspace was picked from the shell's current. An empty
+          // tree leaves the target open for the boot settlement (a remembered
+          // empty workspace must not get another workspace's session).
+          const restored = focusedSessionOf(targetWorkspace)
+          if (restored !== undefined) {
+            target = restored
+            bootOwned = false
+            bootRestored = true
+          } else if (fallbackTarget !== undefined) {
+            target = fallbackTarget
+          }
+        }
+      }
+      if (target === undefined && (typeof targetWorkspace !== 'string' || targetWorkspace === '')) {
+        target = catalogNow().current()
       }
 
       const current = book.activeLayout()

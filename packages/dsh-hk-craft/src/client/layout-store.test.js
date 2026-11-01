@@ -6,11 +6,15 @@ const assert = require('node:assert/strict')
 const {
   LAYOUT_KEY_PREFIX,
   LAYOUT_PAYLOAD_VERSION,
+  ACTIVE_WORKSPACE_KEY,
   layoutKey,
   emptyLayout,
   encodeLayout,
   decodeLayout,
   hasLayoutKey,
+  readActiveWorkspace,
+  writeActiveWorkspace,
+  clearActiveWorkspace,
   readLayout,
   writeLayout,
   removeLayout,
@@ -485,4 +489,43 @@ test('two workspaces persist under separate keys without overwriting each other'
   assert.deepEqual(readLayout(storage, 'w1'), w1)
   assert.deepEqual(readLayout(storage, 'w2'), w2)
   assert.equal(store.size, 2)
+})
+
+// ---------------------------------------------------------------------------
+// Active-workspace hint: which tree was visible
+// ---------------------------------------------------------------------------
+
+test('the visible workspace round-trips under its own key', () => {
+  const store = new Map()
+  const storage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, value),
+    removeItem: (key) => store.delete(key),
+  }
+
+  assert.equal(readActiveWorkspace(storage), null)
+  assert.equal(writeActiveWorkspace(storage, 'w2'), true)
+  assert.equal(store.get(ACTIVE_WORKSPACE_KEY), 'w2')
+  assert.equal(readActiveWorkspace(storage), 'w2')
+  assert.notEqual(ACTIVE_WORKSPACE_KEY, layoutKey('w2'))
+
+  assert.equal(writeActiveWorkspace(storage, ''), false, 'an empty id is not a workspace')
+  assert.equal(readActiveWorkspace(storage), 'w2', 'a refused write changes nothing')
+
+  assert.equal(clearActiveWorkspace(storage), true)
+  assert.equal(readActiveWorkspace(storage), null)
+})
+
+test('the visible-workspace hint is best-effort and never throws', () => {
+  assert.equal(readActiveWorkspace(undefined), null)
+  assert.equal(readActiveWorkspace(null), null)
+  assert.equal(readActiveWorkspace({}), null)
+  assert.equal(readActiveWorkspace(thrownStorage(new Error('security error'))), null)
+  assert.equal(writeActiveWorkspace(undefined, 'w1'), false)
+  assert.equal(writeActiveWorkspace({}, 'w1'), false)
+  assert.equal(writeActiveWorkspace(thrownStorage(new Error('quota exceeded')), 'w1'), false)
+  assert.equal(writeActiveWorkspace(fakeStorage(null), undefined), false)
+  assert.equal(clearActiveWorkspace(undefined), false)
+  assert.equal(clearActiveWorkspace(fakeStorage(null)), false)
+  assert.equal(clearActiveWorkspace(thrownStorage(new Error('security error'))), false)
 })

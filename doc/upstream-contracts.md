@@ -136,11 +136,18 @@ consumers).
 
 **Semantics:** `sessions.retain(sessionId, { source })` returns an independent
 reference with `ready` and `release()`. `source` is a free-form label; dsh does
-not enforce uniqueness. "The current session" is derived, not stored: consumers
-scan the session list for the first row with `retainedBy.mainView > 0`. The
-right sidebar uses its own source (`sidebarView`) the same way. Releasing a
-reference tears down that client generation only; it never stops the host
-agent.
+not enforce uniqueness. "The current session" is derived, not stored:
+`uiSession.current` keeps its binding while that session still has `mainView`
+retained, and otherwise falls back to scanning the session list for the first
+row with `retainedBy.mainView > 0`; `ui-workspace` and `ui-layout` read the
+same scan directly. The right sidebar uses its own source (`sidebarView`) the
+same way. Because the native selection in `ui-workspace` holds one `mainView`
+and a focused split pane holds another, that scan (and the sticky
+`uiSession.current`) can name a conversation that was **not** the one on
+screen — notably after a plugin remount, when the pane's reference has just
+been released. The plugin's own persisted layout, not this value, is the
+record of the view (ADR-0020). Releasing a reference tears down that client
+generation only; it never stops the host agent.
 
 **Why we rely on it:** every mounted pane holds one `hkcraftPane` reference;
 exactly one pane (the focused pane of the visible workspace) also holds the

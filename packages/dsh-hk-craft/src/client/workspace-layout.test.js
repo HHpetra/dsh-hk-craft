@@ -4,7 +4,13 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { MAIN_SOURCE, PANE_SOURCE, createPaneController } = require('./dsh-pane-host.js')
-const { layoutKey, encodeLayout, decodeLayout } = require('./layout-store.js')
+const {
+  layoutKey,
+  LAYOUT_KEY_PREFIX,
+  encodeLayout,
+  decodeLayout,
+  writeActiveWorkspace,
+} = require('./layout-store.js')
 const {
   createLayout,
   openPane,
@@ -311,6 +317,116 @@ test('boot rebuilds the focused workspace tree, ratios, focus and per-pane view'
   controller.dispose()
 })
 
+test('a plugin reload keeps the conversation on screen instead of the stale shell current', () => {
+  const layout = openPane(createLayout('w1'), pane('p1', 'live'))
+  const storage = memoryStorage({ w1: layout })
+  const rows = {
+    live: { id: 'live', blank: false, updatedAt: 50 },
+    old: { id: 'old', blank: false, retainedBy: { mainView: 1 }, updatedAt: 1 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['live', 'old'] }]
+  const first = readyController({ storage, rows, workspaces })
+  assert.equal(first.controller.activate('live'), true)
+  first.controller.dispose()
+
+  // A reload applies a fresh controller over the same storage. dsh still holds
+  // the native selection from before the split view (the idle `old` row), so
+  // `catalog.current()` names a conversation the plugin was not showing. Both
+  // rows are idle: the running/idle guard of ADR-0019 cannot help here.
+  const second = readyController({ storage, rows, workspaces })
+  assert.equal(second.controller.activate(), true)
+
+  assert.equal(second.controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(second.controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(second.controller.getSnapshot().sessionId, 'live')
+  assert.equal(second.controller.getSnapshot().panes.p1.sessionId, 'live')
+  second.controller.dispose()
+})
+
+test('a restore without an active-workspace hint still keeps the stored focus', () => {
+  // The first run after an upgrade has the layout key but not the new
+  // active-workspace key. The shell current names the older native selection in
+  // the same workspace; the stored focus must still win.
+  const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'live')) })
+  const rows = {
+    live: { id: 'live', blank: false, running: true, updatedAt: 50 },
+    old: { id: 'old', blank: false, retainedBy: { mainView: 1 }, updatedAt: 1 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['live', 'old'] }]
+  const { controller } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(controller.getSnapshot().sessionId, 'live')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'live')
+  controller.dispose()
+})
+
+test('a plugin reload restores the workspace it was showing, not the shell current workspace', () => {
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 'live')),
+    w2: openPane(createLayout('w2'), pane('p2', 'old')),
+  })
+  const rows = {
+    live: { id: 'live', blank: false, running: true, updatedAt: 50 },
+    old: { id: 'old', blank: false, retainedBy: { mainView: 1 }, updatedAt: 1 },
+  }
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: ['live'] },
+    { workspaceId: 'w2', sessionIds: ['old'] },
+  ]
+  const first = readyController({ storage, rows, workspaces })
+  assert.equal(first.controller.activate('live'), true)
+  first.controller.dispose()
+
+  const second = readyController({ storage, rows, workspaces })
+  assert.equal(second.controller.activate(), true)
+
+  assert.equal(second.controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(second.controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(second.controller.getSnapshot().sessionId, 'live')
+  second.controller.dispose()
+})
+
+test('a plugin reload keeps a restored blank conversation instead of opening older history', () => {
+  const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'draft')) })
+  assert.equal(writeActiveWorkspace(storage, 'w1'), true)
+  const rows = {
+    draft: { id: 'draft', blank: true, updatedAt: 5 },
+    old: { id: 'old', blank: false, updatedAt: 10 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['draft', 'old'] }]
+  const { controller } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+
+  assert.equal(controller.getSnapshot().sessionId, 'draft')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'draft')
+  controller.dispose()
+})
+
+test('a remembered workspace the ready catalog no longer lists is forgotten, not shown', () => {
+  const ghost = openPane(createLayout('gone'), pane('p1', 'lost'))
+  const storage = memoryStorage({ gone: ghost })
+  assert.equal(writeActiveWorkspace(storage, 'gone'), true)
+  const rows = { s1: { id: 's1', blank: false, updatedAt: 10 } }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['s1'] }]
+  const { controller, fake } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(storage.has('gone'), false, 'the ghost layout key is removed')
+  assert.deepEqual(
+    livePaneRefs(fake).map((reference) => reference.sessionId),
+    ['s1'],
+    'the ghost pane is released',
+  )
+  controller.dispose()
+})
+
 test('restore drops panes whose session is gone and writes the pruned tree back', () => {
   const layout = split(
     openPane(createLayout('w1'), pane('p1', 's1')),
@@ -481,7 +597,10 @@ test('stored layouts of different workspaces never overwrite each other', () => 
 
   assert.deepEqual(storage.read('w1'), layouts.w1)
   assert.deepEqual(storage.read('w2'), layouts.w2)
-  assert.equal(storage.entries.size, 2)
+  assert.equal(
+    [...storage.entries.keys()].filter((key) => key.startsWith(LAYOUT_KEY_PREFIX)).length,
+    2,
+  )
   controller.dispose()
 })
 

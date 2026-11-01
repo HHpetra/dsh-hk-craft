@@ -11,14 +11,22 @@
  * Keys are workspace-scoped (`layout-store.js`, spec §9). A shell without a
  * workspaces service gets one memory-only layout under the internal
  * `UNSCOPED_WORKSPACE` key; it is never persisted or exposed as a workspace id.
+ *
+ * The visible workspace id has its own key (`dsh.hkcraft.active-workspace.v1`),
+ * because per-workspace keys cannot say which tree was on screen. A fresh
+ * registry starts from that hint, and `switchTo` / `setActiveWorkspace` keep it
+ * current; disposal leaves it in storage for the next mount (ADR-0020).
  */
 
 const layoutTree = require('./layout-tree.js')
 const {
+  clearActiveWorkspace,
   emptyLayout,
   pruneToKnownSessions,
+  readActiveWorkspace,
   readLayout,
   removeLayout,
+  writeActiveWorkspace,
   writeLayout,
 } = require('./layout-store.js')
 
@@ -40,8 +48,12 @@ function createPaneLayouts(options = {}) {
   let layouts = {}
   /** Memory-only layout for a shell without a workspaces service or a test fake. */
   let unscopedLayout = emptyLayout(null)
-  /** The workspace whose tree is visible; null until one is known. */
-  let activeWorkspaceId = null
+  /**
+   * The workspace whose tree is visible. Initialised from the plugin's own
+   * remembered id so a fresh controller can restore the view it was showing
+   * instead of dsh's native selection (see `layout-store.js`).
+   */
+  let activeWorkspaceId = readActiveWorkspace(storage)
 
   /** @param {string|null} workspaceId */
   function layoutOf(workspaceId) {
@@ -84,8 +96,18 @@ function createPaneLayouts(options = {}) {
     return activeWorkspaceId
   }
 
+  /**
+   * Make one workspace visible and remember it for the next boot.
+   *
+   * `null` means "no workspace is visible" (the last one was deleted), which
+   * removes the hint instead of leaving a ghost id behind.
+   *
+   * @param {string|null} workspaceId
+   */
   function setActiveWorkspace(workspaceId) {
     activeWorkspaceId = workspaceId
+    if (typeof workspaceId === 'string' && workspaceId !== '') writeActiveWorkspace(storage, workspaceId)
+    else clearActiveWorkspace(storage)
   }
 
   /** Persist one workspace's layout; best-effort by design. */
@@ -220,13 +242,16 @@ function createPaneLayouts(options = {}) {
     if (!ensureWorkspace(workspaceId, knownSessionIds)) return null
     const previous = activeWorkspaceId
     if (workspaceId === previous) return { previous, changed: false }
-    activeWorkspaceId = workspaceId
+    setActiveWorkspace(workspaceId)
     return { previous, changed: true }
   }
 
   function clear() {
     layouts = {}
     unscopedLayout = emptyLayout(null)
+    // Only the in-memory view is dropped. The active-workspace hint stays in
+    // storage: a plugin reload builds a new registry and uses it to restore the
+    // tree it was showing.
     activeWorkspaceId = null
   }
 

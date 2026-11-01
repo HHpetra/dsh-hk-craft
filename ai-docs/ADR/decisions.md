@@ -455,3 +455,25 @@
 - 一轮还在跑时，原生 `openSession` 若指向一段空闲旧对话，不会把焦点窗格拉走。分屏里的 `/resume`、标签和窗格点击不走这条路径，不受影响。
 - 成员列表里的短暂空洞不再写成「这段对话已不存在」。会话确实结束后才会被修剪掉。
 - 钉住这三条的测试：`dsh-pane-host.test.js` 的 running/idle current，`workspace-layout.test.js` 的成员空洞与未开始但正在运行的焦点。
+
+---
+
+## ADR-0020 — 插件重挂载恢复自己的视图，不跟随旧的原生 current
+
+**背景**：ADR-0019 修掉了进行中的对话被空闲 current 抢走的三条路径，但没有覆盖**插件重挂载**。开发插件时热重载会先 teardown 旧 fiber、再 import 新 bundle（`dsh-client-hmr` → `client-modules` 的 `replace`），于是新建一个窗格控制器。旧控制器持有的 `mainView` 在 teardown 时释放，而 dsh 的 `uiSession.current` 仍钉在原生选区上（`publishMain` 在旧 current 还持有 `mainView` 时不会改口）；新控制器 `activate()` 读到的 `catalog.current()` 往往是一段更早的旧对话，随后用它替换焦点窗格，进行中的对话就跳走了。第二个缺口是可见工作区没有被记住：控制器只能从 `catalog.current()` 反推工作区，跨工作区时会整块切走，再在错误的工作区里落地。
+
+**补充关系**：本 ADR 补充 **ADR-0019 决策 1** 的边界：重挂载时 current 不覆盖已恢复的焦点，运行中/空闲判定不变。ADR-0014 决策 4 继续有效：挂载完成之后，原生 current 的变化仍然跟到焦点窗格。
+
+**决策**：
+
+1. **先恢复自己的树**。`activate()` 不带 session 时，先按记住的可见工作区恢复该工作区的布局；焦点窗格里已有会话时，焦点就是目标，`catalog.current()` 只在该工作区没有已恢复窗格时兜底。即使没有可见工作区提示（升级后的第一次运行），只要兜底选中的工作区里有已恢复的焦点窗格，也保留它。
+2. **记住可见工作区**。新增插件自有键 `dsh.hkcraft.active-workspace.v1`（`layout-store.js`），在 `setActiveWorkspace` 时写入。它只是提示：读取时先对照目录验证，目录已就绪而工作区不存在则忽略，并在启动落地时连同它的布局键一起清掉；存储不可用或损坏时退化为“没有提示”。
+3. **启动落地保留恢复的焦点**。`settleBootWorkspace` 在树已恢复且仍有焦点窗格时直接落地，不再用 `focusOrOpenWorkspaceConversation` 把空白/空闲的焦点换成该工作区最近的旧对话；只有窗格被修剪掉之后才回到原来的落地逻辑。
+4. **不引入新的选择语义**。原生 reveal / `openSession` 在挂载之后仍然通过 `syncCurrent` 落到焦点窗格；“运行中的焦点忽略空闲 current”的规则不变。
+
+**后果 / 约束**：
+
+- 重启或插件热重载显示的是分屏最后一次呈现的工作区、树与焦点，而不是 dsh 原生选区；这与 ADR-0014 “刷新或重启后恢复树形、比例、焦点与视图”一致。
+- 新增一个 localStorage 键；它与布局键一样是插件自有存储，dsh 不读不写。
+- 升级后第一次运行可能还没有提示键：同工作区的焦点仍能恢复，跨工作区仍按旧逻辑选择，下一次切换/激活后写入提示。
+- 钉住该行为的测试：`workspace-layout.test.js` 的两条 reload 用例、无提示恢复、空白对话恢复、失效工作区清理；`layout-store.test.js` 的提示读写与容错。

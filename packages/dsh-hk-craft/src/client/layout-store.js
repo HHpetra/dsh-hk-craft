@@ -39,6 +39,18 @@ const layoutTree = require('./layout-tree.js')
 /** Prefix of every workspace-scoped layout key; the trailing dot is required. */
 const LAYOUT_KEY_PREFIX = 'dsh.hkcraft.layout.v1.'
 
+/**
+ * The workspace whose tree was last visible.
+ *
+ * The per-workspace keys above cannot say which tree the user was looking at,
+ * so a fresh controller (a dsh restart, or a plugin reload while the app keeps
+ * running) had to guess from dsh's "current session". That guess follows the
+ * native selection, which can be an older conversation than the one a pane was
+ * showing. This key records the plugin's own answer; it is only a hint, and
+ * every read validates it against the catalog before it is used.
+ */
+const ACTIVE_WORKSPACE_KEY = 'dsh.hkcraft.active-workspace.v1'
+
 /** The payload version. Kept equal to the layout's own structural version. */
 const LAYOUT_PAYLOAD_VERSION = layoutTree.LAYOUT_VERSION
 
@@ -206,6 +218,69 @@ function hasLayoutKey(storage, workspaceId) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function usableId(value) {
+  return typeof value === 'string' && value !== '' ? value : null
+}
+
+/**
+ * The workspace id remembered by `writeActiveWorkspace`, or null.
+ *
+ * Best-effort like every other read here: a disabled or throwing store simply
+ * means "no hint", and the controller falls back to the shell's current session.
+ *
+ * @param {{getItem?: (key: string) => unknown}|undefined|null} storage
+ * @returns {string|null}
+ */
+function readActiveWorkspace(storage) {
+  try {
+    if (typeof storage?.getItem !== 'function') return null
+    return usableId(storage.getItem(ACTIVE_WORKSPACE_KEY))
+  } catch (_error) {
+    return null
+  }
+}
+
+/**
+ * Remember the visible workspace. Only an id is stored, never a layout: the
+ * restore path still reads the per-workspace key and validates it against the
+ * catalog.
+ *
+ * @param {{setItem?: (key: string, value: string) => unknown}|undefined|null} storage
+ * @param {unknown} workspaceId
+ * @returns {boolean} whether the write was attempted without throwing
+ */
+function writeActiveWorkspace(storage, workspaceId) {
+  const id = usableId(workspaceId)
+  if (id === null) return false
+  if (typeof storage?.setItem !== 'function') return false
+  try {
+    storage.setItem(ACTIVE_WORKSPACE_KEY, id)
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
+/**
+ * Forget the visible workspace, for when it no longer exists.
+ *
+ * @param {{removeItem?: (key: string) => unknown}|undefined|null} storage
+ * @returns {boolean} whether the removal was attempted without throwing
+ */
+function clearActiveWorkspace(storage) {
+  if (typeof storage?.removeItem !== 'function') return false
+  try {
+    storage.removeItem(ACTIVE_WORKSPACE_KEY)
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
+/**
  * Read one workspace's layout through the storage seam.
  *
  * @param {{getItem?: (key: string) => unknown}|undefined|null} storage
@@ -275,12 +350,16 @@ function removeLayout(storage, workspaceId) {
 module.exports = {
   LAYOUT_KEY_PREFIX,
   LAYOUT_PAYLOAD_VERSION,
+  ACTIVE_WORKSPACE_KEY,
   layoutKey,
   emptyLayout,
   encodeLayout,
   decodeLayout,
   pruneToKnownSessions,
   hasLayoutKey,
+  readActiveWorkspace,
+  writeActiveWorkspace,
+  clearActiveWorkspace,
   readLayout,
   writeLayout,
   removeLayout,
