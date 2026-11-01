@@ -779,7 +779,9 @@ failure and confirm the row snaps back while the error is shown.
 
 ---
 
-## Split panel hides the native right bar
+## Right bar visibility (`activePanelId`)
+
+<a id="split-panel-hides-the-native-right-bar"></a>
 
 **Provider:** `@deepseek-ai/dsh-client-ui-sidebar-right` (the `rightbar` slot
 occupant and `ctx.sidebarRight`) and the layout service's `panelInfo`.
@@ -891,8 +893,9 @@ and the page simply stays absent.
 `{ close }` render props and the thunk refresh were read in the
 ui-settings-general bundle 0.2.1-rc.5; the account and agent-preset
 registrations were read in their own bundles. Runtime probe: open Settings,
-confirm the HK Craft row is last, the diagnostics match the shell, and entering
-split view from the page closes Settings and selects the pane panel.
+confirm the HK Craft row is last and the diagnostics match the shell. Opening
+Settings hides the right bar; closing Settings returns to the shadowed
+conversation cell with `activePanelId` still null.
 
 ---
 

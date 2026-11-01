@@ -23,7 +23,7 @@
  * input actions. The pane chords below avoid every one of them.
  *
  * `Mod+N` is the one deliberate exception: spec D8 makes it identical to
- * `/clear`, so `commands.js` takes that chord over while the pane panel is
+ * `/clear`, so `commands.js` takes that chord over while split mode is
  * active (a document capture listener registered before the shell handler).
  * Outside the pane workspace it keeps dsh's native meaning, "new session".
  *

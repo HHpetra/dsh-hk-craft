@@ -186,7 +186,7 @@ function runAttempt(attempt) {
  * shortcut service blocks background commands the same way.
  *
  * `Mod+N` is not in this table: it is identical to `/clear` (spec D8) and is
- * bound by `commands.js` while the pane panel is active, so it also works when
+ * bound by `commands.js` while split mode is active, so it also works when
  * the document focus is inside the conversation composer.
  *
  * @param {{ controller: any, workspaceId: string|null }} props
@@ -1005,8 +1005,8 @@ function PaneStrip({
 
 /**
  * The interrupt confirmation for closing a running pane (spec D4). It is
- * rendered by the pane host itself, so it exists only while the pane panel is
- * selected; cancelling dismisses it without touching the session.
+ * rendered by the pane host itself, so it exists only while split mode is
+ * active; cancelling dismisses it without touching the session.
  *
  * @param {{ controller: any, t: (key: string) => string }} props
  */

@@ -986,7 +986,7 @@ function createPaneController(ctx, options = {}) {
   /**
    * Finish the cold start once both catalogs can name conversations.
    *
-   * `activate` runs as soon as the pane panel exists, which is before dsh has
+   * `activate` runs as soon as the conversation shadow is registered, which is before dsh has
    * restored the session list. The workspace on screen then has an empty
    * history read and, unlike a later switch, never asks for one of its own
    * conversations. Doing that here — and only until the first ready snapshot,
@@ -1136,7 +1136,8 @@ function createPaneController(ctx, options = {}) {
    * none of its panes already shows one, and focuses an existing one when the
    * focused pane does not. A tree that already shows one of its conversations
    * is left alone, so a split the user arranged is not rebuilt. Nothing here
-   * calls the native reveal — that would dismiss the pane panel.
+   * calls the native reveal — that would move the shell's current session
+   * instead of switching this workspace's tree.
    *
    * @param {string} workspaceId
    * @returns {boolean} whether the layout changed
@@ -1183,7 +1184,9 @@ function createPaneController(ctx, options = {}) {
     const previous = book.allLayouts()
     const { failure } = reconcileAll(previous)
     if (failure !== null) {
-      reconcileAll({})
+      // A failed re-retain already kept the previous pane references. Do not
+      // reconcile an empty book: that would drop them while the host still
+      // renders the layout.
       emit({ ...statePatch(true), active: true, error: failure })
       return false
     }
@@ -1459,7 +1462,7 @@ function createPaneController(ctx, options = {}) {
   async function openInNewPaneValue(sessionId) {
     if (disposed || !registered) return false
     if (typeof sessionId !== 'string' || sessionId === '') return false
-    // The strip and the command path only act while the pane panel is showing;
+    // The strip and the command path only act while split mode is active;
     // outside it there is no visible pane to split beside.
     if (!snapshot.active) return false
     const targetWorkspace = workspaceOf(sessionId) ?? focusedWorkspaceId()
@@ -1622,7 +1625,7 @@ function createPaneController(ctx, options = {}) {
     releaseOrphanedPanes()
 
     if (wasActive) {
-      // While the pane panel is showing, the neighbour has to be loaded before
+      // While split mode is active, the neighbour has to be loaded before
       // the reconcile can retain its panes and take the single mainView. While it
       // is hidden, no reference exists; remembering the id is enough, and the
       // next activation restores the layout from its key.

@@ -300,7 +300,7 @@ test('a failed reorder rejects with the host error so the section can report it'
 
 // ---------------------------------------------------------------------------
 // Pane mode (ticket 08): switching workspace must not go through the native
-// reveal, because that would dismiss the pane workspace and remount every pane.
+// reveal, because that would move the current session instead of the layout tree.
 // ---------------------------------------------------------------------------
 
 /** The pane face the section talks to in pane mode. */

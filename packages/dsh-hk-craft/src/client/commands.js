@@ -116,11 +116,11 @@ function isModN(event) {
 }
 
 /**
- * Bind `Mod+N` to the pane-aware "new conversation" action while the pane panel
+ * Bind `Mod+N` to the pane-aware "new conversation" action while split mode
  * is active (spec D8: identical to `/clear`).
  *
- * dsh binds `Mod+N` to its native `session.new`, which reveals the new session
- * and dismisses the split. A document-level capture listener runs before the
+ * dsh binds `Mod+N` to its native `session.new`, which reveals a new session
+ * and moves the shell's current session. A document-level capture listener runs before the
  * shell's React handler (the same technique as the Ctrl+Enter tracker below),
  * and the shell modal check keeps dialogs in control of the keyboard. Outside
  * the pane workspace the listener does nothing, so native dsh keeps its key.
