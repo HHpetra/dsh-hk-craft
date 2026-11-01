@@ -35,9 +35,28 @@ test('an unset or cmd preference tries PowerShell 7 before Windows PowerShell', 
 })
 
 test('Windows PowerShell is used when PowerShell 7 is not installed', () => {
-  assert.equal(
-    planShellDefault({ shells: shells(CMD, POWERSHELL), currentPath: null, applied: false }).path,
-    POWERSHELL,
+  assert.deepEqual(
+    planShellDefault({ shells: shells(CMD, POWERSHELL), currentPath: null, applied: false }),
+    { path: POWERSHELL, markApplied: false },
+  )
+})
+
+test('a Windows PowerShell fallback does not block a later PowerShell 7', () => {
+  assert.deepEqual(
+    planShellDefault({
+      shells: shells(POWERSHELL, PWSH),
+      currentPath: null,
+      applied: false,
+    }),
+    { path: PWSH, markApplied: true },
+  )
+  assert.deepEqual(
+    planShellDefault({
+      shells: shells(CMD, POWERSHELL),
+      currentPath: POWERSHELL,
+      applied: false,
+    }),
+    { path: null, markApplied: false },
   )
 })
 
@@ -131,5 +150,43 @@ test('install writes the PowerShell path through the terminal service once', asy
   assert.equal(sessionId, 's1')
   assert.deepEqual(selected, [PWSH])
   assert.equal(storage.getItem(SHELL_DEFAULT_APPLIED_KEY), 'pwsh-exe')
+  stop()
+})
+
+test('a Windows PowerShell fallback is not recorded as PowerShell 7', async () => {
+  const storage = memoryStorage({ [SHELL_PREFERENCE_KEY]: CMD })
+  const selected = []
+  let launches = 0
+  const sessions = {
+    list: {
+      getSnapshot: () => ({
+        byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } },
+      }),
+      subscribe(listener) {
+        sessions.listener = listener
+        return () => {}
+      },
+    },
+  }
+  const stop = installPowerShellDefault({
+    webTerminals: {
+      async launchShells() {
+        launches += 1
+        return { shells: shells(CMD, POWERSHELL) }
+      },
+      selectShell(path) {
+        selected.push(path)
+      },
+    },
+    sessions,
+    storage,
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  const afterFirst = launches
+  sessions.listener()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(selected, [POWERSHELL])
+  assert.equal(launches, afterFirst)
+  assert.equal(storage.getItem(SHELL_DEFAULT_APPLIED_KEY), null)
   stop()
 })

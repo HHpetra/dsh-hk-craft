@@ -707,7 +707,7 @@ test('dispose drops every workspace layout and reference', () => {
 test('activating a session from another workspace switches to that workspace', () => {
   const layouts = twoWorkspaces()
   const storage = memoryStorage(layouts)
-  const { controller } = readyController({ storage })
+  const { fake, controller } = readyController({ storage })
 
   controller.activate('s1')
   assert.equal(controller.getSnapshot().workspaceId, 'w1')
@@ -717,6 +717,36 @@ test('activating a session from another workspace switches to that workspace', (
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.deepEqual(controller.getSnapshot().root, layouts.w2.root)
   assert.equal(controller.getSnapshot().sessionId, 's3')
+  // The session was already the stored focus of that workspace. Switching still
+  // has to retain its panes and move mainView; the snapshot alone is not enough.
+  assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId).sort(), ['s1', 's3'])
+  assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
+  controller.dispose()
+})
+
+test('a restored pane id is not renamed onto another pane in the same layout', () => {
+  // w1 was saved alone, so its first pane is `pane-1`. w2 was saved in another
+  // session that also started at `pane-1` and then split to `pane-2`. Loading w2
+  // second must rename only the collision, not onto w2's own `pane-2`.
+  const w1 = openPane(createLayout('w1'), pane('pane-1', 's1'))
+  const w2 = split(
+    openPane(createLayout('w2'), pane('pane-1', 's3')),
+    'pane-1',
+    'row',
+    pane('pane-2', 's4'),
+  )
+  const storage = memoryStorage({ w1, w2 })
+  const { controller } = readyController({ storage })
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  const layout = controller.getSnapshot().layouts.w2
+  const sessions = leaves(layout.root).map((paneId) => layout.panes[paneId]?.sessionId).sort()
+  assert.deepEqual(sessions, ['s3', 's4'])
+  assert.equal(new Set(leaves(layout.root)).size, 2)
+  assert.equal(layout.panes['pane-1'], undefined)
+  assert.equal(controller.getSnapshot().layouts.w1.panes['pane-1'].sessionId, 's1')
   controller.dispose()
 })
 

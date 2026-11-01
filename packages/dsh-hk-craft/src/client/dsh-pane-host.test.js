@@ -1779,6 +1779,51 @@ test('an empty workspace\'s first session lands in that workspace only while it 
   switched.controller.dispose()
 })
 
+test('a /clear that resolves after a workspace switch stays in the workspace it started in', async () => {
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: ['s1'] },
+    { workspaceId: 'w2', sessionIds: ['s3'] },
+  ]
+  const rows = {
+    s1: { id: 's1', blank: false, updatedAt: 2 },
+    s3: { id: 's3', blank: false, updatedAt: 1 },
+  }
+  const { fake, controller } = await readyController({
+    created: ['s-new'],
+    workspaces,
+    rows,
+    paneIds: ['p1', 'p2', 'p3'],
+  })
+  assert.equal(controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+
+  const originalCreate = fake.ctx.sessions.create.bind(fake.ctx.sessions)
+  let releaseCreate
+  fake.ctx.sessions.create = (options) =>
+    new Promise((resolve, reject) => {
+      releaseCreate = () => originalCreate(options).then(resolve, reject)
+    })
+
+  const creating = controller.budget.newInFocused('w1')
+  assert.equal(controller.switchWorkspace('w2'), true)
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, 's3')
+
+  releaseCreate()
+  assert.equal(await creating, true)
+
+  const landed = controller.getSnapshot()
+  assert.equal(landed.workspaceId, 'w2')
+  assert.equal(landed.sessionId, 's3')
+  assert.equal(landed.layouts.w1.panes.p1.sessionId, 's-new')
+  assert.equal(
+    Object.values(landed.layouts.w2.panes).some((pane) => pane.sessionId === 's-new'),
+    false,
+  )
+  assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
+  controller.dispose()
+})
+
 test('a refused open in a new pane does not switch into the full workspace', async () => {
   const { fake, controller } = await readyController({
     created: ['s2', 's3', 's4'],

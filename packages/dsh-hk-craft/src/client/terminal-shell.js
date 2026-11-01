@@ -21,7 +21,8 @@ const SHELL_PREFERENCE_KEY = 'dsh.terminal.shell'
  * made afterwards is not overwritten on the next load.
  * `pwsh-exe` means the real PowerShell 7 executable was selected. Older
  * markers (`1`, `pwsh-first`) only proved Windows PowerShell was chosen,
- * which happens when dsh cannot see the Store `pwsh` alias.
+ * which happens when dsh cannot see the Store `pwsh` alias. Choosing that
+ * fallback must not write `pwsh-exe`, or a later `pwsh.exe` can never replace it.
  */
 const SHELL_DEFAULT_APPLIED_KEY = 'dsh.hkcraft.terminal.shell-default'
 const SHELL_DEFAULT_APPLIED_VALUE = 'pwsh-exe'
@@ -65,17 +66,34 @@ function planShellDefault({ shells, currentPath, applied }) {
   if (applied === true) return { path: null, markApplied: false }
   const path = preferredShellPath(shells)
   if (path === null) return { path: null, markApplied: false }
+  const preferredKind = shellKind(path)
   const kind = typeof currentPath === 'string' && currentPath !== '' ? shellKind(currentPath) : null
   if (kind === 'pwsh') return { path: null, markApplied: true }
-  // Windows PowerShell is only a fallback. Do not lock it in, or a later
-  // discovery of the real pwsh.exe can never replace it.
-  if (kind === 'powershell' && shellKind(path) !== 'pwsh') return { path: null, markApplied: false }
-  if (kind !== null && kind !== 'cmd' && kind !== 'powershell') return { path: null, markApplied: true }
-  const list = Array.isArray(shells) ? shells : []
-  const first = list.find((shell) => typeof shell?.path === 'string' && shell.path !== '')
-  const defaultKind = first ? shellKind(first.path) : null
-  if (kind === null && defaultKind !== 'cmd') return { path: null, markApplied: true }
-  return { path, markApplied: true }
+  // A shell the user picked (bash, zsh, …) stays. Windows PowerShell does not
+  // count: it is the fallback written when pwsh is not visible yet.
+  if (kind !== null && kind !== 'cmd' && kind !== 'powershell') {
+    return { path: null, markApplied: true }
+  }
+  if (kind === null) {
+    const list = Array.isArray(shells) ? shells : []
+    const first = list.find((shell) => typeof shell?.path === 'string' && shell.path !== '')
+    const defaultKind = first ? shellKind(first.path) : null
+    if (defaultKind === 'pwsh') return { path: null, markApplied: true }
+    // zsh or bash as the host default is a real choice. Windows PowerShell is
+    // the fallback, so a later pwsh must still be able to replace it.
+    if (defaultKind !== 'cmd' && defaultKind !== 'powershell') {
+      return { path: null, markApplied: true }
+    }
+    if (defaultKind === 'powershell' && preferredKind !== 'pwsh') {
+      return { path: null, markApplied: false }
+    }
+  }
+  // Windows PowerShell stays only until pwsh shows up. Do not mark that
+  // fallback as `pwsh-exe`, or the marker blocks the upgrade forever.
+  if (kind === 'powershell' && preferredKind !== 'pwsh') {
+    return { path: null, markApplied: false }
+  }
+  return { path, markApplied: preferredKind === 'pwsh' }
 }
 
 /**
@@ -115,10 +133,17 @@ function installPowerShellDefault({ webTerminals, sessions, storage }) {
   }
   let stopped = false
   let inflight = false
+  /**
+   * Windows PowerShell was chosen this process because pwsh was not in the
+   * list. One attempt is enough until the next launch: the marker is not
+   * written, so that launch can still upgrade, and the session list does not
+   * re-query shells on every tick.
+   */
+  let powershellFallbackChosen = false
   const list = sessions?.list
 
   const attempt = () => {
-    if (stopped || inflight) return
+    if (stopped || inflight || powershellFallbackChosen) return
     let applied = false
     let currentPath = null
     try {
@@ -134,14 +159,26 @@ function installPowerShellDefault({ webTerminals, sessions, storage }) {
     Promise.resolve()
       .then(() => webTerminals.launchShells(sessionId))
       .then((result) => {
-        if (stopped) return
+        if (stopped) return null
         const plan = planShellDefault({
           shells: result?.shells,
           currentPath,
           applied: false,
         })
-        if (plan.path !== null) webTerminals.selectShell(plan.path)
-        if (plan.markApplied) storage.setItem(SHELL_DEFAULT_APPLIED_KEY, SHELL_DEFAULT_APPLIED_VALUE)
+        if (plan.path === null) return plan
+        return Promise.resolve()
+          .then(() => webTerminals.selectShell(plan.path))
+          .then(() => plan)
+      })
+      .then((plan) => {
+        if (stopped || plan == null) return
+        if (plan.markApplied) {
+          storage.setItem(SHELL_DEFAULT_APPLIED_KEY, SHELL_DEFAULT_APPLIED_VALUE)
+          return
+        }
+        if (typeof plan.path === 'string' && shellKind(plan.path) === 'powershell') {
+          powershellFallbackChosen = true
+        }
       })
       .catch(() => {})
       .finally(() => {

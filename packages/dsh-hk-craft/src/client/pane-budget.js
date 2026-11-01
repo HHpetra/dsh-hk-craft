@@ -23,7 +23,7 @@
  * This module has no React, no DOM and no dsh imports.
  */
 
-const { leaves, split: splitLayout } = require('./layout-tree.js')
+const { leaves, replaceSession, split: splitLayout } = require('./layout-tree.js')
 const { messageOf } = require('./shared.js')
 const { UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
 
@@ -452,7 +452,10 @@ function createSplitBudget(deps) {
    * that was empty at the start, and only while that workspace still has no
    * panes. A pane opened while waiting is left alone, and the created session
    * stays in history. Switching away during the create does not pull the new
-   * session into the visible workspace or switch the view back.
+   * session into the visible workspace or switch the view back. A `/clear`
+   * that already had a focused pane replaces that same pane in the workspace
+   * it started in, even if another workspace is on screen when the session
+   * arrives.
    *
    * @param {string} [workspaceId]
    * @returns {Promise<boolean>}
@@ -470,6 +473,9 @@ function createSplitBudget(deps) {
       if (targetWorkspace !== book.getActiveWorkspaceId()) {
         if (!switchWorkspace(targetWorkspace)) return false
       }
+      // The pane `/clear` is aimed at, after any switch onto this workspace.
+      // Captured before the await so a later workspace change cannot retarget it.
+      const originPaneId = book.layoutOf(targetWorkspace).activePaneId
       let sessionId
       try {
         sessionId = await createSession(targetWorkspace)
@@ -486,6 +492,13 @@ function createSplitBudget(deps) {
         const origin = book.layoutOf(targetWorkspace)
         if (origin.root !== null) return false
         return openSessionPane(origin, sessionId, targetWorkspace)
+      }
+      if (book.getActiveWorkspaceId() !== targetWorkspace) {
+        const origin = book.layoutOf(targetWorkspace)
+        if (typeof originPaneId !== 'string' || origin.panes[originPaneId] === undefined) return false
+        const next = replaceSession(origin, originPaneId, sessionId)
+        if (next === origin) return true
+        return apply(next, targetWorkspace)
       }
       const current = book.activeLayout()
       if (current.activePaneId !== null) return replaceFocused(sessionId)

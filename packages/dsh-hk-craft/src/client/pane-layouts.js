@@ -138,9 +138,36 @@ function createPaneLayouts(options = {}) {
       if (otherId === workspaceId) continue
       for (const paneId of Object.keys(other.panes)) taken.add(paneId)
     }
+    // Ids already in this layout are reserved too. `nextPaneId` only sees
+    // layouts that are loaded, so the first free id it offers can be this
+    // layout's own `pane-2`. Renaming the colliding `pane-1` onto that id
+    // drops one of the two conversations.
+    const reserved = new Set(taken)
+    for (const paneId of Object.keys(value.panes ?? {})) reserved.add(paneId)
     const mapping = new Map()
-    for (const paneId of Object.keys(value.panes)) {
-      if (taken.has(paneId)) mapping.set(paneId, nextPaneId())
+    const allocate = () => {
+      const seen = new Set()
+      let next = nextPaneId()
+      while (reserved.has(next)) {
+        if (seen.has(next)) {
+          let salt = 1
+          let derived = `${next}~${salt}`
+          while (reserved.has(derived)) {
+            salt += 1
+            derived = `${next}~${salt}`
+          }
+          return derived
+        }
+        seen.add(next)
+        next = nextPaneId()
+      }
+      return next
+    }
+    for (const paneId of Object.keys(value.panes ?? {})) {
+      if (!taken.has(paneId)) continue
+      const next = allocate()
+      reserved.add(next)
+      mapping.set(paneId, next)
     }
     return mapping.size === 0 ? value : layoutTree.renamePanes(value, mapping)
   }

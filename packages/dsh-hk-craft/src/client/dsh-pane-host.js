@@ -1406,6 +1406,7 @@ function createPaneController(ctx, options = {}) {
       let target
       let targetWorkspace
       let fallbackTarget
+      const previousWorkspaceId = book.getActiveWorkspaceId()
       if (explicit) {
         target = sessionId
         targetWorkspace = workspaceOf(target) ?? focusedWorkspaceId()
@@ -1457,7 +1458,12 @@ function createPaneController(ctx, options = {}) {
       }
 
       const current = book.activeLayout()
-      if (snapshot.active) {
+      // Already showing this session in the workspace that is on screen: nothing
+      // to retain. A workspace change still has to reconcile, even when the
+      // stored focus is already the requested session — otherwise that tree is
+      // published with no pane references and mainView stays on the old one.
+      const workspaceUnchanged = book.getActiveWorkspaceId() === previousWorkspaceId
+      if (snapshot.active && workspaceUnchanged) {
         if (target === undefined) {
           emit({ ...statePatch(true), active: true, error: null })
           settleBootWorkspace()
