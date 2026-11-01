@@ -248,18 +248,26 @@ function PaneEmptyState({ controller, workspaceId, visible, t }) {
   React.useEffect(() => {
     if (!visible) return undefined
     let cancelled = false
-    // The empty state has no session to anchor `/resume` to, so the controller
-    // projects the workspace directly through the same adapter.
-    Promise.resolve(controller.recentConversations(workspaceId ?? undefined))
-      .then((rows) => {
-        if (cancelled) return
-        const projected = buildResumeRows(rows, {
-          now: Date.now(),
-          t: tRef.current,
-          limits: EMPTY_STATE_LIMITS,
-        })
-        setRecent(projected.slice(0, EMPTY_RECENT_LIMIT))
+    const applyRows = (rows) => {
+      if (cancelled) return
+      const projected = buildResumeRows(rows, {
+        now: Date.now(),
+        t: tRef.current,
+        limits: EMPTY_STATE_LIMITS,
       })
+      setRecent(projected.slice(0, EMPTY_RECENT_LIMIT))
+    }
+    // The workspace catalog is ready before the session list. A single read
+    // at mount records that gap as "no past conversations" and never retries.
+    if (typeof controller.watchConversations === 'function') {
+      const stop = controller.watchConversations(workspaceId ?? undefined, applyRows)
+      return () => {
+        cancelled = true
+        if (typeof stop === 'function') stop()
+      }
+    }
+    Promise.resolve(controller.recentConversations(workspaceId ?? undefined))
+      .then(applyRows)
       .catch(() => {
         if (!cancelled) setRecent([])
       })

@@ -612,9 +612,13 @@ be trusted as a complete membership list. The automatic first-use title is the
 literal `default-workspace`, localized at display time.
 
 **Why we rely on it:** workspace membership decides which conversations
-`/resume` lists and which panes survive a restore. Until `phase === "ready"` the
-plugin keeps every stored pane instead of pruning against an incomplete
-catalog, and re-runs the prune when the catalog becomes ready.
+`/resume` lists and which panes survive a restore. The workspace catalog
+becomes `"ready"` before the session list does, and the early membership can
+still be empty. Until **both** `workspaces.list` and `sessions.list` are
+`"ready"` the plugin keeps every stored pane instead of pruning against an
+incomplete catalog, and re-runs the prune when the session list becomes ready.
+The workspace shown at startup waits for that same moment before treating an
+empty read as "no past conversations".
 
 **Verified:** snapshot and record shapes were read in the workspace controller
 and ui-workspace. Runtime probe: restart dsh with a deleted session and check

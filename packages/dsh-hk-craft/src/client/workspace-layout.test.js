@@ -71,7 +71,13 @@ function memoryStorage(seed = {}) {
  * A compact fake of the client services the pane controller uses, including
  * the workspace catalog (session → workspace) and a status map.
  */
-function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 'ready', selectPanelFails = false } = {}) {
+function fakeCtx({
+  rows = {},
+  workspaces = TWO_WORKSPACES,
+  workspacesPhase = 'ready',
+  sessionsPhase = 'ready',
+  selectPanelFails = false,
+} = {}) {
   const calls = { retain: [], selectPanel: [], create: [], interrupt: [] }
   const references = []
   let createdCount = 0
@@ -93,8 +99,17 @@ function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 're
       for (const listener of [...panelListeners]) listener()
     },
   }
+  let sessionPhase = sessionsPhase
+  let sessionRows = rows
+  const sessionListeners = new Set()
   const sessions = {
-    list: { getSnapshot: () => ({ phase: 'ready', byId: rows }) },
+    list: {
+      getSnapshot: () => ({ phase: sessionPhase, byId: sessionRows }),
+      subscribe(listener) {
+        sessionListeners.add(listener)
+        return () => sessionListeners.delete(listener)
+      },
+    },
     // Only `pane-close.js` reaches for these; recording them lets a delete test
     // prove it never interrupts a running turn.
     scope(sessionId) {
@@ -156,6 +171,11 @@ function fakeCtx({ rows = {}, workspaces = TWO_WORKSPACES, workspacesPhase = 're
     setWorkspacesPhase(next) {
       phase = next
       for (const listener of [...workspaceListeners]) listener()
+    },
+    setSessions(nextRows, nextPhase = 'ready') {
+      sessionRows = nextRows
+      sessionPhase = nextPhase
+      for (const listener of [...sessionListeners]) listener()
     },
   }
 }
@@ -581,6 +601,101 @@ test('a workspace catalog that is still loading keeps every stored pane', () => 
   assert.equal(controller.switchWorkspace('w1'), true)
 
   assert.deepEqual(leaves(controller.getSnapshot().root), ['p1', 'p2'])
+  controller.dispose()
+})
+
+test('startup keeps a stored pane when the workspace catalog is ready before its sessions are listed', () => {
+  // Restart publishes workspace membership before the session list. An empty
+  // membership at that moment is "not loaded yet", not "these panes are gone".
+  const layout = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: layout })
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: [] },
+    { workspaceId: 'w2', sessionIds: ['s3'] },
+  ]
+  const { controller, fake } = readyController({
+    storage,
+    sessionsPhase: 'pending',
+    workspaces,
+    rows: {},
+  })
+
+  assert.equal(controller.activate(), true)
+  assert.equal(controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+  assert.equal(storage.read('w1').panes.p1.sessionId, 's1')
+
+  workspaces[0].sessionIds = ['s1']
+  fake.setSessions({ s1: { id: 's1', title: 'Kept', blank: false, updatedAt: 4 } })
+
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+  assert.equal(storage.read('w1').panes.p1.sessionId, 's1')
+  controller.dispose()
+})
+
+test('the workspace shown at startup waits for the session catalog before saying it has no history', async () => {
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: ['s1'] },
+    { workspaceId: 'w2', sessionIds: ['s3'] },
+  ]
+  const { controller, fake } = readyController({
+    sessionsPhase: 'pending',
+    workspaces,
+    rows: {},
+    paneIds: ['p-boot'],
+  })
+
+  assert.equal(controller.activate(), true)
+  assert.equal(controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(controller.getSnapshot().sessionId, null)
+
+  let resolved = false
+  const pending = controller.recentConversations('w1').then((rows) => {
+    resolved = true
+    return rows
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(resolved, false, 'an unready session catalog is not an empty history')
+
+  fake.setSessions({
+    s1: { id: 's1', title: 'History', blank: false, updatedAt: 10 },
+    s3: { id: 's3', title: 'Other', blank: false, updatedAt: 20 },
+  })
+
+  const rows = await pending
+  assert.deepEqual(
+    rows.map((row) => row.sessionId),
+    ['s1'],
+  )
+  assert.equal(controller.getSnapshot().workspaceId, 'w1')
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  controller.dispose()
+})
+
+test('a workspace switch made before the session catalog is ready is the one that receives history', async () => {
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: ['s1'] },
+    { workspaceId: 'w2', sessionIds: ['s3'] },
+  ]
+  const { controller, fake } = readyController({
+    sessionsPhase: 'pending',
+    workspaces,
+    rows: {},
+    paneIds: ['p-boot', 'p-w2'],
+  })
+
+  assert.equal(controller.activate(), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, null)
+
+  fake.setSessions({
+    s1: { id: 's1', title: 'Default history', blank: false, updatedAt: 1 },
+    s3: { id: 's3', title: 'Other history', blank: false, updatedAt: 2 },
+  })
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, 's3')
   controller.dispose()
 })
 

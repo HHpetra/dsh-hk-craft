@@ -141,6 +141,91 @@ function defaultStorage() {
 }
 
 /**
+ * Whether one catalog snapshot is safe to treat as complete.
+ *
+ * dsh's lists start at `phase: "pending"` and become `"ready"` only after the
+ * first successful pull. A missing `phase` is the plain test double and counts
+ * as ready. Anything else — including `"pending"` and `"loading"` — is not a
+ * basis for "this workspace has no conversations" or for dropping panes.
+ *
+ * @param {any} snapshot
+ * @returns {boolean}
+ */
+function catalogReady(snapshot) {
+  if (snapshot == null) return false
+  if (snapshot.phase === undefined) return true
+  return snapshot.phase === 'ready'
+}
+
+/**
+ * The workspace a cold start should show once both catalogs are ready.
+ *
+ * The shell's own restore prefers the session it retained as the main view,
+ * then the workspace already on screen, then the one whose conversation was
+ * updated most recently. Display order is only the last resort.
+ *
+ * @param {any} workspacesSnapshot
+ * @param {any} sessionsSnapshot
+ * @param {string|null|undefined} activeId
+ * @returns {string|undefined}
+ */
+function bootWorkspaceId(workspacesSnapshot, sessionsSnapshot, activeId) {
+  const fromMain = workspaceIdOf(workspacesSnapshot, mainSessionId(sessionsSnapshot))
+  if (fromMain !== undefined) return fromMain
+  if (typeof activeId === 'string' && activeId !== '') return activeId
+  const items = Array.isArray(workspacesSnapshot?.items) ? workspacesSnapshot.items : []
+  const byId = sessionsSnapshot?.byId ?? {}
+  let selected
+  let selectedTime = Number.NEGATIVE_INFINITY
+  for (const workspace of items) {
+    if (workspace === null || typeof workspace !== 'object') continue
+    if (typeof workspace.workspaceId !== 'string' || workspace.workspaceId === '') continue
+    let latest = Number.NEGATIVE_INFINITY
+    const memberIds = Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
+    for (const sessionId of memberIds) {
+      const updated = byId[sessionId]?.updatedAt
+      if (typeof updated === 'number' && Number.isFinite(updated)) latest = Math.max(latest, updated)
+    }
+    if (latest === Number.NEGATIVE_INFINITY) {
+      const created = Date.parse(workspace.createdAt)
+      if (Number.isFinite(created)) latest = created
+    }
+    if (selected === undefined || latest > selectedTime) {
+      selected = workspace.workspaceId
+      selectedTime = latest
+    }
+  }
+  return selected
+}
+
+/**
+ * @param {any} list
+ * @returns {any}
+ */
+function readSnapshot(list) {
+  try {
+    return list?.getSnapshot?.()
+  } catch (_error) {
+    return undefined
+  }
+}
+
+/**
+ * @param {any} list
+ * @param {() => void} listener
+ * @returns {(() => void)|undefined}
+ */
+function subscribeList(list, listener) {
+  if (list == null || typeof list.subscribe !== 'function') return undefined
+  try {
+    const dispose = list.subscribe(listener)
+    return typeof dispose === 'function' ? dispose : undefined
+  } catch (_error) {
+    return undefined
+  }
+}
+
+/**
  * Own the pane workspace: one layout per workspace, the focused pane of the
  * active workspace, one retained session reference per mounted pane, and
  * whether the plugin panel is selected.
@@ -233,6 +318,14 @@ function createPaneController(ctx, options = {}) {
   let paneSeq = 0
   let registered = false
   let disposed = false
+  /**
+   * Cold start has not yet seen both catalogs ready. Until then the workspace
+   * on screen is whatever `activate` could see, which may be ahead of the
+   * session list. A switch or an explicit session activation opts out: that
+   * choice is the one that should receive history when the list arrives.
+   */
+  let bootOwned = true
+  let bootSettled = false
   let snapshot = Object.freeze({
     active: false,
     sessionId: null,
@@ -487,22 +580,29 @@ function createPaneController(ctx, options = {}) {
    * The sessions that still exist in one workspace, from the host catalogs.
    * `null` means "not loaded yet": restore keeps every pane instead of guessing.
    *
+   * The workspace catalog becomes `"ready"` before the session list does.
+   * Membership on that early snapshot can still be empty, and the session rows
+   * are not in `byId` yet. Pruning against either half drops the workspace
+   * that was opened at startup and writes the empty tree back. Both catalogs
+   * have to be ready before a missing session is treated as gone.
+   *
    * @param {string} workspaceId
    * @returns {Set<string>|null}
    */
   function knownSessionsOf(workspaceId) {
-    const workspacesSnapshot = workspacesFace()?.list?.getSnapshot?.()
-    if (workspacesSnapshot === undefined || workspacesSnapshot === null) return null
+    const workspacesSnapshot = readSnapshot(workspacesFace()?.list)
+    if (workspacesSnapshot == null) return null
     if (workspacesSnapshot.phase !== 'ready' || !Array.isArray(workspacesSnapshot.items)) return null
+    const sessionsSnapshot = readSnapshot(sessions?.list)
+    if (!catalogReady(sessionsSnapshot)) return null
     const record = workspacesSnapshot.items.find((item) => item?.workspaceId === workspaceId)
     if (record === undefined) {
       // The workspace itself is gone; its stored tree has no home any more.
       return new Set()
     }
     const known = new Set(Array.isArray(record.sessionIds) ? record.sessionIds : [])
-    const sessionsSnapshot = sessions?.list?.getSnapshot?.()
-    if (sessionsSnapshot?.phase !== 'loading') {
-      for (const sessionId of Object.keys(sessionsSnapshot?.byId ?? {})) known.add(sessionId)
+    if (sessionsSnapshot.phase !== 'loading') {
+      for (const sessionId of Object.keys(sessionsSnapshot.byId ?? {})) known.add(sessionId)
     }
     return known
   }
@@ -639,16 +739,86 @@ function createPaneController(ctx, options = {}) {
    * workspace is used, falling back to the first catalog workspace — the same
    * target the empty state's "new conversation" button uses.
    *
+   * The read waits until both catalogs are ready, then repeats on later
+   * snapshots. A startup read against a pending session list used to resolve
+   * to `[]`, and the empty state kept that as "no past conversations".
+   *
+   * @param {string} [workspaceId]
+   * @param {(rows: object[]) => void} listener
+   * @returns {() => void}
+   */
+  function watchConversationsValue(workspaceId, listener) {
+    let stopped = false
+    let armed = false
+    let generation = 0
+    const disposers = []
+    const stop = () => {
+      if (stopped) return
+      stopped = true
+      generation += 1
+      while (disposers.length > 0) {
+        const dispose = disposers.pop()
+        try {
+          dispose()
+        } catch (_error) {
+          // The store is shutting down; forgetting the listener is enough.
+        }
+      }
+    }
+    const requested = typeof workspaceId === 'string' && workspaceId !== '' ? workspaceId : undefined
+    const publish = () => {
+      if (!armed || stopped || disposed) return
+      const sessionsSnapshot = readSnapshot(sessions?.list)
+      const workspacesSnapshot = readSnapshot(workspacesFace()?.list)
+      if (!catalogReady(sessionsSnapshot) || !catalogReady(workspacesSnapshot)) {
+        // No subscription means the snapshot will not change; report the
+        // point-in-time miss instead of waiting forever.
+        if (disposers.length === 0) listener([])
+        return
+      }
+      const target = requested ?? focusedWorkspaceId()
+      const token = ++generation
+      const deliver = (rows) => {
+        if (stopped || token !== generation) return
+        try {
+          listener(Array.isArray(rows) ? rows : [])
+        } catch (_error) {
+          // The view has gone away.
+        }
+      }
+      if (typeof target !== 'string' || target === '') {
+        deliver([])
+        return
+      }
+      listWorkspaceConversations({ sessions, workspaces: workspacesFace() }, target).then(
+        deliver,
+        () => deliver([]),
+      )
+    }
+    const sessionsUnsub = subscribeList(sessions?.list, publish)
+    const workspacesUnsub = subscribeList(workspacesFace()?.list, publish)
+    if (sessionsUnsub !== undefined) disposers.push(sessionsUnsub)
+    if (workspacesUnsub !== undefined) disposers.push(workspacesUnsub)
+    armed = true
+    publish()
+    return stop
+  }
+
+  /**
    * @param {string} [workspaceId]
    * @returns {Promise<object[]>} raw conversation rows (never rejects)
    */
   function recentConversationsValue(workspaceId) {
-    const target =
-      typeof workspaceId === 'string' && workspaceId !== '' ? workspaceId : focusedWorkspaceId()
-    if (typeof target !== 'string' || target === '') return Promise.resolve([])
-    return listWorkspaceConversations({ sessions, workspaces: workspacesFace() }, target).catch(
-      () => [],
-    )
+    return new Promise((resolve) => {
+      let settled = false
+      let stop = () => {}
+      stop = watchConversationsValue(workspaceId, (rows) => {
+        if (settled) return
+        settled = true
+        resolve(rows)
+        queueMicrotask(() => stop())
+      })
+    })
   }
 
   /**
@@ -743,40 +913,88 @@ function createPaneController(ctx, options = {}) {
   })
 
   /**
-   * Workspace-catalog notifications. `workspaces.list` is the store whose
-   * `phase` decides whether a restore may prune; subscribing to it means a
-   * catalog that becomes ready after the first show still runs the prune
-   * (spec §9). The service can load after this plugin, so subscription is
-   * retried from every action that reads the catalog. If the store exposes no
-   * `subscribe`, those actions are the fallback.
+   * Workspace and session catalog notifications.
+   *
+   * `workspaces.list` decides whether a restore may prune, and `sessions.list`
+   * decides whether that membership is readable as conversations. The workspace
+   * catalog turns `"ready"` first; subscribing to both means a session list
+   * that arrives later still prunes and still fills the workspace that was
+   * already on screen. The services can load after this plugin, so
+   * subscription is retried from every action that reads a catalog.
    */
   const catalogDisposers = []
-  let subscribedList = null
+  /** @type {Set<any>} */
+  const subscribedLists = new Set()
   function ensureCatalogSubscription() {
     if (disposed) return
-    const list = workspacesFace()?.list
-    if (list === null || list === undefined || typeof list.subscribe !== 'function') return
-    if (subscribedList === list) return
+    watchCatalogList(workspacesFace()?.list)
+    watchCatalogList(sessions?.list)
+  }
+
+  /**
+   * @param {any} list
+   */
+  function watchCatalogList(list) {
+    if (list == null || typeof list.subscribe !== 'function') return
+    if (subscribedLists.has(list)) return
     try {
-      const dispose = list.subscribe(() => pruneLoadedWorkspaces())
+      const dispose = list.subscribe(() => {
+        pruneLoadedWorkspaces()
+        settleBootWorkspace()
+      })
       if (typeof dispose === 'function') {
-        subscribedList = list
+        subscribedLists.add(list)
         catalogDisposers.push(dispose)
       }
-    } catch {
+    } catch (_error) {
       // A store that refuses subscription is simply not observed.
     }
   }
 
   function unsubscribeCatalog() {
-    subscribedList = null
+    subscribedLists.clear()
     for (const dispose of catalogDisposers.splice(0)) {
       try {
         dispose()
-      } catch {
+      } catch (_error) {
         // The store is shutting down; forgetting the listener is enough.
       }
     }
+  }
+
+  /**
+   * Both catalogs are ready to answer "which conversations does this workspace have".
+   *
+   * @returns {boolean}
+   */
+  function catalogsReadyNow() {
+    return (
+      catalogReady(readSnapshot(sessions?.list)) && catalogReady(readSnapshot(workspacesFace()?.list))
+    )
+  }
+
+  /**
+   * Finish the cold start once both catalogs can name conversations.
+   *
+   * `activate` runs as soon as the pane panel exists, which is before dsh has
+   * restored the session list. The workspace on screen then has an empty
+   * history read and, unlike a later switch, never asks for one of its own
+   * conversations. Doing that here — and only until the first ready snapshot,
+   * or until the user picks a workspace — is what makes the startup workspace
+   * behave like the ones switched to afterwards.
+   */
+  function settleBootWorkspace() {
+    if (bootSettled || disposed || !registered || !snapshot.active) return
+    if (!catalogsReadyNow()) return
+    const { workspaces: workspacesSnapshot, sessions: sessionsSnapshot } = conversationCatalog()
+    const active = book.getActiveWorkspaceId()
+    const target = bootOwned ? bootWorkspaceId(workspacesSnapshot, sessionsSnapshot, active) : active
+    if (typeof target !== 'string' || target === '') return
+    // Set before opening. Retaining the conversation notifies the session
+    // list, which would otherwise re-enter this function.
+    bootSettled = true
+    if (active !== target && !switchWorkspaceValue(target)) return
+    focusOrOpenWorkspaceConversation(target)
   }
 
   /** Focus a pane; false when it is absent or already focused. */
@@ -1466,6 +1684,20 @@ function createPaneController(ctx, options = {}) {
     recentConversations(workspaceId) {
       return recentConversationsValue(workspaceId)
     },
+    /**
+     * Follow one workspace's conversation list across catalog updates.
+     *
+     * The listener is not called while either catalog is still loading, so a
+     * startup read cannot stick on "no past conversations". It is called again
+     * when a later snapshot fills membership in.
+     *
+     * @param {string} [workspaceId]
+     * @param {(rows: object[]) => void} listener
+     * @returns {() => void}
+     */
+    watchConversations(workspaceId, listener) {
+      return watchConversationsValue(workspaceId, listener)
+    },
     /** Called by apply once the `main` entry exists, so selectPanel can succeed. */
     markRegistered() {
       registered = true
@@ -1491,6 +1723,8 @@ function createPaneController(ctx, options = {}) {
         emit({ error: 'pane main entry is not registered yet' })
         return false
       }
+      if (typeof sessionId === 'string' && sessionId !== '') bootOwned = false
+      ensureCatalogSubscription()
       refreshProbe()
       pruneLoadedWorkspaces()
       const target = sessionId ?? mainSessionId(sessions?.list?.getSnapshot?.())
@@ -1508,6 +1742,7 @@ function createPaneController(ctx, options = {}) {
       if (snapshot.active) {
         if (target === undefined) {
           emit({ ...statePatch(true), active: true, error: null })
+          settleBootWorkspace()
           return true
         }
         const holder = layoutTree.paneOfSession(current, target)
@@ -1520,6 +1755,7 @@ function createPaneController(ctx, options = {}) {
             return false
           }
           emit({ ...statePatch(true), active: true, error: null })
+          settleBootWorkspace()
           return true
         }
       }
@@ -1554,6 +1790,7 @@ function createPaneController(ctx, options = {}) {
       }
       book.store(book.getActiveWorkspaceId(), next)
       emit({ ...statePatch(true), active: true, error: null })
+      settleBootWorkspace()
       return true
     },
     /**
@@ -1568,8 +1805,17 @@ function createPaneController(ctx, options = {}) {
      * @returns {boolean} whether that workspace is now the active one
      */
     switchWorkspace(workspaceId) {
+      // Claim the cold start before the switch reads the catalog. A store that
+      // notifies inside `subscribe` would otherwise still treat this as boot
+      // and move the view back. A refused id gives the claim back.
+      const alreadyClaimed = !bootOwned
+      bootOwned = false
       const switched = switchWorkspaceValue(workspaceId)
-      if (!switched) return false
+      if (!switched) {
+        if (!alreadyClaimed) bootOwned = true
+        return false
+      }
+      if (catalogsReadyNow()) bootSettled = true
       focusOrOpenWorkspaceConversation(workspaceId)
       return true
     },
