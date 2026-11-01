@@ -29,6 +29,7 @@ const { openCatalog } = require('./catalog.js')
 const { sectionModel, workspaceRunningCount } = require('./dsh-workspaces.js')
 const { WorkspaceDeleteDialog } = require('./workspace-delete-dialog.js')
 const { absentHook, messageOf } = require('./shared.js')
+const { T, paint, ink } = require('./visual-tokens.js')
 const { LIGHT_COLORS } = require('./status-colors.js')
 const { displayWorkspaceName } = require('./workspace-status.js')
 const { deleteFocusTarget, workspaceOrderOf } = require('./workspace-order.js')
@@ -93,10 +94,31 @@ const listStyle = {
   display: 'flex',
   flexDirection: 'column',
   flex: '1 1 auto',
-  gap: 1,
+  gap: 2,
   minHeight: 0,
   overflowY: 'auto',
   paddingBottom: 2,
+}
+
+/** A quiet section label, matching the native browser's header height. */
+const sectionHeaderStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flex: 'none',
+  height: 30,
+  padding: '0 8px',
+  color: T.textTertiary,
+  fontSize: 11,
+  fontWeight: 500,
+  letterSpacing: '0.03em',
+}
+
+const sectionCountStyle = {
+  marginLeft: 'auto',
+  color: T.textCaption,
+  fontSize: 10,
+  fontVariantNumeric: 'tabular-nums',
 }
 
 /**
@@ -110,9 +132,9 @@ const rowStyle = {
   alignItems: 'center',
   width: '100%',
   minWidth: 0,
-  height: 30,
-  borderRadius: 'var(--dsw-radius-md, 6px)',
-  background: 'transparent',
+  height: 34,
+  borderRadius: T.radiusMd,
+  background: paint('row-bg'),
   userSelect: 'none',
   // Pointer dragging (not HTML5 DnD): the browser must not claim the gesture.
   touchAction: 'none',
@@ -130,9 +152,10 @@ const selectStyle = {
   border: 'none',
   borderRadius: 'inherit',
   background: 'transparent',
-  color: 'var(--dsw-alias-label-primary, inherit)',
+  color: T.text,
   font: 'inherit',
-  fontSize: 13,
+  fontSize: 14,
+  lineHeight: '20px',
   textAlign: 'left',
   cursor: 'pointer',
   userSelect: 'none',
@@ -154,7 +177,8 @@ const dotStyle = {
   width: 8,
   height: 8,
   borderRadius: '50%',
-  boxShadow: '0 0 0 1px color-mix(in srgb, CanvasText 12%, transparent)',
+  boxShadow: `0 0 0 2px color-mix(in srgb, ${T.sidebar} 88%, transparent), 0 0 0 3px ${T.border2}`,
+  transition: `background-color ${T.normal} ${T.ease}, box-shadow ${T.normal} ${T.ease}`,
 }
 
 /**
@@ -163,31 +187,36 @@ const dotStyle = {
  */
 const addRowStyle = {
   ...rowStyle,
-  // The row container no longer owns the light-to-name gap; the add row is a
-  // real button, so it restores the 8px gap the select control has.
-  gap: 8,
-  padding: '0 8px',
+  // The plus is a small disc centred over the rows' status-dot column; the
+  // asymmetric padding keeps every workspace name on one vertical axis.
+  gap: 4,
+  padding: '0 8px 0 3px',
   border: 'none',
-  color: 'var(--dsw-alias-label-secondary, inherit)',
+  color: ink('button-fg', T.textTertiary),
   font: 'inherit',
-  fontSize: 13,
+  fontSize: 14,
+  lineHeight: '20px',
   textAlign: 'left',
   cursor: 'pointer',
 }
 
 /** The add row keeps the light's 8px column so names stay on one axis. */
 const addGlyphStyle = {
-  flex: 'none',
-  width: 8,
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  fontSize: 14,
+  flex: 'none',
+  width: 18,
+  height: 18,
+  borderRadius: 999,
+  background: T.module,
+  color: T.textSecondary,
+  fontSize: 13,
   lineHeight: 1,
 }
 
 const addRailGlyphStyle = {
-  fontSize: 16,
+  fontSize: 17,
   lineHeight: 1,
 }
 
@@ -207,13 +236,14 @@ const iconButtonStyle = {
   height: 22,
   padding: 0,
   border: 'none',
-  borderRadius: 'var(--dsw-radius-md, 6px)',
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary, currentColor)',
+  borderRadius: T.radiusXs,
+  background: paint('icon-bg'),
+  color: ink('icon-fg', T.textSecondary),
   font: 'inherit',
   fontSize: 15,
   lineHeight: 1,
   cursor: 'pointer',
+  transition: `background-color ${T.fast} ${T.ease}, color ${T.fast} ${T.ease}, opacity ${T.fast} ${T.ease}`,
 }
 
 /**
@@ -227,7 +257,6 @@ const deleteEntryStyle = {
   height: 20,
   marginRight: 6,
   fontSize: 14,
-  transition: 'opacity 120ms ease',
 }
 
 const railStyle = {
@@ -239,19 +268,20 @@ const railStyle = {
 const railButtonStyle = {
   ...iconButtonStyle,
   width: 36,
-  height: 32,
-  fontSize: 16,
+  height: 34,
+  borderRadius: T.radiusMd,
+  fontSize: 17,
 }
 
 const errorStyle = {
   flex: 'none',
-  margin: '2px 2px 0',
-  padding: '4px 6px',
-  borderRadius: 'var(--dsw-radius-sm, 4px)',
-  background: 'color-mix(in srgb, #e5484d 12%, transparent)',
-  color: 'var(--dsw-alias-label-primary, inherit)',
+  margin: '4px 2px 0',
+  padding: '6px 8px',
+  borderRadius: T.radiusSm,
+  background: `color-mix(in srgb, ${T.error} 10%, transparent)`,
+  color: T.error,
   fontSize: 11,
-  lineHeight: 1.4,
+  lineHeight: 1.45,
   wordBreak: 'break-word',
 }
 
@@ -407,6 +437,7 @@ function WorkspaceSection(props) {
       ref: (node) => {
         focusTargets.current.add = node
       },
+      'data-hkcraft-workspace-add': '',
       onClick: add,
       disabled: busy,
       title: t('workspace.add'),
@@ -428,7 +459,6 @@ function WorkspaceSection(props) {
   const list = rows.map((row) => {
     const name = displayWorkspaceName(row.title, defaultName)
     const lightLabel = t(`workspace.light.${row.light}`)
-    const highlighted = row.current || hovered === row.workspaceId
     // Visible on row hover or while focus is anywhere inside the row, but always
     // present in the DOM so a screen reader can find the delete entry.
     const actionShown = hovered === row.workspaceId || focusedRow === row.workspaceId
@@ -439,6 +469,7 @@ function WorkspaceSection(props) {
       {
         key: row.workspaceId,
         'data-hkcraft-workspace-row': row.workspaceId,
+        'data-hkcraft-workspace-current': row.current ? 'true' : 'false',
         'data-hkcraft-workspace-drop': dropSide ?? undefined,
         title: t('workspace.dragHint'),
         onMouseEnter: () => setHovered(row.workspaceId),
@@ -458,9 +489,6 @@ function WorkspaceSection(props) {
         style: {
           ...rowStyle,
           opacity: source ? 0.55 : 1,
-          background: highlighted
-            ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
-            : 'transparent',
           // The insertion line sits on the target row's edge, so it never takes
           // part in layout and the rows never jump under the pointer.
           boxShadow:
@@ -551,10 +579,18 @@ function WorkspaceSection(props) {
     )
   }
 
-  // Rows first, then the one add entry at the bottom (spec §7 sketch).
+  // Rows first, then the one add entry at the bottom (spec §7 sketch). The
+  // label names the region the slim sidebar replaced, so the rows never read as
+  // an unlabelled continuation of the shell's global panel list.
   return h(
     'div',
     { style: rootStyle, 'data-hkcraft': 'workspaces', role: 'group', 'aria-label': t('workspace.section') },
+    h(
+      'div',
+      { style: sectionHeaderStyle, 'data-hkcraft-workspaces-header': '' },
+      h('span', null, t('workspace.section')),
+      h('span', { style: sectionCountStyle }, String(rows.length)),
+    ),
     h('div', { style: listStyle }, [...list, addButton]),
     errorLine,
     deleteDialog,

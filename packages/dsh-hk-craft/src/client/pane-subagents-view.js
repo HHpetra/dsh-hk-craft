@@ -20,6 +20,7 @@
 
 const { react } = require('./react-and-translator.js')
 const { buttonStyle } = require('./pane-styles.js')
+const { T, paint, ink } = require('./visual-tokens.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const {
   SUBAGENT_ACTIVITY_KEYS,
@@ -43,8 +44,13 @@ const rootStyle = {
 
 const triggerStyle = {
   ...buttonStyle,
-  gap: 4,
-  padding: '2px 6px',
+  gap: 5,
+  height: 22,
+  padding: '0 7px',
+  borderRadius: T.radiusSm,
+  background: paint('button-bg'),
+  color: ink('button-fg', T.textSecondary),
+  fontSize: 11,
   minWidth: 0,
   maxWidth: '100%',
   overflow: 'hidden',
@@ -63,6 +69,7 @@ const runningDotStyle = {
   height: 6,
   borderRadius: '50%',
   background: RUNNING_DOT_COLOR,
+  boxShadow: `0 0 0 2px color-mix(in srgb, ${RUNNING_DOT_COLOR} 16%, transparent)`,
 }
 
 /** A fixed-position menu, because a narrow pane clips anything flowing out of it. */
@@ -71,17 +78,18 @@ const menuStyle = {
   zIndex: 100,
   display: 'flex',
   flexDirection: 'column',
-  gap: 2,
+  gap: 1,
   boxSizing: 'border-box',
+  minWidth: 220,
   maxWidth: 320,
-  maxHeight: 'min(320px, 60vh)',
+  maxHeight: 'min(340px, 60vh)',
   overflowY: 'auto',
   padding: 4,
-  borderRadius: 8,
-  border: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-  background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-base, Canvas))',
-  color: 'var(--dsw-alias-label-primary, CanvasText)',
-  boxShadow: '0 8px 24px color-mix(in srgb, black 22%, transparent)',
+  borderRadius: T.radiusMd,
+  border: 'none',
+  background: T.menu,
+  color: T.text,
+  boxShadow: T.shadowProminent,
   whiteSpace: 'normal',
   textAlign: 'left',
 }
@@ -90,13 +98,14 @@ const rowStyle = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: 8,
+  gap: 10,
   width: '100%',
+  minHeight: 30,
   minWidth: 0,
-  padding: '4px 8px',
+  padding: '5px 9px',
   border: 'none',
-  borderRadius: 4,
-  background: 'transparent',
+  borderRadius: T.radiusSm,
+  background: paint('row-bg'),
   color: 'inherit',
   font: 'inherit',
   fontSize: 12,
@@ -114,7 +123,7 @@ const rowLabelStyle = {
 const rowDetailStyle = {
   flex: 'none',
   fontSize: 11,
-  opacity: 0.7,
+  color: T.textTertiary,
 }
 
 /**
@@ -208,7 +217,7 @@ function createSubagentSeat(options = {}) {
         const box = trigger.getBoundingClientRect()
         // Keep the menu inside the viewport and align its right edge with the
         // trigger, like a native header dropdown.
-        const width = Math.min(280, Math.max(160, window.innerWidth - 16))
+        const width = Math.min(300, Math.max(220, window.innerWidth - 16))
         setMenuPosition({
           top: box.bottom + 4,
           left: Math.max(8, Math.min(box.right - width, window.innerWidth - width - 8)),
@@ -260,7 +269,15 @@ function createSubagentSeat(options = {}) {
             const label = h('span', { style: rowLabelStyle }, row.label)
             const detail = h(
               'span',
-              { style: rowDetailStyle },
+              {
+                style: {
+                  ...rowDetailStyle,
+                  color:
+                    row.activity === SUBAGENT_ACTIVITY_RUNNING
+                      ? 'var(--dsw-alias-state-warn-label, #b45309)'
+                      : T.textTertiary,
+                },
+              },
               activityLabel === null ? t(row.modeKey) : `${t(row.modeKey)} · ${activityLabel}`,
             )
             if (!row.navigable) {

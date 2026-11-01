@@ -19,6 +19,7 @@
  */
 
 const { createTranslator, react } = require('./react-and-translator.js')
+const { T } = require('./visual-tokens.js')
 const {
   buttonStyle,
   closeOverlayStyle,
@@ -29,23 +30,28 @@ const {
 
 /** The dialog title is the primary line, unlike the pane close dialog's muted one. */
 const titleStyle = {
-  fontSize: 14,
+  color: T.text,
+  fontSize: 15,
   fontWeight: 600,
+  lineHeight: 1.5,
   marginBottom: 8,
   wordBreak: 'break-word',
 }
 
 const bodyStyle = {
-  opacity: 0.82,
+  color: T.textSecondary,
   whiteSpace: 'normal',
 }
 
 /** The running-session warning: a count plus the "we will not stop them" promise. */
 const runningStyle = {
-  marginTop: 8,
-  padding: '6px 8px',
-  borderRadius: 6,
-  background: 'color-mix(in srgb, #d9a400 14%, transparent)',
+  marginTop: 10,
+  padding: '8px 10px',
+  borderRadius: T.radiusSm,
+  background: 'var(--dsw-alias-state-warn-tertiary, rgba(245, 158, 11, 0.14))',
+  color: 'var(--dsw-alias-state-warn-label, #b45309)',
+  fontSize: 12,
+  lineHeight: 1.55,
   whiteSpace: 'normal',
 }
 
@@ -143,6 +149,7 @@ function WorkspaceDeleteDialog(props) {
             type: 'button',
             ref: cancelRef,
             'data-hkcraft-delete-cancel': '',
+            className: 'hk-button hk-button--quiet',
             style: buttonStyle,
             disabled: busy,
             onClick: cancel,
@@ -154,6 +161,7 @@ function WorkspaceDeleteDialog(props) {
           {
             type: 'button',
             'data-hkcraft-delete-confirm': '',
+            className: 'hk-button hk-button--danger',
             style: buttonStyle,
             disabled: busy,
             onClick: () => {

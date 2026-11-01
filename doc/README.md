@@ -39,9 +39,12 @@ dsh 的端口、`DSH_HOME`、会话存储与登录态都不归本项目管理。
 | client | `packages/dsh-hk-craft/src/client/` | 浏览器面板 / 设置页；构建为 `lib/client.js`，经 `dsh.client` 声明 |
 | read model | `packages/dsh-hk-craft/src/client/catalog.js` | dsh 清单与状态映射的唯一解析处；其余 module 只问领域问题（ADR-0016） |
 | pane kernel | `packages/dsh-hk-craft/src/client/dsh-pane-host.js` | 窗格布局的唯一事务点（布局簿、引用保留、`apply`、聚合快照）；右栏 / 关闭确认 / 窗格上限各有自己的持有者（ADR-0017） |
+| visual layer | `packages/dsh-hk-craft/src/client/visual-tokens.js`、`visuals.js` | 读取 dsh 语义 token 的命名层与一份按 `data-hkcraft-*` 限定的交互样式表；静态样式仍在 `pane-styles.js` |
 | config | `packages/dsh-hk-craft/cordis.patch.yml` | 只插入一条 `dsh-hk-craft` 行；不复制上游配置 |
 
 host 与 client 同属一个包、同一版本，避免半套升级。客户端入口 id 必须与 patch 行 `name` 完全一致。
+
+客户端的颜色只从 dsh 主题的 `--dsw-*` 语义 token 取值，不另建调色板。内联样式负责几何与静止外观；`:hover`、`:focus-visible`、动画等规则集中在 `visuals.js` 注入的一份样式表里，按 `data-hkcraft-*` 标记隔离，并随插件卸载移除。两层的动态颜色通过 `--hk-*-bg` / `--hk-*-fg` 自定义属性交接，避免互相用 `!important` 覆盖。
 
 client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvider`、会话保留、
 `conversation.content`、视图切换、命令面板、工作区目录等）逐条记录在

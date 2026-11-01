@@ -40,6 +40,7 @@ const {
   withShortcut,
 } = require('./pane-shortcuts.js')
 const { EMPTY_STATE_LIMITS, buildResumeRows } = require('./resume-list.js')
+const { T } = require('./visual-tokens.js')
 const { absentHook } = require('./shared.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const { STRIP_STATUS_IDLE, projectStrip } = require('./pane-strip.js')
@@ -67,6 +68,9 @@ const {
   bodyStyle,
   fallbackStyle,
   emptyStackStyle,
+  emptyMarkStyle,
+  emptyTitleStyle,
+  emptyBodyStyle,
   emptyActionStyle,
   recentHeadingStyle,
   recentListStyle,
@@ -167,7 +171,7 @@ function PaneFallback({ t, text, detail, label, onBack }) {
     { style: fallbackStyle, role: 'status' },
     h('div', { style: { fontWeight: 600, marginBottom: 6 } }, text),
     detail === undefined ? null : h('div', { style: { opacity: 0.75, marginBottom: 12 } }, detail),
-    h('button', { type: 'button', style: buttonStyle, onClick: onBack }, label ?? t('pane.close')),
+    h('button', { type: 'button', className: 'hk-button hk-button--quiet', style: buttonStyle, onClick: onBack }, label ?? t('pane.close')),
   )
 }
 
@@ -231,6 +235,31 @@ function PaneShortcuts({ controller, workspaceId }) {
 const EMPTY_RECENT_LIMIT = 5
 
 /**
+ * The empty state's hero glyph: four panes, drawn rather than shipped as an
+ * asset so it follows `currentColor` in both palettes.
+ */
+function EmptyPanesIcon() {
+  const h = react().createElement
+  return h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      width: 26,
+      height: 26,
+      fill: 'none',
+      'aria-hidden': 'true',
+      stroke: 'currentColor',
+      strokeWidth: 1.5,
+      strokeLinejoin: 'round',
+    },
+    h('rect', { x: 3, y: 4, width: 7.5, height: 6.5, rx: 1.6 }),
+    h('rect', { x: 13.5, y: 4, width: 7.5, height: 6.5, rx: 1.6 }),
+    h('rect', { x: 3, y: 13.5, width: 18, height: 6.5, rx: 1.6 }),
+    h('path', { d: 'M6.8 7.25h0M17.3 7.25h0M7 16.75h10', strokeLinecap: 'round' }),
+  )
+}
+
+/**
  * The empty state: the workspace has no panes at all (ticket 10).
  *
  * It offers the two ways back in — a new conversation in the first pane
@@ -290,16 +319,13 @@ function PaneEmptyState({ controller, workspaceId, visible, error = null, t }) {
     h(
       'div',
       { style: emptyStackStyle },
-      h(
-        'div',
-        { style: { fontWeight: 600, fontSize: 15, marginBottom: 2 } },
-        t('pane.empty.workspace.title'),
-      ),
-      h('div', { style: { opacity: 0.75 } }, t('pane.empty.workspace.body')),
+      h('div', { style: emptyMarkStyle, 'aria-hidden': 'true' }, EmptyPanesIcon()),
+      h('div', { style: emptyTitleStyle }, t('pane.empty.workspace.title')),
+      h('div', { style: emptyBodyStyle }, t('pane.empty.workspace.body')),
       typeof error === 'string' && error !== ''
         ? h(
             'div',
-            { 'data-hkcraft-empty-error': '', style: { opacity: 0.8, fontSize: 12, marginTop: 8 } },
+            { 'data-hkcraft-empty-error': '', style: { fontSize: 12, marginTop: 8 } },
             error,
           )
         : null,
@@ -307,6 +333,7 @@ function PaneEmptyState({ controller, workspaceId, visible, error = null, t }) {
         'button',
         {
           type: 'button',
+          className: 'hk-button hk-button--primary',
           style: emptyActionStyle,
           title: withShortcut(t('pane.empty.new'), shortcutLabel('new-conversation')),
           onClick: startNew,
@@ -316,7 +343,19 @@ function PaneEmptyState({ controller, workspaceId, visible, error = null, t }) {
       recent === null
         ? null
         : recent.length === 0
-          ? h('div', { style: { opacity: 0.62, fontSize: 12 } }, t('command.resume.search.empty'))
+          ? h(
+              'div',
+              {
+                style: {
+                  padding: '10px 12px',
+                  borderRadius: T.radiusSm,
+                  border: `0.5px dashed ${T.border3}`,
+                  color: T.textTertiary,
+                  fontSize: 12,
+                },
+              },
+              t('command.resume.search.empty'),
+            )
           : h(
               'div',
               { style: recentListStyle, 'data-hkcraft-empty-recent': '' },
@@ -440,20 +479,21 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
     // signal in a split view (issue 05; Agent10's flat strip lost it). The
     // shell's theme presenter writes `color-scheme` plus its palette tokens on
     // the document, so this pair resolves on both the light and the dark theme.
-    outline: focused
-      ? '2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, Highlight))'
-      : '2px solid transparent',
-    outlineOffset: '-2px',
+    // `box-shadow` replaces `outline` so the ring never paints outside the
+    // workspace box or collides with a neighbouring pane's ring.
+    boxShadow: focused
+      ? 'inset 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, Highlight))'
+      : `inset 0 0 0 1px ${T.border2}`,
     zIndex: focused ? 1 : 0,
-    background: 'var(--dsw-alias-bg-base, Canvas)',
-    color: 'var(--dsw-alias-label-primary, CanvasText)',
+    background: T.surface,
+    color: T.text,
   }
 
   const closeHint = withShortcut(t('pane.close'), shortcutLabel('close-pane'))
 
   const header = h(
     'div',
-    { style: headerStyle },
+    { style: headerStyle, 'data-hkcraft-pane-header': '' },
     h('span', { style: titleStyle }, title ?? t('pane.title')),
     seats?.mode
       ? h(seats.mode, {
@@ -554,8 +594,8 @@ function PaneSeparator({ controller, separator }) {
   const row = separator.dir === 'row'
 
   const lineColor = hot
-    ? 'color-mix(in srgb, currentColor 55%, transparent)'
-    : 'color-mix(in srgb, currentColor 30%, transparent)'
+    ? 'var(--dsw-alias-state-business-primary, Highlight)'
+    : T.border3
 
   const hitStyle = row
     ? {
@@ -589,8 +629,8 @@ function PaneSeparator({ controller, separator }) {
       }
 
   const lineStyle = row
-    ? { width: SEPARATOR_LINE_PX, background: lineColor }
-    : { height: SEPARATOR_LINE_PX, width: '100%', background: lineColor }
+    ? { width: SEPARATOR_LINE_PX, borderRadius: 2, background: lineColor }
+    : { height: SEPARATOR_LINE_PX, width: '100%', borderRadius: 2, background: lineColor }
 
   const onPointerDown = (event) => {
     if (event.button !== undefined && event.button !== 0) return
@@ -797,22 +837,16 @@ function PaneStrip({
         style: {
           ...stripItemStyle,
           opacity: source ? 0.55 : 1,
-          // Both a highlighted entry and a drop target use the shell's business
-          // accent token, which the theme presenter rewrites per palette.
-          borderTopColor: entry.focused
-            ? 'var(--dsw-alias-state-business-primary, Highlight)'
-            : 'transparent',
-          background: target
-            ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight) 18%, transparent)'
-            : entry.focused
-              ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12))'
-              : hovered === entry.paneId
-                ? 'color-mix(in srgb, currentColor 6%, transparent)'
-                : 'transparent',
+          // An active drop target keeps its accent fill through the same
+          // custom property the stylesheet uses for hover/active state, so the
+          // inline and stylesheet layers never overwrite each other.
+          '--hk-tab-bg': target
+            ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight) 16%, transparent)'
+            : undefined,
           outline: target
             ? '2px dashed var(--dsw-alias-state-business-primary, Highlight)'
-            : '2px solid transparent',
-          outlineOffset: target ? '-3px' : 0,
+            : undefined,
+          outlineOffset: target ? '-3px' : undefined,
           cursor: drag === null ? 'pointer' : 'grabbing',
         },
         onClick: () => focusEntry(entry),
@@ -849,10 +883,10 @@ function PaneStrip({
             // `visibility` (not `display`) keeps the space reserved, so hovering
             // an entry can never resize it or shift its neighbours.
             visibility: hovered === entry.paneId ? 'visible' : 'hidden',
-            background:
+            '--hk-icon-bg':
               hovered === entry.paneId
-                ? 'color-mix(in srgb, currentColor 16%, transparent)'
-                : 'transparent',
+                ? 'color-mix(in srgb, currentColor 12%, transparent)'
+                : undefined,
           },
           onClick: (event) => {
             event.stopPropagation()
@@ -1001,15 +1035,16 @@ function PaneCloseConfirm({ controller, t }) {
         role: 'dialog',
         'aria-modal': 'true',
         'aria-label': t('pane.close.confirm.title'),
+        'data-hkcraft-dialog': 'pane-close',
         style: closeDialogStyle,
       },
       pending.title === undefined ? null : h('div', { style: closeTitleStyle }, pending.title),
       h(
         'div',
-        { style: { fontWeight: 600, marginBottom: 6 } },
+        { style: { fontWeight: 600, fontSize: 15, lineHeight: 1.5, marginBottom: 6, color: T.text } },
         t('pane.close.confirm.title'),
       ),
-      h('div', { style: { opacity: 0.78 } }, t('pane.close.confirm.body')),
+      h('div', { style: { color: T.textSecondary } }, t('pane.close.confirm.body')),
       state.closeError === null
         ? null
         : h(
@@ -1024,6 +1059,7 @@ function PaneCloseConfirm({ controller, t }) {
           'button',
           {
             type: 'button',
+            className: 'hk-button hk-button--quiet',
             style: buttonStyle,
             disabled: state.closeBusy,
             onClick: () => controller.close.cancel(),
@@ -1034,6 +1070,7 @@ function PaneCloseConfirm({ controller, t }) {
           'button',
           {
             type: 'button',
+            className: 'hk-button hk-button--danger',
             style: buttonStyle,
             disabled: state.closeBusy,
             onClick: confirm,

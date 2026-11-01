@@ -18,6 +18,7 @@
 
 const { createTranslator, react } = require('./react-and-translator.js')
 const { buttonStyle } = require('./pane-styles.js')
+const { T } = require('./visual-tokens.js')
 const { normalizeMaxPanes, parseNonNegativeInteger } = require('./pane-budget.js')
 const { messageOf } = require('./shared.js')
 const { NOTIFICATION_TYPES } = require('./notifications.js')
@@ -43,55 +44,91 @@ const ABSENT_NOTIFICATIONS = Object.freeze({
 const pageStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 20,
+  gap: 22,
   maxWidth: 680,
-  padding: '16px 4px 24px',
+  padding: '10px 4px 40px',
   fontSize: 13,
   lineHeight: 1.55,
+  color: T.text,
 }
 
-const headingStyle = { margin: 0, fontSize: 16, fontWeight: 600 }
+const pageHeaderStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
+
+const headingStyle = { margin: 0, fontSize: 20, fontWeight: 600, lineHeight: 1.4, letterSpacing: '-0.01em' }
+
+const subtitleStyle = { margin: 0, color: T.textSecondary, fontSize: 13, lineHeight: 1.6 }
 
 const groupStyle = { display: 'flex', flexDirection: 'column', gap: 8 }
 
-const groupTitleStyle = { margin: 0, fontSize: 12, fontWeight: 600, opacity: 0.7 }
+const groupTitleStyle = { margin: 0, fontSize: 14, fontWeight: 500, lineHeight: '22px', color: T.text }
 
-const rowsStyle = { display: 'flex', flexDirection: 'column', gap: 6 }
+const subGroupTitleStyle = {
+  margin: '6px 0 0',
+  fontSize: 12,
+  fontWeight: 500,
+  lineHeight: '18px',
+  color: T.textSecondary,
+}
+
+const rowsStyle = { display: 'flex', flexDirection: 'column' }
 
 const rowStyle = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(140px, max-content) 1fr',
-  gap: 12,
-  alignItems: 'baseline',
+  gridTemplateColumns: 'minmax(150px, max-content) minmax(0, 1fr)',
+  gap: 16,
+  alignItems: 'center',
+  minHeight: 48,
+  padding: '13px 0',
+  borderBottom: `0.5px solid ${T.border2}`,
 }
 
-const labelStyle = { opacity: 0.7 }
-const valueStyle = { minWidth: 0, wordBreak: 'break-word' }
+const labelStyle = { color: T.textSecondary, fontSize: 13 }
+
+const valueStyle = { minWidth: 0, color: T.text, wordBreak: 'break-word' }
+
+/** Notification types use a compact two-column list instead of one tall column. */
+const typesGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  columnGap: 24,
+  rowGap: 0,
+}
+
+const typeRowStyle = {
+  ...rowStyle,
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: 12,
+}
 
 const actionStyle = {
   ...buttonStyle,
   alignSelf: 'flex-start',
-  fontSize: 13,
-  padding: '4px 10px',
+  fontSize: 12,
+  padding: '0 12px',
 }
 
 const inputStyle = {
-  width: 88,
+  width: 96,
+  height: 32,
   boxSizing: 'border-box',
-  padding: '3px 6px',
-  border: '1px solid color-mix(in srgb, currentColor 28%, transparent)',
-  borderRadius: 6,
-  background: 'transparent',
+  padding: '0 10px',
+  border: `0.5px solid ${T.border4}`,
+  borderRadius: T.radiusSm,
+  background: T.input,
   color: 'inherit',
   font: 'inherit',
+  fontSize: 13,
 }
 
-const noteStyle = { margin: 0, fontSize: 11, lineHeight: 1.5, opacity: 0.62 }
+const noteStyle = { margin: 0, color: T.textTertiary, fontSize: 12, lineHeight: 1.65 }
 
 const errorStyle = {
-  padding: '6px 8px',
-  borderRadius: 6,
-  background: 'color-mix(in srgb, tomato 16%, transparent)',
+  padding: '8px 10px',
+  borderRadius: T.radiusSm,
+  background: `color-mix(in srgb, ${T.error} 9%, transparent)`,
+  color: T.error,
+  fontSize: 12,
+  lineHeight: 1.55,
   wordBreak: 'break-word',
 }
 
@@ -352,7 +389,12 @@ function createSettingsSection(controller, options = {}) {
                 notifyPermission === 'default'
                   ? h(
                       'button',
-                      { type: 'button', onClick: grantNotificationPermission, style: actionStyle },
+                      {
+                        type: 'button',
+                        className: 'hk-button hk-button--quiet',
+                        onClick: grantNotificationPermission,
+                        style: actionStyle,
+                      },
                       t('settings.notify.grant'),
                     )
                   : null,
@@ -382,14 +424,18 @@ function createSettingsSection(controller, options = {}) {
               }),
             ),
             h('p', { style: noteStyle }, t('settings.notify.suppressHint')),
-            h('h4', { style: groupTitleStyle }, t('settings.notify.types')),
+            h('h4', { style: subGroupTitleStyle }, t('settings.notify.types')),
             h(
               'div',
-              { style: rowsStyle },
+              {
+                style: typesGridStyle,
+                'data-hkcraft-settings-rows': '',
+                'data-hkcraft-notify-types': '',
+              },
               NOTIFICATION_TYPES.map((type) =>
                 h(
                   'label',
-                  { key: type, style: rowStyle },
+                  { key: type, style: typeRowStyle },
                   h('span', { style: labelStyle }, t(NOTIFICATION_TYPE_LABEL[type])),
                   h('input', {
                     type: 'checkbox',
@@ -409,6 +455,7 @@ function createSettingsSection(controller, options = {}) {
                 'button',
                 {
                   type: 'button',
+                  className: 'hk-button hk-button--quiet',
                   onClick: sendTestNotification,
                   disabled: notifySupported !== true || notifyPermission === 'denied',
                   style: actionStyle,
@@ -437,20 +484,25 @@ function createSettingsSection(controller, options = {}) {
     return h(
       'div',
       { style: pageStyle, 'data-hkcraft': 'settings' },
-      h('h2', { style: headingStyle }, t('settings.title')),
+      h(
+        'header',
+        { style: pageHeaderStyle },
+        h('h2', { style: headingStyle }, t('settings.title')),
+        h('p', { style: subtitleStyle }, t('settings.subtitle')),
+      ),
       h(
         'section',
-        { style: groupStyle },
+        { style: groupStyle, 'data-hkcraft': 'settings-diagnostics' },
         h('h3', { style: groupTitleStyle }, t('settings.diag.title')),
         h(
           'div',
-          { style: rowsStyle },
+          { style: rowsStyle, 'data-hkcraft-settings-rows': '' },
           rows.map((row) =>
             h(
               'div',
-              { key: row.key, style: rowStyle },
+              { key: row.key, style: rowStyle, 'data-hkcraft-settings-diagnostic': row.key },
               h('span', { style: labelStyle }, row.label),
-              h('span', { style: valueStyle }, row.value),
+              h('span', { style: valueStyle, 'data-hkcraft-diagnostic-value': row.key }, row.value),
             ),
           ),
         ),
@@ -493,7 +545,7 @@ function createSettingsSection(controller, options = {}) {
         h(
           'div',
           { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-          h('button', { type: 'button', onClick: saveLimit, style: actionStyle }, t('settings.split.save')),
+          h('button', { type: 'button', className: 'hk-button hk-button--primary', onClick: saveLimit, style: actionStyle }, t('settings.split.save')),
           limitNotice?.kind === 'saved'
             ? h('span', { role: 'status', style: noteStyle }, t('settings.split.saved'))
             : null,

@@ -43,6 +43,7 @@ const { createModeSeat } = require('./pane-mode-seat.js')
 const { registerCommands } = require('./commands.js')
 const { createNotifier } = require('./notifications.js')
 const { installPowerShellDefault } = require('./terminal-shell.js')
+const { installPluginStyles } = require('./visuals.js')
 
 const NS = 'dsh-hk-craft'
 
@@ -146,6 +147,11 @@ function createHeaderSeats(ctx) {
  */
 function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, dictionaries), 'dsh-hk-craft: dictionaries')
+  // One scoped stylesheet for every interactive state the inline style objects
+  // cannot express. Installing it here (not in a view) means the sheet exists
+  // before the first pane, dialog or menu paints, and its disposer removes it
+  // on unload so a reinstall never stacks duplicates.
+  ctx.effect(() => installPluginStyles(globalThis.document), 'dsh-hk-craft: visual styles')
   const t = ctx.locale.bind(NS)
 
   // The View adapter is optional: without `uiConversation` (or the

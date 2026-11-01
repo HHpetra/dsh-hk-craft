@@ -22,18 +22,18 @@ const {
 
 /** Dot fills for the sidebar workspace lights (red > yellow > green > idle > gray). */
 const LIGHT_COLORS = Object.freeze({
-  red: '#e5484d',
-  yellow: '#d9a400',
-  green: '#30a46c',
-  idle: '#3b82f6',
-  gray: '#8b8d98',
+  red: 'var(--dsw-alias-state-error-primary, #e5484d)',
+  yellow: 'var(--dsw-alias-state-warn-primary, #d9a400)',
+  green: 'var(--dsw-alias-state-success-primary, #30a46c)',
+  idle: 'var(--dsw-static-blue-500, #3b82f6)',
+  gray: 'var(--dsw-alias-label-caption, #8b8d98)',
 })
 
 /** Dot fills per strip status; running/waiting follow the shell's tokens. */
 const STRIP_STATUS_COLORS = Object.freeze({
   [STRIP_STATUS_RUNNING]: 'var(--dsw-alias-state-warn-primary, #d9a400)',
   [STRIP_STATUS_WAITING]: 'var(--dsw-alias-state-error-primary, #e5484d)',
-  [STRIP_STATUS_IDLE]: '#30a46c',
+  [STRIP_STATUS_IDLE]: 'var(--dsw-alias-state-success-primary, #30a46c)',
 })
 
 module.exports = { LIGHT_COLORS, STRIP_STATUS_COLORS }

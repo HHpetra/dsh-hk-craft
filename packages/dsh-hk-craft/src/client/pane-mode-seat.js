@@ -17,6 +17,7 @@
 
 const { presetIdOfSession, resolveModeLabel } = require('./pane-mode.js')
 const { react } = require('./react-and-translator.js')
+const { T } = require('./visual-tokens.js')
 
 /** The chip: content-sized, capped by its pane-header box, never a control. */
 const modeBadgeStyle = {
@@ -24,13 +25,13 @@ const modeBadgeStyle = {
   alignItems: 'center',
   minWidth: 0,
   maxWidth: '100%',
-  height: 22,
-  padding: '0 6px',
-  borderRadius: 4,
-  background: 'var(--dsw-alias-fill-tsp-secondary, color-mix(in srgb, currentColor 8%, transparent))',
-  color: 'var(--dsw-alias-label-tertiary, inherit)',
-  fontSize: 12,
-  lineHeight: '22px',
+  height: 20,
+  padding: '0 7px',
+  borderRadius: T.radiusSm,
+  background: T.module,
+  color: T.textTertiary,
+  fontSize: 11,
+  lineHeight: '20px',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   cursor: 'default',
