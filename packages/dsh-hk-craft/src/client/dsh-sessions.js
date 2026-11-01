@@ -1,36 +1,32 @@
 'use strict'
 
 /**
- * Every dsh assumption behind `/clear`, `/new`, `/resume` and the `/fork`
- * blank check lives here.
+ * The **action** adapter behind `/clear`, `/new`, `/resume` and `/fork`: create,
+ * reveal, and the bounded history reads.
  *
- * Components and command handlers only ever see the plain rows this module
- * returns; if one of the assumed shapes changes upstream, this is the only file
- * that needs to change. Verified against the 0.2.0-rc.2 bundles; the pinned
+ * Reading the record graph is `catalog.js`'s job now — this module takes the
+ * read model as an argument and never parses `byId`, `sessionIds` or `phase`.
+ * The shapes documented below are the *actions* and the history window, which no
+ * read model can answer. Verified against the 0.2.0-rc.2 bundles; the pinned
  * train is 0.2.1-rc.5 (`deps/VERSIONS.md`), and the durable record is
  * `doc/upstream-contracts.md`:
  *
- * - `sessions.list` snapshot shape (`ids`, `byId`, `phase`), the per-row
- *   `{id, title, displayTitle, running, blank, updatedAt}` projection, and
- *   `ClientSessions.using(target, {source, signal}, operate)` —
- *   `doc/upstream-contracts.md#session-summary-fields`.
- * - `displayTitle` falls back to the cwd basename and then the raw id, so a
- *   "missing title" decision must read `title`, never `displayTitle`.
- * - `workspaces.list` snapshot `{items, archivedSessionIds, pinnedSessionIds}`
- *   with `workspace.sessionIds` / `workspace.path` —
- *   `doc/upstream-contracts.md#workspace-catalog`.
- * - Opening a session: `uiWorkspace.openSession(sessionId)` →
- *   `replaceMain(…, "reveal")` —
- *   `doc/upstream-contracts.md#native-start-session-reveal`.
- * - New session in the current workspace: `uiWorkspace.startSession(workspaceId)`
- *   → `connectBlank` reuses an existing blank, otherwise creates one, then
- *   reveals it — `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
+ * - `ClientSessions.using(target, {source, signal}, operate)` for a brief
+ *   retained read — `doc/upstream-contracts.md#session-summary-fields`.
  * - First user prompt: there is no first-prompt projection on the wire (the
  *   list schema only carries `title` and `sessionListMetadata`), so it is read
  *   from the session's event window: `binding.session.eventSource.getSnapshot()
  *   .entries`, `session.loadOlder()`, entries shaped `{event}`, `user/message`
  *   with `data.source.kind === "user"` and text blocks (same filter as dsh's
  *   session-title derivation) — `doc/upstream-contracts.md#session-summary-fields`.
+ * - Opening a session: `uiWorkspace.openSession(sessionId)` →
+ *   `replaceMain(…, "reveal")` —
+ *   `doc/upstream-contracts.md#native-start-session-reveal`.
+ * - New session in the current workspace: `uiWorkspace.startSession(workspaceId)`
+ *   → `connectBlank` reuses an existing blank, otherwise creates one, then
+ *   reveals it — `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
+ * - A durable title is `title`; `displayTitle` falls back to the cwd basename
+ *   and then the raw id, so a "missing title" decision must read `title`.
  */
 
 const { normalizeText } = require('./resume-list.js')
@@ -45,78 +41,31 @@ const MAX_PROMPT_LOOKUPS = 6
 const MAX_PROMPT_PAGES = 4
 
 /**
- * Whether the catalog row explicitly says this session has never sent a message.
+ * Project one workspace's conversations into the plain rows the lists consume.
  *
- * A missing row, a snapshot that throws, or any value other than `blank === true`
- * is not blank. `/fork` uses that to stay out of the menu without treating an
- * unloaded summary as empty.
+ * Every member present in the catalog is listed — including blanks and archived
+ * sessions — because filtering is the pure list builder's job. `running` comes
+ * from the catalog's signal, so a row agrees with the strip dot and the sidebar
+ * light about whether the turn is live.
  *
- * @param {object} [sessions] ClientSessions service
- * @param {unknown} sessionId
- * @returns {boolean}
- */
-function sessionIsBlank(sessions, sessionId) {
-  try {
-    const row = sessions?.list?.getSnapshot?.()?.byId?.[sessionId]
-    return row?.blank === true
-  } catch (_error) {
-    return false
-  }
-}
-
-/**
- * Resolve the workspace that owns a session.
- *
- * @param {{items?: {workspaceId: string, sessionIds?: string[]}[]}} [snapshot] workspaces snapshot
- * @param {unknown} sessionId session identity
- * @returns {string|undefined} owning workspace id
- */
-function workspaceIdOf(snapshot, sessionId) {
-  if (snapshot === undefined || snapshot === null || !Array.isArray(snapshot.items)) return undefined
-  if (typeof sessionId !== 'string' || sessionId === '') return undefined
-  for (const workspace of snapshot.items) {
-    if (workspace === null || typeof workspace !== 'object') continue
-    if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
-      return workspace.workspaceId
-    }
-  }
-  return undefined
-}
-
-/**
- * Project the session catalog into plain conversation rows for one workspace.
- *
- * Every workspace member present in the catalog is listed — including blanks
- * and archived sessions — because filtering is the pure list builder's job.
- *
- * @param {object} input
- * @param {object} input.sessions `sessions.list` snapshot
- * @param {object} input.workspaces `workspaces.list` snapshot
- * @param {string} input.workspaceId workspace to project
+ * @param {any} catalog the read model
+ * @param {string} workspaceId workspace to project
  * @returns {object[]} plain conversation rows
  */
-function conversationsOf({ sessions, workspaces, workspaceId }) {
-  const sessionRows = sessions?.byId
-  const workspace = Array.isArray(workspaces?.items)
-    ? workspaces.items.find((item) => item?.workspaceId === workspaceId)
-    : undefined
-  if (sessionRows === undefined || workspace === undefined || !Array.isArray(workspace.sessionIds)) return []
-  const archived = new Set(Array.isArray(workspaces.archivedSessionIds) ? workspaces.archivedSessionIds : [])
-
+function conversationRowsOf(catalog, workspaceId) {
+  if (catalog === null || catalog === undefined) return []
+  if (typeof workspaceId !== 'string' || workspaceId === '') return []
   const rows = []
-  for (const sessionId of workspace.sessionIds) {
-    if (typeof sessionId !== 'string') continue
-    const summary = sessionRows[sessionId]
-    if (summary === undefined || summary === null) continue
+  for (const row of catalog.sessionsOf(workspaceId)) {
     rows.push({
-      sessionId,
+      sessionId: row.id,
       workspaceId,
-      title: typeof summary.title === 'string' ? summary.title : '',
+      title: row.title,
       firstPrompt: '',
-      updatedAt: typeof summary.updatedAt === 'number' && Number.isFinite(summary.updatedAt) ? summary.updatedAt : 0,
-      running: summary.running === true,
-      blank: summary.blank === true,
-      archived: archived.has(sessionId),
+      updatedAt: row.updatedAt,
+      running: catalog.signal(row.id).running === true,
+      blank: row.started !== true,
+      archived: row.archived === true,
     })
   }
   return rows
@@ -208,10 +157,11 @@ async function fillFirstPrompts(sessions, rows, options = {}) {
 /**
  * Build one workspace's raw conversation list without needing a triggering
  * session. This is the empty state's data source (ticket 10): it reuses the
- * exact `/resume` projection (`conversationsOf`) and prompt fallback
+ * exact `/resume` projection (`conversationRowsOf`) and prompt fallback
  * (`fillFirstPrompts`) instead of inventing a second list.
  *
- * @param {{sessions: object, workspaces: object}} services client services
+ * @param {{sessions: object, catalog: any}} services `sessions` is the client
+ *   service (for the history reads), `catalog` the read model
  * @param {string} workspaceId workspace to project
  * @param {{signal?: AbortSignal, promptLookups?: number, promptPages?: number}} [options]
  * @returns {Promise<object[]>} plain conversation rows
@@ -219,12 +169,10 @@ async function fillFirstPrompts(sessions, rows, options = {}) {
 async function listWorkspaceConversations(services, workspaceId, options = {}) {
   if (typeof workspaceId !== 'string' || workspaceId === '') return []
   const sessions = services?.sessions
-  const workspaces = services?.workspaces
-  const sessionsSnapshot = sessions?.list?.getSnapshot?.()
-  const workspacesSnapshot = workspaces?.list?.getSnapshot?.()
-  if (sessionsSnapshot === undefined || workspacesSnapshot === undefined) return []
+  const catalog = services?.catalog
+  if (sessions === undefined || catalog === null || catalog === undefined) return []
 
-  const rows = conversationsOf({ sessions: sessionsSnapshot, workspaces: workspacesSnapshot, workspaceId })
+  const rows = conversationRowsOf(catalog, workspaceId)
   await fillFirstPrompts(sessions, rows, options)
   return rows
 }
@@ -234,15 +182,16 @@ async function listWorkspaceConversations(services, workspaceId, options = {}) {
  * workspace, in catalog order, with first prompts filled in for the handful of
  * titleless conversations that need the fallback.
  *
- * @param {{sessions: object, workspaces: object}} services client services
+ * @param {{sessions: object, catalog: any}} services `sessions` client service,
+ *   `catalog` the read model
  * @param {string} triggerSessionId session the command was invoked from
  * @param {{signal?: AbortSignal, promptLookups?: number, promptPages?: number}} [options]
  * @returns {Promise<object[]>} plain conversation rows
  */
 async function listConversations(services, triggerSessionId, options = {}) {
-  const workspacesSnapshot = services?.workspaces?.list?.getSnapshot?.()
-  if (workspacesSnapshot === undefined) return []
-  const workspaceId = workspaceIdOf(workspacesSnapshot, triggerSessionId)
+  const catalog = services?.catalog
+  if (catalog === null || catalog === undefined) return []
+  const workspaceId = catalog.workspaceOf(triggerSessionId)?.id
   if (workspaceId === undefined) return []
   return listWorkspaceConversations(services, workspaceId, options)
 }
@@ -275,9 +224,7 @@ module.exports = {
   SOURCE,
   MAX_PROMPT_LOOKUPS,
   MAX_PROMPT_PAGES,
-  sessionIsBlank,
-  workspaceIdOf,
-  conversationsOf,
+  conversationRowsOf,
   firstUserPromptOf,
   firstPromptOf,
   fillFirstPrompts,

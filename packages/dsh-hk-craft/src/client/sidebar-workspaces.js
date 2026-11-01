@@ -25,6 +25,7 @@
  */
 
 const { createTranslator, react } = require('./react-and-translator.js')
+const { openCatalog } = require('./catalog.js')
 const { sectionModel, workspaceRunningCount } = require('./dsh-workspaces.js')
 const { WorkspaceDeleteDialog } = require('./workspace-delete-dialog.js')
 const { absentHook, messageOf } = require('./shared.js')
@@ -287,6 +288,11 @@ function WorkspaceSection(props) {
   const workspaces = useWorkspaces((state) => state)
   useWorkspacePaneRevision(React, props?.panes)
 
+  // One read model for the three snapshots: the rows, the order and the running
+  // count below all ask it instead of walking dsh's shapes. `openCatalog`
+  // memoises on the triple, so this is a stable value across re-renders.
+  const catalog = openCatalog({ sessions, workspaces, statuses })
+
   const [busy, setBusy] = React.useState(false)
   const [failure, setFailure] = React.useState(null)
   const [hovered, setHovered] = React.useState(null)
@@ -297,8 +303,8 @@ function WorkspaceSection(props) {
   const [focusTarget, setFocusTarget] = React.useState(null)
   const focusTargets = React.useRef({})
 
-  const rows = sectionModel(workspaces, sessions, statuses, props?.panes)
-  const order = workspaceOrderOf(workspaces)
+  const rows = sectionModel(catalog, props?.panes)
+  const order = workspaceOrderOf(catalog)
   const defaultName = t('workspace.defaultName')
 
   // Pointer plumbing lives in its own hook; the section only owns the rows, the
@@ -338,7 +344,7 @@ function WorkspaceSection(props) {
     setPendingDelete({
       workspaceId: row.workspaceId,
       name: displayWorkspaceName(row.title, defaultName),
-      runningCount: workspaceRunningCount(workspaces, sessions, statuses, row.workspaceId),
+      runningCount: workspaceRunningCount(catalog, row.workspaceId),
       focusTarget: deleteFocusTarget(order, row.workspaceId),
     })
     setDeleteBusy(false)

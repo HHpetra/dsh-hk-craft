@@ -1,11 +1,13 @@
 'use strict'
 
 /**
- * The dsh adapter for the sidebar workspace section.
+ * The dsh **action** adapter for the sidebar workspace section: reveal, add,
+ * reorder and delete a workspace.
  *
- * Every assumption about the host shell is concentrated here, so a wrong one is
- * a one-file fix. The component (`sidebar-workspaces.js`) consumes only the
- * plain rows and callbacks this module produces.
+ * Reading the record graph — membership, titles, the current session, the light
+ * signals — is `catalog.js`'s job (`GLOSSARY.md`: 清单快照). This module takes
+ * the read model and never parses `byId`, `sessionIds` or `phase`; what is left
+ * here is what no read model can answer: the calls and their order.
  *
  * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
  * (`deps/VERSIONS.md`). The durable contract record lives in
@@ -31,16 +33,6 @@
  *   `globalThis.__DSH_DIRECTORY_PICKER__.pick()` or the public service
  *   `uiWorkspace.pickDirectory()`; both resolve a path or `null` when the user
  *   cancels (`doc/upstream-contracts.md#directory-picker`).
- * - Records: `workspaces.list` is `{ items, archivedSessionIds,
- *   pinnedSessionIds, phase, state }` with workspace members in `sessionIds`;
- *   the session list snapshot is `{ phase, ids, byId }`; `sessionStatus` is a
- *   `Map<sessionId, { running, pendingInteraction, completionUnread }>`. "Main
- *   view" is derived from the one session retained under `mainView`
- *   (`doc/upstream-contracts.md#workspace-catalog`,
- *   `#session-summary-fields`).
- * - A summary row's `blank` bit is inverted into the light's `started` signal: a
- *   conversation that never sent a message must not light its workspace green
- *   (`doc/upstream-contracts.md#session-summary-fields`).
  * - "Enabled" (ever opened in split) is the pane controller's answer, from its
  *   loaded layouts plus the workspace layout key's existence. Opening a
  *   workspace in the native view does not count, because it never writes a pane
@@ -54,7 +46,8 @@
  * `doc/upstream-contracts.md#session-summary-fields`.
  */
 
-const { mainSessionId, projectWorkspaceSection, readStatus, sessionSignal } = require('./workspace-status.js')
+const { openCatalog, readCatalogs } = require('./catalog.js')
+const { projectWorkspaceSection } = require('./workspace-status.js')
 const { workspaceOrderOf } = require('./workspace-order.js')
 
 /**
@@ -68,20 +61,18 @@ const { workspaceOrderOf } = require('./workspace-order.js')
  * §1). A set is still returned when the controller answered for every row, so an
  * empty set genuinely means "none of these was ever opened in split".
  *
- * @param {{ items?: ReadonlyArray<any> } | undefined} workspacesSnapshot
+ * @param {any} catalog the read model
  * @param {{ isWorkspaceEnabled?: (workspaceId: string) => boolean } | null | undefined} panes
  * @returns {Set<string> | undefined}
  */
-function enabledWorkspacesOf(workspacesSnapshot, panes) {
+function enabledWorkspacesOf(catalog, panes) {
   if (panes === null || panes === undefined) return undefined
   if (typeof panes.isWorkspaceEnabled !== 'function') return undefined
-  const items = Array.isArray(workspacesSnapshot?.items) ? workspacesSnapshot.items : []
+  if (catalog === null || catalog === undefined) return undefined
   const enabled = new Set()
   try {
-    for (const item of items) {
-      const workspaceId = item?.workspaceId
-      if (typeof workspaceId !== 'string' || workspaceId === '') continue
-      if (panes.isWorkspaceEnabled(workspaceId)) enabled.add(workspaceId)
+    for (const workspace of catalog.workspaces()) {
+      if (panes.isWorkspaceEnabled(workspace.id)) enabled.add(workspace.id)
     }
   } catch (_error) {
     return undefined
@@ -90,22 +81,15 @@ function enabledWorkspacesOf(workspacesSnapshot, panes) {
 }
 
 /**
- * Project the shell's live snapshots into the rows `WorkspaceSection` renders.
+ * Project the catalog into the rows `WorkspaceSection` renders.
  *
- * @param {any} workspacesSnapshot `workspaces.list` snapshot
- * @param {any} sessionsSnapshot `sessions.list` snapshot
- * @param {any} statusSnapshot `sessionStatus` map
+ * @param {any} catalog the read model (`catalog.js`)
  * @param {{ isWorkspaceEnabled?: (workspaceId: string) => boolean } | null} [panes]
  *   the pane controller face; omit it to treat every workspace as enabled
- * @returns {Array<{ workspaceId: string, title: string, light: 'gray' | 'green' | 'yellow' | 'red', current: boolean }>}
+ * @returns {Array<{ workspaceId: string, title: string, light: 'gray' | 'idle' | 'green' | 'yellow' | 'red', current: boolean }>}
  */
-function sectionModel(workspacesSnapshot, sessionsSnapshot, statusSnapshot, panes) {
-  return projectWorkspaceSection(
-    workspacesSnapshot,
-    sessionsSnapshot,
-    statusSnapshot,
-    enabledWorkspacesOf(workspacesSnapshot, panes),
-  )
+function sectionModel(catalog, panes) {
+  return projectWorkspaceSection(catalog, enabledWorkspacesOf(catalog, panes))
 }
 
 /**
@@ -113,32 +97,23 @@ function sectionModel(workspacesSnapshot, sessionsSnapshot, statusSnapshot, pane
  *
  * The delete confirmation promises that deleting the workspace will not stop
  * those sessions, so the number has to come from the same signals the sidebar
- * light uses (`workspace-status.js:sessionSignal`): the unified status map
- * first, the summary row second. Archived sessions are out of reach from this
- * sidebar, sessions dsh no longer knows are skipped, and a catalog that is
- * still loading cannot be trusted as a membership list — all three contribute
- * zero, which is also the safe answer when the warning would be wrong.
+ * light uses (`workspace-status.js:workspaceLight` over `catalog.signal`).
+ * Archived sessions are out of reach from this sidebar, and a catalog that is
+ * not ready cannot be trusted as a membership list — both contribute zero,
+ * which is also the safe answer when the warning would be wrong
+ * (`ADR-0016`: readiness is one rule, and a half-loaded list proves nothing).
  *
- * @param {any} workspacesSnapshot `workspaces.list` snapshot
- * @param {any} sessionsSnapshot `sessions.list` snapshot
- * @param {any} statusSnapshot `sessionStatus` map
+ * @param {any} catalog the read model
  * @param {string} workspaceId
  * @returns {number}
  */
-function workspaceRunningCount(workspacesSnapshot, sessionsSnapshot, statusSnapshot, workspaceId) {
-  if (workspacesSnapshot?.phase !== 'ready') return 0
-  if (sessionsSnapshot?.phase === 'loading') return 0
-  const items = Array.isArray(workspacesSnapshot.items) ? workspacesSnapshot.items : []
-  const item = items.find((candidate) => candidate?.workspaceId === workspaceId)
-  if (item === undefined) return 0
-  const archived = new Set(workspacesSnapshot.archivedSessionIds ?? [])
-  const byId = sessionsSnapshot?.byId ?? {}
+function workspaceRunningCount(catalog, workspaceId) {
+  if (catalog === null || catalog === undefined) return 0
+  if (catalog.complete() !== true) return 0
   let running = 0
-  for (const sessionId of Array.isArray(item.sessionIds) ? item.sessionIds : []) {
-    if (archived.has(sessionId)) continue
-    const summary = byId[sessionId]
-    if (summary === undefined || summary === null) continue
-    if (sessionSignal(summary, readStatus(statusSnapshot, sessionId)).running) running += 1
+  for (const row of catalog.sessionsOf(workspaceId)) {
+    if (row.archived === true) continue
+    if (catalog.signal(row.id).running) running += 1
   }
   return running
 }
@@ -153,7 +128,7 @@ function workspaceRunningCount(workspacesSnapshot, sessionsSnapshot, statusSnaps
  */
 function hostWorkspaceOrder(ctx) {
   try {
-    return workspaceOrderOf(ctx.get('workspaces')?.list?.getSnapshot?.())
+    return workspaceOrderOf(openCatalog(readCatalogs(ctx)))
   } catch (_error) {
     return []
   }
@@ -182,48 +157,23 @@ async function pickDirectory(ctx) {
 }
 
 /**
- * Read one client service's list snapshot, or `undefined` when the service is
- * absent or the read throws. A missing catalog must not turn a workspace click
- * into an exception; the caller falls back to the blank-session path.
- *
- * @param {any} ctx client Cordis context
- * @param {string} name service name
- * @returns {any}
- */
-function readListSnapshot(ctx, name) {
-  try {
-    return ctx.get(name)?.list?.getSnapshot?.()
-  } catch (_error) {
-    return undefined
-  }
-}
-
-/**
  * Whether `sessionId` is a conversation this workspace can show: a member,
  * still in the catalog, not archived, and not a blank.
  *
- * @param {any} workspacesSnapshot `workspaces.list` snapshot
- * @param {any} sessionsSnapshot `sessions.list` snapshot
+ * @param {any} catalog the read model
  * @param {string} workspaceId
  * @param {unknown} sessionId
  * @returns {boolean}
  */
-function isWorkspaceConversation(workspacesSnapshot, sessionsSnapshot, workspaceId, sessionId) {
+function isWorkspaceConversation(catalog, workspaceId, sessionId) {
   if (typeof workspaceId !== 'string' || workspaceId === '') return false
   if (typeof sessionId !== 'string' || sessionId === '') return false
-  if (workspacesSnapshot?.phase !== 'ready') return false
-  if (sessionsSnapshot == null) return false
-  if (sessionsSnapshot.phase !== undefined && sessionsSnapshot.phase !== 'ready') return false
-  const items = Array.isArray(workspacesSnapshot.items) ? workspacesSnapshot.items : []
-  const item = items.find((candidate) => candidate?.workspaceId === workspaceId)
-  if (item === undefined) return false
-  const memberIds = Array.isArray(item.sessionIds) ? item.sessionIds : []
-  if (!memberIds.includes(sessionId)) return false
-  const archived = new Set(workspacesSnapshot.archivedSessionIds ?? [])
-  if (archived.has(sessionId)) return false
-  const summary = sessionsSnapshot.byId?.[sessionId]
-  if (summary == null) return false
-  return summary.blank !== true
+  if (catalog === null || catalog === undefined) return false
+  if (catalog.complete() !== true) return false
+  const row = catalog.sessionsOf(workspaceId).find((candidate) => candidate.id === sessionId)
+  if (row === undefined) return false
+  if (row.archived === true) return false
+  return row.started === true
 }
 
 /**
@@ -243,36 +193,27 @@ function isWorkspaceConversation(workspacesSnapshot, sessionsSnapshot, workspace
  * nothing to reveal: the catalog is not ready, the workspace is unknown, or
  * every member is blank or archived.
  *
- * @param {any} workspacesSnapshot `workspaces.list` snapshot
- * @param {any} sessionsSnapshot `sessions.list` snapshot
+ * @param {any} catalog the read model
  * @param {string} workspaceId
  * @returns {string|undefined}
  */
-function nativeConversationId(workspacesSnapshot, sessionsSnapshot, workspaceId) {
+function nativeConversationId(catalog, workspaceId) {
   if (typeof workspaceId !== 'string' || workspaceId === '') return undefined
-  if (workspacesSnapshot?.phase !== 'ready') return undefined
-  if (sessionsSnapshot == null) return undefined
-  if (sessionsSnapshot.phase !== undefined && sessionsSnapshot.phase !== 'ready') return undefined
-  const items = Array.isArray(workspacesSnapshot.items) ? workspacesSnapshot.items : []
-  const item = items.find((candidate) => candidate?.workspaceId === workspaceId)
-  if (item === undefined) return undefined
-  const memberIds = Array.isArray(item.sessionIds) ? item.sessionIds : []
-  const byId = sessionsSnapshot.byId ?? {}
-  const revealable = (sessionId) =>
-    isWorkspaceConversation(workspacesSnapshot, sessionsSnapshot, workspaceId, sessionId)
+  if (catalog === null || catalog === undefined) return undefined
+  if (catalog.complete() !== true) return undefined
 
-  const current = mainSessionId(sessionsSnapshot)
-  if (revealable(current)) return current
+  const current = catalog.current()
+  if (current !== undefined && current !== null && isWorkspaceConversation(catalog, workspaceId, current)) {
+    return current
+  }
 
   let bestId
   let bestTime = Number.NEGATIVE_INFINITY
-  for (const sessionId of memberIds) {
-    if (!revealable(sessionId)) continue
-    const updated = byId[sessionId].updatedAt
-    const time = typeof updated === 'number' && Number.isFinite(updated) ? updated : 0
-    if (time > bestTime) {
-      bestTime = time
-      bestId = sessionId
+  for (const row of catalog.sessionsOf(workspaceId)) {
+    if (!isWorkspaceConversation(catalog, workspaceId, row.id)) continue
+    if (row.updatedAt > bestTime) {
+      bestTime = row.updatedAt
+      bestId = row.id
     }
   }
   return bestId
@@ -315,11 +256,7 @@ function createSectionActions(ctx, options = {}) {
   function openWorkspace(workspaceId) {
     if (panes?.active?.() === true && panes?.switchWorkspace?.(workspaceId) === true) return
     const uiWorkspace = ctx.get('uiWorkspace')
-    const sessionId = nativeConversationId(
-      readListSnapshot(ctx, 'workspaces'),
-      readListSnapshot(ctx, 'sessions'),
-      workspaceId,
-    )
+    const sessionId = nativeConversationId(openCatalog(readCatalogs(ctx)), workspaceId)
     if (sessionId !== undefined && typeof uiWorkspace?.openSession === 'function') {
       return uiWorkspace.openSession(sessionId)
     }

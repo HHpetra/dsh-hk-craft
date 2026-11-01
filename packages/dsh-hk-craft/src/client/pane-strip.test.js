@@ -18,6 +18,21 @@ const {
   openConversationItems,
 } = require('./pane-strip.js')
 const { focusShortcutIndex } = require('./pane-shortcuts.js')
+const { openCatalog } = require('./catalog.js')
+
+/**
+ * The read model for one set of raw snapshots.
+ *
+ * The fixtures below stay in dsh's own shapes; only this helper knows that the
+ * strip now takes a catalog.
+ *
+ * @param {any} sessions `sessions.list` snapshot
+ * @param {any} [statuses] `sessionStatus` map
+ * @returns {any}
+ */
+function catalogOf(sessions, statuses) {
+  return openCatalog({ sessions, statuses })
+}
 
 /**
  * row(p1, col(p2, p3)) — the same shape the layout tree renders:
@@ -69,7 +84,7 @@ function fixtureStatuses() {
 }
 
 test('strip entries follow the layout tree leaves and keep their status order', () => {
-  const entries = projectStrip(fixtureLayout(), fixtureSessions(), fixtureStatuses(), 'Untitled')
+  const entries = projectStrip(fixtureLayout(), catalogOf(fixtureSessions(), fixtureStatuses()), 'Untitled')
 
   assert.deepEqual(
     entries.map((entry) => entry.paneId),
@@ -95,7 +110,7 @@ test('strip entries follow the layout tree leaves and keep their status order', 
 })
 
 test('an entry title falls back to the localized placeholder when the session has none', () => {
-  const entries = projectStrip(fixtureLayout(), fixtureSessions(), fixtureStatuses(), 'Untitled')
+  const entries = projectStrip(fixtureLayout(), catalogOf(fixtureSessions(), fixtureStatuses()), 'Untitled')
   assert.deepEqual(
     entries.map((entry) => entry.title),
     ['Alpha', 'Untitled', 'Gamma'],
@@ -104,7 +119,7 @@ test('an entry title falls back to the localized placeholder when the session ha
 
 test('a blank or whitespace title also falls back', () => {
   const sessions = { byId: { s1: { id: 's1', title: '   ' } } }
-  const entries = projectStrip(fixtureLayout(), sessions, undefined, 'Untitled')
+  const entries = projectStrip(fixtureLayout(), catalogOf(sessions), 'Untitled')
   assert.equal(entries[0].title, 'Untitled')
 })
 
@@ -113,7 +128,7 @@ test('the live session status drives the dot, with waiting ahead of running', ()
     ['s1', { running: true, pendingInteraction: { kind: 'question' } }],
     ['s2', { running: true, pendingInteraction: null }],
   ])
-  const entries = projectStrip(fixtureLayout(), fixtureSessions(), statuses, 'Untitled')
+  const entries = projectStrip(fixtureLayout(), catalogOf(fixtureSessions(), statuses), 'Untitled')
 
   assert.equal(entries[0].status, 'waiting')
   assert.equal(entries[1].status, 'running')
@@ -127,7 +142,7 @@ test('the session summary is the fallback when no status map is available', () =
       s2: { id: 's2', title: 'Beta', running: false },
     },
   }
-  const entries = projectStrip(fixtureLayout(), sessions, undefined, 'Untitled')
+  const entries = projectStrip(fixtureLayout(), catalogOf(sessions), 'Untitled')
 
   assert.deepEqual(
     entries.map((entry) => entry.status),
@@ -137,7 +152,7 @@ test('the session summary is the fallback when no status map is available', () =
 
 test('there is no error status: an `errored` field is ignored', () => {
   const sessions = { byId: { s1: { id: 's1', title: 'Alpha', errored: true } } }
-  const entries = projectStrip(fixtureLayout(), sessions, undefined, 'Untitled')
+  const entries = projectStrip(fixtureLayout(), catalogOf(sessions), 'Untitled')
 
   assert.equal(entries[0].status, 'idle')
 })
@@ -152,8 +167,7 @@ test('only the first four entries advertise a keyboard shortcut', () => {
   }
   const entries = projectStrip(
     { root, panes, activePaneId: 'p1' },
-    { byId: {} },
-    undefined,
+    catalogOf({ byId: {} }),
     'Untitled',
   )
 
@@ -165,12 +179,12 @@ test('only the first four entries advertise a keyboard shortcut', () => {
 })
 
 test('an empty layout has no strip entries', () => {
-  assert.deepEqual(projectStrip({ root: null, panes: {}, activePaneId: null }, {}, undefined, 'Untitled'), [])
+  assert.deepEqual(projectStrip({ root: null, panes: {}, activePaneId: null }, catalogOf({}), 'Untitled'), [])
 })
 
 test('a status change never reorders entries or moves their shortcut numbers', () => {
-  const idle = projectStrip(fixtureLayout(), fixtureSessions(), undefined, 'Untitled')
-  const busy = projectStrip(fixtureLayout(), fixtureSessions(), fixtureStatuses(), 'Untitled')
+  const idle = projectStrip(fixtureLayout(), catalogOf(fixtureSessions()), 'Untitled')
+  const busy = projectStrip(fixtureLayout(), catalogOf(fixtureSessions(), fixtureStatuses()), 'Untitled')
 
   assert.deepEqual(
     busy.map((entry) => [entry.paneId, entry.sessionId, entry.index, entry.shortcut]),

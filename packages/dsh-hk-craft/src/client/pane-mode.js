@@ -9,9 +9,8 @@
  * That id is all a pane can know: dsh fixes the composition after the first
  * turn, so this module resolves copy only; it never offers a switch.
  *
- * dsh shapes stop here. `pane-view.js` passes the raw `useSessions` snapshot and
- * the pane's own session id to the seat, and the seat passes the normalized roster
- * rows (or nothing) in.
+ * dsh shapes stop at `catalog.js`. The seat receives the catalog and the pane's
+ * own session id, and passes the normalized roster rows (or nothing) in.
  */
 
 /** Localized names for the shipped presets whose copy the plugin carries. */
@@ -28,13 +27,13 @@ const MODE_HINT_KEY = 'pane.mode.hint'
 /**
  * The preset id recorded on one pane's session summary.
  *
- * @param {{byId?: Record<string, any>}|undefined} sessions raw `useSessions` snapshot
+ * @param {{projectionsOf?: (sessionId: string) => any}|undefined} catalog the read model
  * @param {string|undefined} sessionId the pane's conversation
  * @returns {string|undefined} a non-empty preset id, or undefined
  */
-function presetIdOfSession(sessions, sessionId) {
+function presetIdOfSession(catalog, sessionId) {
   if (typeof sessionId !== 'string' || sessionId === '') return undefined
-  const value = sessions?.byId?.[sessionId]?.projectionValues?.agentPreset
+  const value = catalog?.projectionsOf?.(sessionId)?.session?.agentPreset
   if (typeof value !== 'string') return undefined
   const presetId = value.trim()
   return presetId === '' ? undefined : presetId

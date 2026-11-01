@@ -15,6 +15,22 @@ const {
   nativeConversationId,
   workspaceRunningCount,
 } = require('./dsh-workspaces.js')
+const { openCatalog } = require('./catalog.js')
+
+/**
+ * The read model for one set of raw snapshots.
+ *
+ * The fixtures below stay in dsh's own shapes; only this helper knows that the
+ * adapter now takes a catalog.
+ *
+ * @param {any} workspaces `workspaces.list` snapshot
+ * @param {any} sessions `sessions.list` snapshot
+ * @param {any} [statuses] `sessionStatus` map or record
+ * @returns {any}
+ */
+function catalogOf(workspaces, sessions, statuses) {
+  return openCatalog({ sessions, workspaces, statuses })
+}
 
 /**
  * A client context with the two services the section touches.
@@ -86,13 +102,15 @@ function fakeCtx(options = {}) {
 
 test('sectionModel projects the shell snapshots into section rows', () => {
   const rows = sectionModel(
-    {
-      phase: 'ready',
-      items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['s1'] }],
-      archivedSessionIds: [],
-    },
-    { phase: 'ready', ids: ['s1'], byId: { s1: { id: 's1', running: true, retainedBy: {} } } },
-    new Map([['s1', { running: true }]]),
+    catalogOf(
+      {
+        phase: 'ready',
+        items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['s1'] }],
+        archivedSessionIds: [],
+      },
+      { phase: 'ready', ids: ['s1'], byId: { s1: { id: 's1', running: true, retainedBy: {} } } },
+      new Map([['s1', { running: true }]]),
+    ),
   )
   assert.deepEqual(rows, [{ workspaceId: 'w1', title: 'A', light: 'yellow', current: false }])
 })
@@ -140,7 +158,7 @@ function enablementSnapshots() {
 test('sectionModel asks the pane controller which workspaces were opened in split', () => {
   const { workspaces, sessions } = enablementSnapshots()
   const { panes, asked } = fakePaneFace(['w1'])
-  const rows = sectionModel(workspaces, sessions, new Map(), panes)
+  const rows = sectionModel(catalogOf(workspaces, sessions, new Map()), panes)
 
   assert.deepEqual(asked, ['w1', 'w2'])
   assert.deepEqual(
@@ -162,9 +180,7 @@ test('a never-opened workspace stays gray even with a session running or waiting
   workspaces.items[1].sessionIds = ['busy']
   const { panes } = fakePaneFace([])
   const rows = sectionModel(
-    workspaces,
-    sessions,
-    new Map([['busy', { running: true, pendingInteraction: { kind: 'approval' } }]]),
+    catalogOf(workspaces, sessions, new Map([['busy', { running: true, pendingInteraction: { kind: 'approval' } }]])),
     panes,
   )
   assert.deepEqual(
@@ -175,7 +191,7 @@ test('a never-opened workspace stays gray even with a session running or waiting
 
 test('without a pane controller every workspace counts as enabled', () => {
   const { workspaces, sessions } = enablementSnapshots()
-  const rows = sectionModel(workspaces, sessions, new Map())
+  const rows = sectionModel(catalogOf(workspaces, sessions, new Map()))
   assert.deepEqual(
     rows.map((row) => row.light),
     ['idle', 'gray'],
@@ -189,7 +205,7 @@ test('a controller that cannot answer degrades to all enabled, not to all gray',
       throw new Error('storage disabled')
     },
   }
-  const rows = sectionModel(workspaces, sessions, new Map(), panes)
+  const rows = sectionModel(catalogOf(workspaces, sessions, new Map()), panes)
   assert.deepEqual(
     rows.map((row) => row.light),
     ['idle', 'gray'],
@@ -443,18 +459,20 @@ test('outside pane mode a loading session catalog still starts the blank session
 
 test('nativeConversationId ignores a conversation that belongs to another workspace', () => {
   const sessionId = nativeConversationId(
-    {
-      phase: 'ready',
-      items: [{ workspaceId: 'w2', sessionIds: ['blank'] }],
-      archivedSessionIds: [],
-    },
-    {
-      phase: 'ready',
-      byId: {
-        elsewhere: { id: 'elsewhere', blank: false, updatedAt: 9, retainedBy: { mainView: 1 } },
-        blank: { id: 'blank', blank: true, updatedAt: 1, retainedBy: {} },
+    catalogOf(
+      {
+        phase: 'ready',
+        items: [{ workspaceId: 'w2', sessionIds: ['blank'] }],
+        archivedSessionIds: [],
       },
-    },
+      {
+        phase: 'ready',
+        byId: {
+          elsewhere: { id: 'elsewhere', blank: false, updatedAt: 9, retainedBy: { mainView: 1 } },
+          blank: { id: 'blank', blank: true, updatedAt: 1, retainedBy: {} },
+        },
+      },
+    ),
     'w2',
   )
   assert.equal(sessionId, undefined)
@@ -576,8 +594,8 @@ test('the running-session count is what the delete warning promises', () => {
     ['s3', { running: false, pendingInteraction: { kind: 'approval' } }],
   ])
 
-  assert.equal(workspaceRunningCount(workspaces, sessions, statuses, 'w1'), 2)
-  assert.equal(workspaceRunningCount(workspaces, sessions, statuses, 'unknown'), 0)
-  assert.equal(workspaceRunningCount({ phase: 'loading' }, sessions, statuses, 'w1'), 0)
-  assert.equal(workspaceRunningCount(workspaces, { phase: 'loading' }, statuses, 'w1'), 0)
+  assert.equal(workspaceRunningCount(catalogOf(workspaces, sessions, statuses), 'w1'), 2)
+  assert.equal(workspaceRunningCount(catalogOf(workspaces, sessions, statuses), 'unknown'), 0)
+  assert.equal(workspaceRunningCount(catalogOf({ phase: 'loading' }, sessions, statuses), 'w1'), 0)
+  assert.equal(workspaceRunningCount(catalogOf(workspaces, { phase: 'loading' }, statuses), 'w1'), 0)
 })

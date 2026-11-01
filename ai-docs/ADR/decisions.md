@@ -345,3 +345,30 @@
 
 - 图标集合随已安装的右栏插件变化，本插件不写死文件/浏览器/终端名单。
 - `guide()` 没有独立的“当前页”订阅；图标不标出哪一个正开着。展开与否仍只在每次 `emit` 时读 `isExpanded()`。
+
+---
+
+## ADR-0016 — 清单读取收成一个只读视图，就绪口径统一为一条
+
+**背景**：插件对 dsh 的两份清单（`sessions.list`、`workspaces.list`）与实时状态映射的解析散在十个 module 里。同一件事写了多份、写法还互不相同：
+
+- 「工作区成员会话」5 份，「`blank` 即未开始」5 份，「`mainView` 推导当前会话」2 份（`terminal-shell.js` 那份还多一个「取第一个 `byId`」兜底），「`byId[id]` 行查找」8 份；
+- `phase` 就绪判定 6 处，分成两派：缺 `phase` 一派算就绪、一派算未就绪；相邻两个函数对 `pending` 也给出相反答案（`workspaceRunningCount` 当就绪，`projectWorkspaceSection` 当未就绪）。
+
+注释层面也有三个 module 各自声称「上游形状的唯一适配处」。升级 dsh 时没有一处能回答「改这个字段会影响谁」。
+
+**决策**：
+
+1. **`catalog.js` 是唯一的解析处**。它把两份清单与状态映射读成一个**只读视图**，对外只回答领域问题：这段会话叫什么、属于哪个工作区、是否已开始、是否已归档、当前会话是谁、四个状态信号、两份清单是否就绪。其余 module 不再出现 `byId`、`sessionIds`、`phase`、`retainedBy`。
+2. **纯视图，带单槽 memo**：`openCatalog({ sessions, workspaces, statuses })` 无订阅、无生命周期、不碰 `ctx`；同一组快照永远返回同一个对象（视图可以把它放进依赖数组）。`readCatalogs(ctx)` 是唯一知道客户端服务名的函数。
+3. **就绪口径只有一条**（`phaseReady`）：缺 `phase` 算就绪（测试替身的形状），`pending` / `loading` 都不算，其余非 `ready` 也不算。`sessionsReady()` / `workspacesReady()` 分开暴露，`complete()` 表示两者都就绪——**只有 `complete()` 为真时，才允许把「目录里没有这个会话」当成会话已消失**（恢复修剪、冷启动落地）。
+4. **只连接、不过滤**：`sessionsOf(workspaceId)` 只跳过目录里无法解析的会话；已归档与未开始的行照常返回并带上标记，因为各调用方的谓词本来就不同（`/resume` 故意列出已归档行交给列表构建器过滤，侧栏必须排除）。
+5. **状态合并进信号**：`signal(id)` 的 `running` 是「实时状态或摘要行任一说在跑」，`started` 只来自摘要行（`blank` 取反，宽容地按 `blank !== true` 读），`waiting` 来自 `pendingInteraction`，`unread` 来自 `completionUnread`。五态灯的**规则**仍留在 `workspace-status.js`，只吃这几个信号。
+6. **动作留在原处**：`dsh-sessions.js`（创建 / 揭示 / fork / 历史分页）与 `dsh-workspaces.js`（创建 / 删除 / 排序 / 选目录）保留「动作适配」的角色，注释改为指向 catalog。
+
+**后果 / 约束**：
+
+- 两处可见行为变化：两次清单都未就绪时，删除工作区的二次确认里「N 个正在运行」显示 0（安全方向）；恢复布局时，只存在于别的 `sessionIds` 里的会话会被修剪（与 ADR-0005「树里只装本工作区的会话」一致）。
+- `workspace.createdAt` 被显式承认为契约字段，由 catalog 解析成数字后再参与冷启动兜底（见 `doc/upstream-contracts.md#workspace-catalog`）。
+- 接口按需增长：只有出现真实调用方才加查询（例如子代理会话的 `subagent` 位、终端默认 shell 用的 `sessionIds()`），不为对称预先造接口。
+- 新增读取路径时**先问 catalog**；需要**动作**或**订阅**时才另开 module。跨工作区同屏、纵向分割等 ADR-0005 / 0006 / 0009 的约束不因本决策改变。

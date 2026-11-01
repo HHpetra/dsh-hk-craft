@@ -23,7 +23,8 @@
  * service bag and an injected `Notification` constructor.
  */
 
-const { displayWorkspaceName, mainSessionId } = require('./workspace-status.js')
+const { displayWorkspaceName } = require('./workspace-status.js')
+const { openCatalog, readCatalogs } = require('./catalog.js')
 const { messageOf } = require('./shared.js')
 
 /** Versioned local key; notifications are a client preference, not profile data. */
@@ -206,7 +207,7 @@ function diffSessionStatus(previous, next) {
 }
 
 /**
- * Whether one event is wanted by the current settings, session origin and
+ * Whether one event is wanted by the current settings, session kind and
  * foreground state.
  *
  * The foreground gate is opt-in (`suppressWhenVisible`). When it is on and the
@@ -220,14 +221,14 @@ function diffSessionStatus(previous, next) {
  *
  * @param {'approval'|'question'|'plan-review'|'completed'|'failed'} type
  * @param {{enabled: boolean, suppressWhenVisible?: boolean, types: Record<string, boolean>}} settings
- * @param {{origin?: string}|null|undefined} meta
+ * @param {{subagent?: boolean}|null|undefined} meta
  * @param {{dshFocused?: boolean, visible?: boolean}|null|undefined} [context]
  * @returns {boolean}
  */
 function shouldNotify(type, settings, meta, context) {
   if (settings?.enabled !== true) return false
   if (settings.types?.[type] !== true) return false
-  if (meta?.origin === 'subagent') return false
+  if (meta?.subagent === true) return false
   if (settings.suppressWhenVisible === true && context?.dshFocused === true && context?.visible === true) {
     return false
   }
@@ -435,7 +436,8 @@ function createNotifier(options) {
    *
    * In split view every pane of the visible workspace is visible at once, so
    * `paneIndexOf` answers for the active layout; the native view has exactly
-   * one visible conversation, which is dsh's `mainView` retention.
+   * one visible conversation, which is the retained `mainView` the catalog
+   * reports as current.
    */
   function sessionIsVisible(sessionId) {
     try {
@@ -447,7 +449,7 @@ function createNotifier(options) {
       // Fall through to the native visibility answer.
     }
     try {
-      return mainSessionId(service('sessions')?.list?.getSnapshot?.()) === sessionId
+      return openCatalog(readCatalogs(ctx)).current() === sessionId
     } catch (_error) {
       return false
     }
@@ -480,32 +482,16 @@ function createNotifier(options) {
     }
   }
 
-  /** Session title/workspace metadata from the public list snapshots. */
+  /** Session title, workspace name and kind from the read model. */
   function sessionMeta(sessionId) {
-    let row
-    try {
-      row = service('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId]
-    } catch (_error) {
-      row = undefined
-    }
-    let workspaceName = ''
-    try {
-      const items = service('workspaces')?.list?.getSnapshot?.()?.items
-      if (Array.isArray(items)) {
-        const item = items.find(
-          (candidate) => Array.isArray(candidate?.sessionIds) && candidate.sessionIds.includes(sessionId),
-        )
-        if (item !== undefined) {
-          workspaceName = displayWorkspaceName(item.title, t('workspace.defaultName'))
-        }
-      }
-    } catch (_error) {
-      workspaceName = ''
-    }
+    const catalog = openCatalog(readCatalogs(ctx))
+    const row = catalog.session(sessionId)
+    const workspace = catalog.workspaceOf(sessionId)
     return {
-      sessionTitle: typeof row?.title === 'string' && row.title !== '' ? row.title : t('session.untitled'),
-      workspaceName,
-      origin: row?.origin,
+      sessionTitle: row === undefined || row.title === '' ? t('session.untitled') : row.title,
+      workspaceName:
+        workspace === undefined ? '' : displayWorkspaceName(workspace.title, t('workspace.defaultName')),
+      subagent: row?.subagent === true,
     }
   }
 

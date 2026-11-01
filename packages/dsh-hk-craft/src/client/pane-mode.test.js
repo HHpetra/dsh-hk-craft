@@ -18,8 +18,14 @@ const {
   modeRosterRows,
   resolveModeLabel,
 } = require('./pane-mode.js')
+const { openCatalog } = require('./catalog.js')
 
-/** A session list snapshot whose row records `projectionValues.agentPreset`. */
+/** The read model for one session snapshot. */
+function catalogOf(sessions) {
+  return openCatalog({ sessions })
+}
+
+/** A session list snapshot whose row records projectionValues.agentPreset. */
 function sessionsWith(sessionId, preset) {
   return { byId: { [sessionId]: { id: sessionId, projectionValues: { agentPreset: preset } } } }
 }
@@ -28,17 +34,17 @@ function sessionsWith(sessionId, preset) {
 const t = (key) => key
 
 test('a pane session exposes the preset it started with', () => {
-  assert.equal(presetIdOfSession(sessionsWith('s1', 'standard'), 's1'), 'standard')
-  assert.equal(presetIdOfSession(sessionsWith('s1', 'review'), 's1'), 'review')
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', 'standard')), 's1'), 'standard')
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', 'review')), 's1'), 'review')
 })
 
 test('a missing session, row or preset yields no mode', () => {
-  assert.equal(presetIdOfSession(sessionsWith('s1', 'standard'), undefined), undefined)
-  assert.equal(presetIdOfSession(sessionsWith('s1', 'standard'), ''), undefined)
-  assert.equal(presetIdOfSession(sessionsWith('s1', 'standard'), 'gone'), undefined)
-  assert.equal(presetIdOfSession({ byId: { s1: {} } }, 's1'), undefined)
-  assert.equal(presetIdOfSession(sessionsWith('s1', ''), 's1'), undefined)
-  assert.equal(presetIdOfSession(sessionsWith('s1', 42), 's1'), undefined)
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', 'standard')), undefined), undefined)
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', 'standard')), ''), undefined)
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', 'standard')), 'gone'), undefined)
+  assert.equal(presetIdOfSession(catalogOf({ byId: { s1: {} } }), 's1'), undefined)
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', '')), 's1'), undefined)
+  assert.equal(presetIdOfSession(catalogOf(sessionsWith('s1', 42)), 's1'), undefined)
 })
 
 test('the four shipped presets resolve to their localized names', () => {
@@ -63,7 +69,7 @@ test('no pane session or no recorded preset renders nothing', () => {
   // The badge composes these two public rules; there is no third "project" entry
   // point just for the tests.
   const badgeOf = (sessions, sessionId) => {
-    const presetId = presetIdOfSession(sessions, sessionId)
+    const presetId = presetIdOfSession(catalogOf(sessions), sessionId)
     return presetId === undefined ? null : resolveModeLabel(presetId, [], t)
   }
   assert.equal(badgeOf(sessionsWith('s1', 'standard'), undefined), null)

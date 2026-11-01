@@ -370,7 +370,7 @@ The optional foreground gate is client policy, not a dsh service:
 `document.hasFocus()` and `document.visibilityState` decide whether the dsh
 window is in front; split-view visibility is
 `paneController.paneIndexOf(sessionId) != null` (every pane of the active
-workspace is on screen); the native view uses `mainSessionId(sessions.list)`
+workspace is on screen); the native view uses `catalog.current()`
 (the `mainView` retention). When the gate is on and the session is visible, no
 toast is raised; other workspaces and a background dsh still notify. The gate
 does not queue suppressed events for later.
@@ -658,6 +658,12 @@ still be empty. Until **both** `workspaces.list` and `sessions.list` are
 incomplete catalog, and re-runs the prune when the session list becomes ready.
 The workspace shown at startup waits for that same moment before treating an
 empty read as "no past conversations".
+
+The catalog also reads `createdAt` (an ISO string) as the tiebreaker for which
+workspace a cold start shows: a member's `updatedAt` wins when there is one, and
+a workspace whose members are all timestamped zero falls back to its own
+`createdAt`. `catalog.js` parses it to a number once, so no caller calls
+`Date.parse` on a workspace record.
 
 **Verified:** snapshot and record shapes were read in the workspace controller
 and ui-workspace. Runtime probe: restart dsh with a deleted session and check

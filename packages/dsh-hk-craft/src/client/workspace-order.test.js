@@ -4,11 +4,11 @@
  * Host workspace order and the neighbour rules built on it.
  *
  * `workspaces.list().items` is already in display order and is the only order the
- * plugin renders (`doc/upstream-contracts.md#workspace-display-order`). The
- * sidebar, the adapter and the pane controller all read that order: the sidebar
- * resolves a drop and the focus target after a delete, the adapter captures the
- * pre-delete order, and the controller hands the view to the neighbour. These
- * tests pin the shared rules once, at the pure seam.
+ * plugin renders (`doc/upstream-contracts.md#workspace-display-order`); the
+ * catalog preserves it. The sidebar, the adapter and the pane controller all read
+ * that order: the sidebar resolves a drop and the focus target after a delete,
+ * the adapter captures the pre-delete order, and the controller hands the view to
+ * the neighbour. These tests pin the shared rules once, at the pure seam.
  */
 
 const test = require('node:test')
@@ -21,23 +21,28 @@ const {
   previousWorkspaceId,
   workspaceOrderOf,
 } = require('./workspace-order.js')
+const { openCatalog } = require('./catalog.js')
+const { workspaceItem, workspacesSnapshot } = require('./snapshot-fixtures.js')
 
-test('the order is the host snapshot order, ids only', () => {
-  assert.deepEqual(
-    workspaceOrderOf({
-      phase: 'ready',
-      items: [
-        { workspaceId: 'w1' },
-        { workspaceId: null },
-        { workspaceId: '' },
-        null,
-        { workspaceId: 'w2' },
-      ],
-    }),
-    ['w1', 'w2'],
-  )
+test('the order is the catalog order, ids only', () => {
+  const catalog = openCatalog({
+    workspaces: workspacesSnapshot([
+      workspaceItem('w1'),
+      workspaceItem(''),
+      workspaceItem('w2'),
+      workspaceItem('w1', { title: 'duplicate' }),
+    ]),
+  })
+  assert.deepEqual(workspaceOrderOf(catalog), ['w1', 'w2'])
   assert.deepEqual(workspaceOrderOf(undefined), [])
-  assert.deepEqual(workspaceOrderOf({ items: 'not a list' }), [])
+})
+
+test('an unready workspaces catalog keeps its rows, in order', () => {
+  const catalog = openCatalog({
+    workspaces: workspacesSnapshot([workspaceItem('w1'), workspaceItem('w2')], { phase: 'pending' }),
+  })
+  assert.deepEqual(workspaceOrderOf(catalog), ['w1', 'w2'])
+  assert.deepEqual(workspaceOrderOf(openCatalog({})), [])
 })
 
 test('next and previous follow host order', () => {

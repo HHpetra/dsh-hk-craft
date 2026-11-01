@@ -11,13 +11,11 @@
  * conversation (`+`) splits the focused pane beside itself and then evens the
  * row by pane count, so the strip order stays the on-screen left-to-right order.
  *
- * dsh shapes never reach this file. `pane-view.js` feeds it the live session
- * list and status map, and paints the plain entries; the pure rules below stay
- * unit-testable in Node without React.
+ * dsh shapes never reach this file: `pane-view.js` hands it the read model, and
+ * the rules below stay unit-testable in Node without React.
  */
 
 const { leaves } = require('./layout-tree.js')
-const { readStatus, sessionSignal } = require('./workspace-status.js')
 const { FOCUS_LIMIT, focusShortcutLabel } = require('./pane-shortcuts.js')
 
 /** Ctrl+1..4 address the first four open conversations (ticket 06). */
@@ -80,14 +78,12 @@ function paneIdForStripIndex(layout, index) {
  * `workspace-status.js` and `doc/upstream-contracts.md#session-summary-fields`),
  * so there is no error state.
  *
- * @param {{running?: boolean}|undefined} summary session list row
- * @param {{running?: boolean, pendingInteraction?: object|null}|undefined} status live status map entry
+ * @param {{running?: boolean, waiting?: boolean}|undefined} signal the pane session's `catalog.signal`
  * @returns {'running'|'waiting'|'idle'}
  */
-function paneStatusKind(summary, status) {
-  const signal = sessionSignal(summary, status)
-  if (signal.waiting) return STRIP_STATUS_WAITING
-  if (signal.running) return STRIP_STATUS_RUNNING
+function paneStatusKind(signal) {
+  if (signal?.waiting === true) return STRIP_STATUS_WAITING
+  if (signal?.running === true) return STRIP_STATUS_RUNNING
   return STRIP_STATUS_IDLE
 }
 
@@ -108,19 +104,17 @@ function conversationTitle(title, untitled) {
  * The entries the strip renders: tree order, title, live status, shortcut hint.
  *
  * @param {object} layout controller snapshot / layout tree
- * @param {{byId?: Record<string, any>}|undefined} sessions `sessions.list` snapshot
- * @param {Map<string, any>|Record<string, any>|undefined} statuses `sessionStatus` map
+ * @param {{session?: (sessionId: string) => any, signal?: (sessionId: string) => any}|undefined} catalog the read model
  * @param {string} untitled localized placeholder for a missing title
  * @returns {{paneId: string, sessionId: string, index: number, focused: boolean, title: string, status: string, shortcut?: string}[]}
  */
-function projectStrip(layout, sessions, statuses, untitled) {
-  const byId = sessions?.byId ?? {}
+function projectStrip(layout, catalog, untitled) {
   return openConversationItems(layout).map((item) => {
-    const status = paneStatusKind(byId[item.sessionId], readStatus(statuses, item.sessionId))
+    const row = catalog?.session?.(item.sessionId)
     return {
       ...item,
-      title: conversationTitle(byId[item.sessionId]?.title, untitled),
-      status,
+      title: conversationTitle(row?.title, untitled),
+      status: paneStatusKind(catalog?.signal?.(item.sessionId)),
       ...(item.index <= STRIP_SHORTCUT_LIMIT ? { shortcut: focusShortcutLabel(item.index) } : {}),
     }
   })

@@ -66,7 +66,7 @@ async function interruptSession(sessions, sessionId) {
  * @param {(patch: object) => void} deps.emit state emitter
  * @param {() => boolean} deps.isDisposed
  * @param {(paneId: string) => {workspaceId: string|null, pane: object}|null} deps.locatePane
- * @param {(sessionId: string) => any} deps.rowOf session list row
+ * @param {(sessionId: string) => any} deps.rowOf the session's catalog row
  * @param {(sessionId: string) => boolean} deps.isSessionRunning
  * @param {(paneId: string) => boolean} deps.closePane structural close
  * @returns {{clearPendingClose: () => void, requestClose: (paneId: string) => boolean, confirmClose: () => Promise<boolean>, cancelClose: () => boolean}}

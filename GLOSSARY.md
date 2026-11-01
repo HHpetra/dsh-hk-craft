@@ -28,6 +28,11 @@ _Avoid_: 后端（容易与独立服务混淆）。
 运行在 dsh Web 壳浏览器内的插件面，经 `dsh.client` 声明并由 `lib/client.js` 提供。
 _Avoid_: 前端应用、第二套 UI。
 
+**清单快照（catalog）**:
+客户端对 dsh 两份清单（`sessions.list`、`workspaces.list`）与实时状态映射的**只读视图**（`catalog.js`）。它是插件里唯一解析 `byId`、`sessionIds`、`phase`、`retainedBy` 的地方；其余 module 只问领域问题：这段会话叫什么、属于哪个工作区、是否已开始、当前会话是谁、"两份清单是否都可读"。
+它没有订阅、没有生命周期，也不是 dsh 的服务；同一组快照永远返回同一个对象。
+_Avoid_: 用"目录"指清单（`workspace.path` 才是磁盘目录）；把清单快照说成 store 或缓存的会话数据；把"就绪"理解为"任意时刻都能读到内容"（`pending` / `loading` 都不就绪，缺 `phase` 按就绪处理，见 [ADR-0016](ai-docs/ADR/decisions.md)）。
+
 **workspace**:
 dsh 会话绑定的工作目录；本插件若涉及文件能力，以 dsh workspace 为准，不自建目录根。
 

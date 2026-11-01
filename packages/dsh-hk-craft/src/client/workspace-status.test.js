@@ -3,12 +3,12 @@
 /**
  * The workspace status light is the one piece of sidebar behavior that has to be
  * *right*: five states, a hard precedence (red > yellow > green > idle > gray),
- * an "enabled" gate and no knowledge of React or of dsh's record shapes at the
- * call site.
+ * an "enabled" gate and no knowledge of React or of dsh's record shapes.
  *
- * These tests fix the function's contract: it consumes plain signals and a plain
- * enabled set, so a wrong assumption about dsh lives in `dsh-workspaces.js` (and
- * its test), never here.
+ * `workspaceLight` takes plain signals; `projectWorkspaceSection` takes the
+ * catalog (`catalog.js`). The case fixtures below stay in dsh's own snapshot
+ * shapes on purpose — they go through `openCatalog`, so each case also pins the
+ * snapshot → catalog → light path end to end.
  */
 
 const test = require('node:test')
@@ -21,11 +21,23 @@ const {
   LIGHT_YELLOW,
   LIGHT_RED,
   workspaceLight,
-  sessionSignal,
-  mainSessionId,
-  projectWorkspaceSection,
+  projectWorkspaceSection: sectionFromCatalog,
   displayWorkspaceName,
 } = require('./workspace-status.js')
+const { openCatalog } = require('./catalog.js')
+
+/**
+ * The section rows for one set of raw snapshots.
+ *
+ * @param {any} workspaces `workspaces.list` snapshot
+ * @param {any} sessions `sessions.list` snapshot
+ * @param {any} statuses `sessionStatus` map or record
+ * @param {any} [enabled] "opened in split" set
+ * @returns {Array<object>}
+ */
+function sectionRows(workspaces, sessions, statuses, enabled) {
+  return sectionFromCatalog(openCatalog({ sessions, workspaces, statuses }), enabled)
+}
 
 /** An idle session that has started at least one turn, with nothing unread. */
 const startedIdle = { running: false, waiting: false, started: true, unread: false }
@@ -120,55 +132,6 @@ test('null entries and absent flags count as "nothing happened"', () => {
   assert.equal(workspaceLight([null, undefined, {}]), LIGHT_GRAY)
 })
 
-/* ── sessionSignal: dsh records in, plain signals out ─────────────────────── */
-
-test('a session status marks a session running, and the list row is the fallback', () => {
-  assert.deepEqual(sessionSignal({ running: true }, undefined), {
-    running: true,
-    waiting: false,
-    started: false,
-    unread: false,
-  })
-  assert.deepEqual(sessionSignal({ running: false }, { running: true }), {
-    running: true,
-    waiting: false,
-    started: false,
-    unread: false,
-  })
-})
-
-test('any pending interaction means "waiting for you", whatever its kind', () => {
-  for (const kind of ['approval', 'question', 'plan-review', 'something-new']) {
-    assert.equal(sessionSignal({}, { pendingInteraction: { kind } }).waiting, true, kind)
-  }
-})
-
-test('a null or absent pending interaction is not waiting', () => {
-  assert.equal(sessionSignal({}, { pendingInteraction: null }).waiting, false)
-  assert.equal(sessionSignal({}, { pendingInteraction: undefined }).waiting, false)
-})
-
-test('the summary row\'s blank bit is the only "started" source', () => {
-  assert.equal(sessionSignal({ blank: false }, undefined).started, true)
-  assert.equal(sessionSignal({ blank: true }, undefined).started, false)
-  assert.equal(sessionSignal({}, undefined).started, false)
-  // A status never invents a started conversation: only the summary knows.
-  assert.equal(sessionSignal({ blank: true }, { running: false }).started, false)
-})
-
-test('the status map\'s completionUnread bit is the only "unread" source', () => {
-  assert.equal(sessionSignal({ blank: false }, { completionUnread: true }).unread, true)
-  assert.equal(sessionSignal({ blank: false }, { completionUnread: false }).unread, false)
-  assert.equal(sessionSignal({ blank: false }, undefined).unread, false)
-  // Nothing on the summary row can fake an unread completion.
-  assert.equal(sessionSignal({ blank: false, completionUnread: true }, undefined).unread, false)
-})
-
-test('the signal carries no error bit: dsh exposes none', () => {
-  const signal = sessionSignal({ running: false }, { running: false })
-  assert.deepEqual(Object.keys(signal).sort(), ['running', 'started', 'unread', 'waiting'])
-})
-
 /* ── projectWorkspaceSection: dsh-shaped snapshots into rows ──────────────── */
 
 const workspaces = {
@@ -201,7 +164,7 @@ const statuses = new Map([
 const ALL_ENABLED = new Set(['w1', 'w2', 'w3'])
 
 test('each workspace becomes one row with its id and stored title', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses, ALL_ENABLED)
+  const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED)
   assert.deepEqual(
     rows.map((row) => [row.workspaceId, row.title]),
     [
@@ -213,12 +176,12 @@ test('each workspace becomes one row with its id and stored title', () => {
 })
 
 test('rows keep the host order and do not invent workspaces', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses, ALL_ENABLED)
+  const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED)
   assert.equal(rows.length, workspaces.items.length)
 })
 
 test('the light aggregates the workspace members only', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses, ALL_ENABLED)
+  const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED)
   // w1: s1 running + s2 waiting → red; w2: empty → gray; w3: s3 started, idle → idle.
   assert.deepEqual(
     rows.map((row) => row.light),
@@ -227,7 +190,7 @@ test('the light aggregates the workspace members only', () => {
 })
 
 test('an enabled workspace with only blank sessions stays gray', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['fresh'] }] },
     { phase: 'ready', ids: ['fresh'], byId: { fresh: { id: 'fresh', running: false, blank: true } }, archivedSessionIds: [] },
     new Map(),
@@ -237,7 +200,7 @@ test('an enabled workspace with only blank sessions stays gray', () => {
 })
 
 test('an enabled workspace with one started idle conversation is idle', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['done'] }] },
     { phase: 'ready', ids: ['done'], byId: { done: { id: 'done', running: false, blank: false } }, archivedSessionIds: [] },
     new Map(),
@@ -247,7 +210,7 @@ test('an enabled workspace with one started idle conversation is idle', () => {
 })
 
 test('an enabled workspace with one unread completion is green', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['done'] }] },
     { phase: 'ready', ids: ['done'], byId: { done: { id: 'done', running: false, blank: false } }, archivedSessionIds: [] },
     new Map([['done', { running: false, pendingInteraction: null, completionUnread: true }]]),
@@ -257,7 +220,7 @@ test('an enabled workspace with one unread completion is green', () => {
 })
 
 test('an enabled workspace with a running or waiting session is yellow or red', () => {
-  const running = projectWorkspaceSection(
+  const running = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['s'] }] },
     { phase: 'ready', ids: ['s'], byId: { s: { id: 's', running: true, blank: false } } },
     new Map(),
@@ -265,7 +228,7 @@ test('an enabled workspace with a running or waiting session is yellow or red', 
   )
   assert.equal(running[0].light, LIGHT_YELLOW)
 
-  const waiting = projectWorkspaceSection(
+  const waiting = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['s'] }] },
     { phase: 'ready', ids: ['s'], byId: { s: { id: 's', running: true, blank: false } } },
     new Map([['s', { running: true, pendingInteraction: { kind: 'approval' } }]]),
@@ -275,7 +238,7 @@ test('an enabled workspace with a running or waiting session is yellow or red', 
 })
 
 test('a workspace that was never opened in split is gray even while it runs or waits', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     workspaces,
     sessionList,
     statuses,
@@ -288,7 +251,7 @@ test('a workspace that was never opened in split is gray even while it runs or w
 })
 
 test('an empty enabled set makes every row gray', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses, new Set())
+  const rows = sectionRows(workspaces, sessionList, statuses, new Set())
   assert.deepEqual(
     rows.map((row) => row.light),
     [LIGHT_GRAY, LIGHT_GRAY, LIGHT_GRAY],
@@ -296,7 +259,7 @@ test('an empty enabled set makes every row gray', () => {
 })
 
 test('without an enabled set every workspace is treated as enabled', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses)
+  const rows = sectionRows(workspaces, sessionList, statuses)
   // Same session-derived lights as the all-enabled case: the degraded path only
   // loses the "never opened" gray, never the idle/green/yellow/red distinction.
   assert.deepEqual(
@@ -304,13 +267,13 @@ test('without an enabled set every workspace is treated as enabled', () => {
     [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
   assert.deepEqual(
-    projectWorkspaceSection(workspaces, sessionList, statuses, null).map((row) => row.light),
+    sectionRows(workspaces, sessionList, statuses, null).map((row) => row.light),
     [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
 })
 
 test('an enabled set may be any collection of ids, not only a Set', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses, ['w1'])
+  const rows = sectionRows(workspaces, sessionList, statuses, ['w1'])
   assert.deepEqual(
     rows.map((row) => row.light),
     [LIGHT_RED, LIGHT_GRAY, LIGHT_GRAY],
@@ -318,7 +281,7 @@ test('an enabled set may be any collection of ids, not only a Set', () => {
 })
 
 test('the workspace holding the main-view session is the current one', () => {
-  const rows = projectWorkspaceSection(workspaces, sessionList, statuses, ALL_ENABLED)
+  const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED)
   assert.deepEqual(
     rows.map((row) => row.current),
     [true, false, false],
@@ -326,7 +289,7 @@ test('the workspace holding the main-view session is the current one', () => {
 })
 
 test('an empty enabled workspace is gray even while another is red', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     workspaces,
     { phase: 'ready', ids: ['s1'], byId: { s1: { id: 's1', running: false, blank: false, retainedBy: {} } } },
     new Map([['s1', { running: true, pendingInteraction: { kind: 'approval' } }]]),
@@ -339,7 +302,7 @@ test('an empty enabled workspace is gray even while another is red', () => {
 })
 
 test('sessions outside every workspace never light a row', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: [] }] },
     { phase: 'ready', ids: ['stray'], byId: { stray: { id: 'stray', running: true, blank: false, retainedBy: {} } } },
     new Map([['stray', { running: true, pendingInteraction: { kind: 'question' } }]]),
@@ -352,7 +315,7 @@ test('sessions outside every workspace never light a row', () => {
 })
 
 test('archived members are ignored: they cannot keep a workspace red', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     {
       phase: 'ready',
       items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['s9'] }],
@@ -369,7 +332,7 @@ test('archived members are ignored: they cannot keep a workspace red', () => {
 })
 
 test('an archived finished conversation does not turn a workspace green', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     {
       phase: 'ready',
       items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['old'] }],
@@ -383,7 +346,7 @@ test('an archived finished conversation does not turn a workspace green', () => 
 })
 
 test('a listed session the session list no longer knows is skipped', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     { phase: 'ready', items: [{ workspaceId: 'w1', title: 'A', sessionIds: ['gone', 's1'] }] },
     { phase: 'ready', ids: ['s1'], byId: { s1: { id: 's1', running: true, blank: false, retainedBy: {} } } },
     new Map(),
@@ -399,23 +362,23 @@ test('statuses may arrive as a plain record or be absent entirely', () => {
   const record = { s1: { running: true, pendingInteraction: undefined } }
   // s2's real question is not in this record, so only s1's run is left.
   assert.equal(
-    projectWorkspaceSection(workspaces, sessionList, record, ALL_ENABLED)[0].light,
+    sectionRows(workspaces, sessionList, record, ALL_ENABLED)[0].light,
     LIGHT_YELLOW,
   )
   // Without any statuses the list rows' own `running` bit is the fallback.
   assert.equal(
-    projectWorkspaceSection(workspaces, sessionList, undefined, ALL_ENABLED)[0].light,
+    sectionRows(workspaces, sessionList, undefined, ALL_ENABLED)[0].light,
     LIGHT_YELLOW,
   )
 })
 
 test('an unready workspace snapshot projects to no rows', () => {
-  assert.deepEqual(projectWorkspaceSection({ phase: 'pending' }, sessionList, statuses), [])
-  assert.deepEqual(projectWorkspaceSection(undefined, sessionList, statuses), [])
+  assert.deepEqual(sectionRows({ phase: 'pending' }, sessionList, statuses), [])
+  assert.deepEqual(sectionRows(undefined, sessionList, statuses), [])
 })
 
 test('an unready session list cannot prove a conversation finished, so it is all gray', () => {
-  const rows = projectWorkspaceSection(
+  const rows = sectionRows(
     workspaces,
     { phase: 'pending', ids: [], byId: {} },
     statuses,
@@ -431,7 +394,7 @@ test('a loading or pending session list stays gray even while it retains rows', 
   // A reload keeps the previous `byId` around; those rows prove nothing until the
   // catalog says it is ready, so they must not light yellow/green/red.
   for (const phase of ['loading', 'pending']) {
-    const rows = projectWorkspaceSection(
+    const rows = sectionRows(
       workspaces,
       { phase, ids: sessionList.ids, byId: sessionList.byId },
       statuses,
@@ -447,26 +410,11 @@ test('a loading or pending session list stays gray even while it retains rows', 
 
 test('an absent session phase is treated as ready', () => {
   const { phase: _phase, ...unphased } = sessionList
-  const rows = projectWorkspaceSection(workspaces, unphased, statuses, ALL_ENABLED)
+  const rows = sectionRows(workspaces, unphased, statuses, ALL_ENABLED)
   assert.deepEqual(
     rows.map((row) => row.light),
     [LIGHT_RED, LIGHT_GRAY, LIGHT_IDLE],
   )
-})
-
-/* ── mainSessionId: the one mainView scan ─────────────────────────────────── */
-
-test('the derived current session is the one retained under mainView', () => {
-  const sessions = {
-    byId: {
-      idle: { id: 'idle', retainedBy: {} },
-      current: { id: 'current', retainedBy: { mainView: 1 } },
-      background: { id: 'background', retainedBy: { sidebarView: 1 } },
-    },
-  }
-  assert.equal(mainSessionId(sessions), 'current')
-  assert.equal(mainSessionId({ byId: {} }), undefined)
-  assert.equal(mainSessionId(undefined), undefined)
 })
 
 /* ── displayWorkspaceName: dsh's default-title convention ─────────────────── */

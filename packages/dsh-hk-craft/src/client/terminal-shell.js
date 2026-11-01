@@ -12,6 +12,8 @@
  * in dsh's own shell menu is left alone.
  */
 
+const { openCatalog } = require('./catalog.js')
+
 /** dsh's own remembered shell path. */
 const SHELL_PREFERENCE_KEY = 'dsh.terminal.shell'
 /**
@@ -77,7 +79,11 @@ function planShellDefault({ shells, currentPath, applied }) {
 }
 
 /**
- * @param {any} list sessions.list
+ * The session the shell should ask for its shells: the current conversation,
+ * or else any session it lists. `webTerminals.launchShells` needs one session id
+ * and the answer does not depend on which.
+ *
+ * @param {any} list `sessions.list`
  * @returns {string | undefined}
  */
 function sessionIdOf(list) {
@@ -87,13 +93,11 @@ function sessionIdOf(list) {
   } catch {
     return undefined
   }
-  const byId = snapshot?.byId ?? {}
-  for (const key of Object.keys(byId)) {
-    const row = byId[key]
-    if (row != null && (row.retainedBy?.mainView ?? 0) > 0) return row.id ?? key
-  }
-  const first = Object.keys(byId)[0]
-  return first === undefined ? undefined : (byId[first]?.id ?? first)
+  const catalog = openCatalog({ sessions: snapshot })
+  const current = catalog.current()
+  if (current !== undefined) return current
+  const first = catalog.sessionIds()[0]
+  return first === undefined ? undefined : catalog.session(first)?.id
 }
 
 /**

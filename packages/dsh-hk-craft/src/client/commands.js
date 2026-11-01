@@ -15,9 +15,8 @@
  */
 
 const { buildResumeRows } = require('./resume-list.js')
+const { openCatalog, readCatalogs } = require('./catalog.js')
 const {
-  sessionIsBlank,
-  workspaceIdOf,
   listConversations,
   openConversation,
   startConversation,
@@ -326,19 +325,27 @@ function whenRejected(attempt, onError) {
  * leaves the copy in the session list. See
  * `doc/upstream-contracts.md#forking-a-session-uiworkspaceforksession`.
  *
+ * `catalogOf` is a getter, not a catalog: `available` runs long after
+ * registration, so it must read the current snapshot.
+ *
  * @param {object} deps
  * @param {(key: string, params?: Record<string, unknown>) => string} deps.t translator
  * @param {object} [deps.panes] pane host face
- * @param {object} [deps.sessions] ClientSessions service
+ * @param {() => any} deps.catalogOf current read model
  * @param {object} deps.uiWorkspace workspace navigation service
  * @returns {object} command contribution
  */
-function buildForkCommand({ t, panes, sessions, uiWorkspace }) {
+function buildForkCommand({ t, panes, catalogOf, uiWorkspace }) {
   return {
     name: 'fork',
     label: () => t('command.fork.label'),
     description: () => t('command.fork.description'),
-    available: (session) => !sessionIsBlank(sessions, session?.sessionId),
+    available: (session) => {
+      const row = catalogOf().session(session?.sessionId)
+      // A summary that has not loaded is not "blank": only a conversation that
+      // provably never sent a message is hidden from the menu.
+      return row === undefined || row.started === true
+    },
     ui: {
       kind: 'action',
       run: (session) => {
@@ -450,11 +457,15 @@ function buildTraceCommand({ t, panes }) {
 function registerCommands(services) {
   const { commandUi, workspaces, t, panes } = services
   const now = services.now ?? (() => Date.now())
-  const workspaceIdFor = (sessionId) => workspaceIdOf(workspaces?.list?.getSnapshot?.(), sessionId)
+  /** The read model at call time; the memo makes repeated reads free. */
+  const catalogOf = () => openCatalog(readCatalogs({ sessions: services.sessions, workspaces }))
+  const workspaceIdFor = (sessionId) => catalogOf().workspaceOf(sessionId)?.id
   const conversations =
     services.conversationsFor ??
     ((triggerSessionId, signal) =>
-      listConversations({ sessions: services.sessions, workspaces }, triggerSessionId, { signal }))
+      listConversations({ sessions: services.sessions, catalog: catalogOf() }, triggerSessionId, {
+        signal,
+      }))
   const open = services.openConversation ?? ((sessionId) => openConversation(services.uiWorkspace, sessionId))
   const start = services.startConversation ?? ((workspaceId) => startConversation(services.uiWorkspace, workspaceId))
   const keyTarget = services.keyTarget ?? globalThis.document
@@ -472,7 +483,7 @@ function registerCommands(services) {
   if (typeof services.uiWorkspace?.forkSession === 'function') {
     disposers.push(
       commandUi.register(
-        buildForkCommand({ t, panes, sessions: services.sessions, uiWorkspace: services.uiWorkspace }),
+        buildForkCommand({ t, panes, catalogOf, uiWorkspace: services.uiWorkspace }),
       ),
     )
   }

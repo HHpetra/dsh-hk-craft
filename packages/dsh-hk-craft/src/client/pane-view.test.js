@@ -437,8 +437,10 @@ test('both pane-header seats receive that pane session and its own width cap', (
 
     assert.equal(modeElement.props.sessionId, 's2')
     assert.equal(subagentElement.props.sessionId, 's2')
-    assert.equal(modeElement.props.sessions, sessions)
-    assert.equal(subagentElement.props.statuses, statuses)
+    // Both seats read the same catalog, not the raw snapshots: the header is the
+    // only place that knows which hooks dsh's slot kit supplies.
+    assert.equal(modeElement.props.catalog, subagentElement.props.catalog)
+    assert.equal(modeElement.props.catalog.session('s2').title, 'Second')
     assert.deepEqual(
       [modeElement.props.seatStyle.maxWidth, subagentElement.props.seatStyle.maxWidth],
       [140, 160],

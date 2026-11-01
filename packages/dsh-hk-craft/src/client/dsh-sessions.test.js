@@ -5,8 +5,7 @@ const assert = require('node:assert/strict')
 
 const {
   SOURCE,
-  workspaceIdOf,
-  conversationsOf,
+  conversationRowsOf,
   firstUserPromptOf,
   firstPromptOf,
   listConversations,
@@ -14,6 +13,7 @@ const {
   openConversation,
   startConversation,
 } = require('./dsh-sessions.js')
+const { openCatalog } = require('./catalog.js')
 
 /** @param {object[]} items */
 function workspacesSnapshot(items, archived = []) {
@@ -79,17 +79,23 @@ function turnEntry() {
   return { event: { type: 'turn/start', seq: 0, data: {} } }
 }
 
-test('workspaceIdOf resolves the workspace owning a session', () => {
-  const snapshot = workspacesSnapshot([
-    { workspaceId: 'w1', sessionIds: ['a'] },
-    { workspaceId: 'w2', sessionIds: ['b', 'c'] },
-  ])
-  assert.equal(workspaceIdOf(snapshot, 'c'), 'w2')
-  assert.equal(workspaceIdOf(snapshot, 'missing'), undefined)
-  assert.equal(workspaceIdOf(undefined, 'a'), undefined)
-})
+/**
+ * The read model for one fixture pair.
+ *
+ * Accepts either a raw snapshot or a fake service that serves one, so the cases
+ * below can keep whichever shape they already build.
+ *
+ * @param {any} sessions snapshot or `{ list: { getSnapshot } }`
+ * @param {any} [workspaces] snapshot or `{ list: { getSnapshot } }`
+ * @returns {any}
+ */
+function catalogOf(sessions, workspaces) {
+  const snapshotOf = (value) =>
+    typeof value?.list?.getSnapshot === 'function' ? value.list.getSnapshot() : value
+  return openCatalog({ sessions: snapshotOf(sessions), workspaces: snapshotOf(workspaces) })
+}
 
-test('conversationsOf lists the workspace sessions with their durable state', () => {
+test('conversationRowsOf lists the workspace sessions with their durable state', () => {
   const sessions = sessionsSnapshot([
     sessionRow({ id: 'a', title: 'Fix login', running: true, updatedAt: 5 }),
     sessionRow({ id: 'b', blank: true }),
@@ -99,7 +105,7 @@ test('conversationsOf lists the workspace sessions with their durable state', ()
     [{ workspaceId: 'w1', sessionIds: ['a', 'b', 'gone'] }],
     ['b'],
   )
-  const rows = conversationsOf({ sessions, workspaces, workspaceId: 'w1' })
+  const rows = conversationRowsOf(catalogOf(sessions, workspaces), 'w1')
   assert.deepEqual(
     rows.map((row) => row.sessionId),
     ['a', 'b'],
@@ -118,17 +124,18 @@ test('conversationsOf lists the workspace sessions with their durable state', ()
   assert.equal(rows[1].archived, true)
 })
 
-test('conversationsOf reads the durable title only, never the display fallback', () => {
+test('conversationRowsOf reads the durable title only, never the display fallback', () => {
   const sessions = sessionsSnapshot([sessionRow({ id: 'a', displayTitle: 'repo-name' })])
   const workspaces = workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['a'] }])
-  const rows = conversationsOf({ sessions, workspaces, workspaceId: 'w1' })
+  const rows = conversationRowsOf(catalogOf(sessions, workspaces), 'w1')
   assert.equal(rows[0].title, '')
 })
 
-test('conversationsOf is empty for an unknown workspace', () => {
+test('conversationRowsOf is empty for an unknown workspace', () => {
   const sessions = sessionsSnapshot([sessionRow({ id: 'a' })])
   const workspaces = workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['a'] }])
-  assert.deepEqual(conversationsOf({ sessions, workspaces, workspaceId: 'nope' }), [])
+  assert.deepEqual(conversationRowsOf(catalogOf(sessions, workspaces), 'nope'), [])
+  assert.deepEqual(conversationRowsOf(undefined, 'w1'), [])
 })
 
 test('firstUserPromptOf returns the first human-authored text', () => {
@@ -197,7 +204,7 @@ test('listConversations scopes to the triggering session workspace and enriches 
     { workspaceId: 'w2', sessionIds: ['other'] },
   ])
   const rows = await listConversations(
-    { sessions, workspaces: { list: { getSnapshot: () => workspaces } } },
+    { sessions, catalog: catalogOf(sessions, workspaces) },
     'b',
   )
   assert.deepEqual(
@@ -218,8 +225,8 @@ test('listConversations caps how many titleless conversations it opens', async (
     sessionsSnapshot([sessionRow({ id: 'b' }), sessionRow({ id: 'c' })]),
     { b: session, c: session },
   )
-  const workspaces = { list: { getSnapshot: () => workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['b', 'c'] }]) } }
-  const rows = await listConversations({ sessions, workspaces }, 'b', { promptLookups: 1 })
+  const workspaces = workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['b', 'c'] }])
+  const rows = await listConversations({ sessions, catalog: catalogOf(sessions, workspaces) }, 'b', { promptLookups: 1 })
   assert.deepEqual(
     sessions.calls.using.map((call) => call.target),
     ['b'],
@@ -232,7 +239,7 @@ test('listConversations returns nothing when the session is in no workspace', as
   const sessions = fakeSessions(sessionsSnapshot([sessionRow({ id: 'a' })]))
   const workspaces = workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['other'] }])
   assert.deepEqual(
-    await listConversations({ sessions, workspaces: { list: { getSnapshot: () => workspaces } } }, 'a'),
+    await listConversations({ sessions, catalog: catalogOf(sessions, workspaces) }, 'a'),
     [],
   )
 })
@@ -254,7 +261,7 @@ test('listWorkspaceConversations reuses the /resume projection for an explicit w
   ])
 
   const rows = await listWorkspaceConversations(
-    { sessions, workspaces: { list: { getSnapshot: () => workspaces } } },
+    { sessions, catalog: catalogOf(sessions, workspaces) },
     'w1',
   )
 
@@ -275,7 +282,7 @@ test('listWorkspaceConversations reuses the /resume projection for an explicit w
 test('listWorkspaceConversations returns nothing without a usable workspace or catalog', async () => {
   const sessions = fakeSessions(sessionsSnapshot([sessionRow({ id: 'a' })]))
   const workspaces = workspacesSnapshot([{ workspaceId: 'w1', sessionIds: ['a'] }])
-  const services = { sessions, workspaces: { list: { getSnapshot: () => workspaces } } }
+  const services = { sessions, catalog: catalogOf(sessions, workspaces) }
 
   assert.deepEqual(await listWorkspaceConversations(services, 'nope'), [])
   assert.deepEqual(await listWorkspaceConversations(services, ''), [])

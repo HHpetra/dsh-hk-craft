@@ -254,8 +254,8 @@ test('shouldNotify honors the master switch, per-type switch and subagent exclus
     shouldNotify('completed', { ...settings, types: { ...settings.types, completed: false } }, {}),
     false,
   )
-  assert.equal(shouldNotify('completed', settings, { origin: 'subagent' }), false)
-  assert.equal(shouldNotify('failed', settings, { origin: 'subagent' }), false)
+  assert.equal(shouldNotify('completed', settings, { subagent: true }), false)
+  assert.equal(shouldNotify('failed', settings, { subagent: true }), false)
 })
 
 test('the foreground gate only suppresses a focused, visible conversation when enabled', () => {

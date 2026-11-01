@@ -63,7 +63,7 @@ function createModeSeat(options = {}) {
   function ModeSeat(props) {
     const React = react()
     const h = React.createElement
-    const presetId = presetIdOfSession(props?.sessions, props?.sessionId)
+    const presetId = presetIdOfSession(props?.catalog, props?.sessionId)
     const [roster, setRoster] = React.useState([])
 
     React.useEffect(() => {

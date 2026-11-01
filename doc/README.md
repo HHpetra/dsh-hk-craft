@@ -37,6 +37,7 @@ dsh 的端口、`DSH_HOME`、会话存储与登录态都不归本项目管理。
 | :--- | :--- | :--- |
 | host | `packages/dsh-hk-craft/src/index.js` | 宿主服务、工具、路由、会话粘合；经 Cordis `ctx` 使用 dsh 公开能力 |
 | client | `packages/dsh-hk-craft/src/client/` | 浏览器面板 / 设置页；构建为 `lib/client.js`，经 `dsh.client` 声明 |
+| read model | `packages/dsh-hk-craft/src/client/catalog.js` | dsh 清单与状态映射的唯一解析处；其余 module 只问领域问题（ADR-0016） |
 | config | `packages/dsh-hk-craft/cordis.patch.yml` | 只插入一条 `dsh-hk-craft` 行；不复制上游配置 |
 
 host 与 client 同属一个包、同一版本，避免半套升级。客户端入口 id 必须与 patch 行 `name` 完全一致。
@@ -67,9 +68,12 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
 - **未读完成**：`completionUnread` 在非当前会话由运行转为空闲时置位，在该会话成为当前会话
   （例如被聚焦）或再次开始运行时清除。因此后台跑完的窗格先亮绿，回到该工作区查看后回到蓝。
   重启后已经空闲的工作区没有未读完成，显示蓝而不是绿。
-- **计算位置**：`workspace-status.js` 只吃纯信号（`running` / `waiting` / `started` / `unread`）
-  与“启用集合”，不读 dsh 记录；`dsh-workspaces.js` 把快照转成这些信号，侧栏与窗格控制器通过
-  公开服务提供“是否启用”。没有错误灯：dsh 没有可靠的“上一回合失败”字段。
+- **计算位置**：`catalog.js` 是唯一解析 dsh 清单与状态映射的地方（ADR-0016），它把每个会话读成
+  一组纯信号（`running` / `waiting` / `started` / `unread`）；`workspace-status.js` 只吃这组信号与
+  “启用集合”，不读 dsh 记录；侧栏与窗格控制器通过公开服务提供“是否启用”。
+  没有错误灯：dsh 没有可靠的“上一回合失败”字段。
+- **就绪**：`pending` / `loading` 都不算就绪，缺 `phase` 算就绪。只有两份清单都就绪（`catalog.complete()`）
+  时，才允许把“目录里没有这个会话”当成会话已消失；这也是恢复修剪与冷启动落地的门槛。
 
 ## 6. 当前状态
 

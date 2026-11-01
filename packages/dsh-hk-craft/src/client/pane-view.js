@@ -17,6 +17,7 @@
  */
 
 const { createTranslator } = require('./react-and-translator.js')
+const { openCatalog } = require('./catalog.js')
 const {
   CONTENT_FACTORY,
   PANE_SLOT,
@@ -414,7 +415,8 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
     typeof kit?.useSessionStatus === 'function' ? kit.useSessionStatus : absentHook
   const sessions = useSessions((snapshot) => snapshot)
   const statuses = useSessionStatus((snapshot) => snapshot)
-  const title = sessions?.byId?.[pane.sessionId]?.title
+  const catalog = openCatalog({ sessions, statuses })
+  const title = catalog.session(pane.sessionId)?.title
 
   const close = () => controller.closePane(pane.paneId)
   const focus = () => {
@@ -457,8 +459,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
           key: 'mode',
           controller,
           sessionId: pane.sessionId,
-          sessions,
-          statuses,
+          catalog,
           t,
           seatStyle: { ...headerSeatStyle, maxWidth: 140 },
         })
@@ -468,8 +469,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
           key: 'subagents',
           controller,
           sessionId: pane.sessionId,
-          sessions,
-          statuses,
+          catalog,
           t,
           seatStyle: { ...headerSeatStyle, maxWidth: 160 },
         })
@@ -764,6 +764,7 @@ function PaneStrip({
   const useSessionStatus = typeof kit?.useSessionStatus === 'function' ? kit.useSessionStatus : absentHook
   const sessions = useSessions((snapshot) => snapshot)
   const statuses = useSessionStatus((snapshot) => snapshot)
+  const catalog = openCatalog({ sessions, statuses })
   const [hovered, setHovered] = React.useState(null)
   const [creating, setCreating] = React.useState(false)
   const [drag, setDrag] = React.useState(null)
@@ -772,7 +773,7 @@ function PaneStrip({
   /** A drag's pointerup is followed by a click; that click must not re-focus. */
   const suppressClick = React.useRef(false)
 
-  const entries = projectStrip(state, sessions, statuses, t('session.untitled'))
+  const entries = projectStrip(state, catalog, t('session.untitled'))
   const budgetBlocked = splitBlocked(controller, state, workspaceId, maxPanes)
   const budgetHint = budgetBlocked ? t('strip.budget', { n: maxPanes }) : null
 
@@ -1408,12 +1409,17 @@ function createPaneBody(controller) {
     const sessionId = props.sessionId
     const session =
       typeof props.useSession === 'function' ? props.useSession((snapshot) => snapshot) : undefined
-    const summaryBlank =
-      typeof props.useSessions === 'function'
-        ? props.useSessions((snapshot) =>
-            sessionId === undefined ? undefined : snapshot.byId[sessionId]?.blank,
-          )
-        : undefined
+    // The hook runs whenever the shell supplies it — never conditionally, so the
+    // call order cannot change with `sessionId`. The catalog then inverts the
+    // row's `blank` bit once, and this reads it back for the factory's
+    // hero/settling derivation, which wants the raw flag.
+    const sessionsSnapshot =
+      typeof props.useSessions === 'function' ? props.useSessions((snapshot) => snapshot) : undefined
+    const summaryRow =
+      sessionsSnapshot === undefined || sessionId === undefined
+        ? undefined
+        : openCatalog({ sessions: sessionsSnapshot }).session(sessionId)
+    const summaryBlank = summaryRow === undefined ? undefined : summaryRow.started === false
     const { phase, hero } = derivePanePhase({ sessionId, session, summaryBlank })
     const sessionReady = session !== undefined
     React.useEffect(() => {

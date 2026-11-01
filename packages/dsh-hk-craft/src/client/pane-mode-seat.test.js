@@ -16,6 +16,7 @@ const assert = require('node:assert/strict')
 
 const { installFakeReact } = require('./fake-react.js')
 const { createModeSeat } = require('./pane-mode-seat.js')
+const { openCatalog } = require('./catalog.js')
 
 let stateSlots = []
 let cursor = 0
@@ -86,8 +87,12 @@ function seatProps({ sessionId = 's1', preset } = {}) {
   return {
     controller: {},
     sessionId,
-    sessions: preset === undefined ? { byId: {} } : { byId: { s1: { projectionValues: { agentPreset: preset } } } },
-    statuses: new Map(),
+    catalog: openCatalog({
+      sessions:
+        preset === undefined
+          ? { byId: {} }
+          : { byId: { s1: { projectionValues: { agentPreset: preset } } } },
+    }),
     kit: {},
     t: (key) => key,
   }

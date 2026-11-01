@@ -32,6 +32,7 @@ const {
   subagentModeOf,
 } = require('./pane-subagents.js')
 const { createSubagentSeat } = require('./pane-subagents-view.js')
+const { openCatalog } = require('./catalog.js')
 const { zh, en } = require('./locale.js')
 
 /**
@@ -54,6 +55,20 @@ function sessionSnapshot(entries, options = {}) {
       },
     },
   }
+}
+
+/**
+ * The read model for one snapshot pair.
+ *
+ * The fixtures below stay in dsh's own shapes; only this helper knows that the
+ * seat now takes a catalog.
+ *
+ * @param {any} sessions `sessions.list` snapshot
+ * @param {any} [statuses] `sessionStatus` map or record
+ * @returns {any}
+ */
+function catalogOf(sessions, statuses) {
+  return openCatalog({ sessions, statuses })
 }
 
 /** A React stand-in for the seat render: only the calls `pane-subagents.js` makes. */
@@ -92,19 +107,19 @@ function textOf(element) {
 }
 
 test('the entry stays hidden until the focused session has a catalog', () => {
-  assert.equal(projectSubagentCatalog(undefined, 's1', undefined), null)
-  assert.equal(projectSubagentCatalog({}, 's1', undefined), null)
-  assert.equal(projectSubagentCatalog(sessionSnapshot(undefined), 's1', undefined), null)
-  assert.equal(projectSubagentCatalog(sessionSnapshot(undefined), '', undefined), null)
-  assert.equal(projectSubagentCatalog(sessionSnapshot([]), 's1', undefined), null)
+  assert.equal(projectSubagentCatalog(undefined, 's1'), null)
+  assert.equal(projectSubagentCatalog({}, 's1'), null)
+  assert.equal(projectSubagentCatalog(catalogOf(sessionSnapshot(undefined)), 's1'), null)
+  assert.equal(projectSubagentCatalog(catalogOf(sessionSnapshot(undefined)), ''), null)
+  assert.equal(projectSubagentCatalog(catalogOf(sessionSnapshot([])), 's1'), null)
   // A projection value that is not an array is a malformed read, not a catalog.
   assert.equal(
-    projectSubagentCatalog(sessionSnapshot({ not: 'a list' }), 's1', undefined),
+    projectSubagentCatalog(catalogOf(sessionSnapshot({ not: 'a list' })), 's1'),
     null,
   )
   // Entries without an id cannot be labelled or opened, so they never make an
   // otherwise empty entry visible.
-  assert.equal(projectSubagentCatalog(sessionSnapshot([{ mode: 'one-shot' }]), 's1', undefined), null)
+  assert.equal(projectSubagentCatalog(catalogOf(sessionSnapshot([{ mode: 'one-shot' }])), 's1'), null)
 })
 
 test('direct children keep the catalog order and fall back to their id', () => {
@@ -124,7 +139,7 @@ test('direct children keep the catalog order and fall back to their id', () => {
     },
   )
 
-  const model = projectSubagentCatalog(sessions, 's1', new Map([['b', { running: true }]]))
+  const model = projectSubagentCatalog(catalogOf(sessions, new Map([['b', { running: true }]])), 's1')
 
   assert.equal(model.sessionId, 's1')
   assert.equal(model.total, 4)
@@ -140,33 +155,38 @@ test('direct children keep the catalog order and fall back to their id', () => {
   )
 })
 
-test('activity reads the status map first and falls back to the session summary', () => {
+test('activity unions the status map with the session summary, and reads a plain record', () => {
   const entries = [
-    { id: 'stale', mode: 'continuable', label: 'Stale summary' },
-    { id: 'summary', mode: 'continuable', label: 'Summary says running' },
+    { id: 'stale', mode: 'continuable', label: 'Summary still says running' },
+    { id: 'summary', mode: 'continuable', label: 'No status entry' },
     { id: 'record', mode: 'continuable', label: 'Record status map' },
+    { id: 'idle', mode: 'continuable', label: 'Neither says running' },
   ]
   const sessions = sessionSnapshot(entries, {
     summaries: {
       stale: { running: true },
       summary: { running: true },
       record: { running: false },
+      idle: { running: false },
     },
   })
 
   const model = projectSubagentCatalog(
-    sessions,
-    's1',
     // A plain record is accepted too, like `workspace-status.js` does.
-    { stale: { running: false }, record: { running: true } },
+    catalogOf(sessions, { stale: { running: false }, record: { running: true } }),
+    's1',
   )
 
   assert.deepEqual(
     model.rows.map((row) => [row.id, row.activity]),
     [
-      ['stale', SUBAGENT_ACTIVITY_IDLE],
+      // Either source reporting "running" keeps the dot lit: the catalog unions
+      // the live status with the summary row, and a disagreement resolves towards
+      // "running" (the safe direction for a stop/close confirmation too).
+      ['stale', SUBAGENT_ACTIVITY_RUNNING],
       ['summary', SUBAGENT_ACTIVITY_RUNNING],
       ['record', SUBAGENT_ACTIVITY_RUNNING],
+      ['idle', SUBAGENT_ACTIVITY_IDLE],
     ],
   )
 })
@@ -187,7 +207,7 @@ test('a finished child is completed only when its latest closed turn completed',
     },
   )
 
-  const model = projectSubagentCatalog(sessions, 's1', undefined)
+  const model = projectSubagentCatalog(catalogOf(sessions), 's1')
 
   assert.deepEqual(
     model.rows.map((row) => [row.id, row.activity]),
@@ -205,7 +225,7 @@ test('external tasks are listed but never navigable and carry no activity', () =
     { summaries: { cloud: { running: true } } },
   )
 
-  const model = projectSubagentCatalog(sessions, 's1', new Map([['cloud', { running: true }]]))
+  const model = projectSubagentCatalog(catalogOf(sessions, new Map([['cloud', { running: true }]])), 's1')
 
   assert.equal(model.total, 1)
   assert.equal(model.running, 0)
@@ -310,8 +330,7 @@ test('the viewer follows its pane session and hides without a catalog', () => {
     const Seat = createSubagentSeat({ refreshCatalog: () => {} })
     const baseProps = {
       controller: { openInNewPane: () => {} },
-      sessions: sessionSnapshot([]),
-      statuses: new Map(),
+      catalog: catalogOf(sessionSnapshot([])),
       kit: {},
       t: (key) => key,
     }
@@ -339,8 +358,7 @@ test('the seat trigger exposes the total and running counts', () => {
     const seat = Seat({
       controller: { openInNewPane: () => {} },
       sessionId: 's1',
-      sessions,
-      statuses: new Map(),
+      catalog: catalogOf(sessions),
       kit: {},
       t: (key) => labels[key] ?? key,
     })

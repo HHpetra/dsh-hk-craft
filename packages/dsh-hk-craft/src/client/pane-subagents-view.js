@@ -135,7 +135,7 @@ function createSubagentSeat(options = {}) {
     const t = typeof props?.t === 'function' ? props.t : (key) => key
     const controller = props?.controller
     const sessionId = typeof props?.sessionId === 'string' ? props.sessionId : ''
-    const model = projectSubagentCatalog(props?.sessions, sessionId, props?.statuses)
+    const model = projectSubagentCatalog(props?.catalog, sessionId)
     const catalogSessionId = model === null ? '' : model.sessionId
     const visible = model !== null
 

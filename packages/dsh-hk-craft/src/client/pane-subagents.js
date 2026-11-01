@@ -3,21 +3,19 @@
 /**
  * The pure half of the pane strip's subagent viewer.
  *
- * A seat in the strip's pinned native-action group follows the focused strip
- * entry, reads that conversation's direct-child catalog from the raw
- * `useSessions` snapshot (`projectionsBySession[sessionId].values.subagentCatalog`
- * — see `doc/upstream-contracts.md#subagent-catalog-direct-children`), and hands
- * plain rows to the dumb React seat (`pane-subagents-view.js`) and its
- * `openInNewPane` pick.
+ * A seat in the pane header follows the pane's own conversation, reads that
+ * conversation's direct-child catalog through the read model (`catalog.js`:
+ * `projectionsOf(id).subagents`, from
+ * `projectionsBySession[sessionId].values.subagentCatalog` — see
+ * `doc/upstream-contracts.md#subagent-catalog-direct-children`), and hands plain
+ * rows to the dumb React seat (`pane-subagents-view.js`) and its `openInNewPane`
+ * pick.
  *
- * dsh record shapes never leak past this file: catalog entries, the status map
- * and the session summaries are normalized into the row model below, so an
- * upstream rename is a one-file fix and every rule stays Node-testable without a
- * DOM. Nested catalogs, hover-open, retry and breadcrumbs are out of scope for
- * this seat.
+ * dsh record shapes never leak past `catalog.js`: catalog entries, the status
+ * map and the session summaries arrive as a catalog query, so an upstream rename
+ * is a one-file fix and every rule stays Node-testable without a DOM. Nested
+ * catalogs, hover-open, retry and breadcrumbs are out of scope for this seat.
  */
-
-const { readStatus } = require('./workspace-status.js')
 
 const SUBAGENT_MODE_ONE_SHOT = 'one-shot'
 const SUBAGENT_MODE_EXTERNAL = 'external'
@@ -48,14 +46,13 @@ const SUBAGENT_ACTIVITY_KEYS = Object.freeze({
  * projection has not produced one. An explicit empty array is a ready empty
  * catalog and is returned as-is; only the projection's absence hides the seat.
  *
- * @param {object|undefined} sessions raw `useSessions` snapshot
+ * @param {{projectionsOf?: (sessionId: string) => any}|undefined} catalog the read model
  * @param {string} sessionId focused conversation
  * @returns {object[]|undefined}
  */
-function catalogEntriesOf(sessions, sessionId) {
+function catalogEntriesOf(catalog, sessionId) {
   if (typeof sessionId !== 'string' || sessionId === '') return undefined
-  const snapshot = sessions?.projectionsBySession?.[sessionId]
-  const entries = snapshot?.values?.subagentCatalog
+  const entries = catalog?.projectionsOf?.(sessionId)?.subagents
   return Array.isArray(entries) ? entries : undefined
 }
 
@@ -88,41 +85,38 @@ function subagentLabelOf(entry) {
 
 /**
  * One direct child's activity. External tasks have no local execution, so they
- * carry no activity at all. Running prefers the live status map and falls back
- * to the summary row; a finished child reads completed only when its latest
- * closed turn recorded a normal completion.
+ * carry no activity at all. Running is the child's `catalog.signal`, which reads
+ * the live status first and the summary row second; a finished child reads
+ * completed only when its latest closed turn recorded a normal completion.
  *
  * @param {string} mode normalized catalog mode
- * @param {{running?: boolean, projectionValues?: object}|undefined} summary session summary row
- * @param {{running?: boolean}|undefined} status live status map entry
+ * @param {{subagentTiming?: {lastTurnCompleted?: boolean}}|undefined} projections the child's own `projectionValues`
+ * @param {{running?: boolean}|undefined} signal the child's signal
  * @returns {'running'|'completed'|'idle'|null}
  */
-function subagentActivityOf(mode, summary, status) {
+function subagentActivityOf(mode, projections, signal) {
   if (mode === SUBAGENT_MODE_EXTERNAL) return null
-  const running = (status?.running ?? summary?.running) === true
-  if (running) return SUBAGENT_ACTIVITY_RUNNING
-  if (summary?.projectionValues?.subagentTiming?.lastTurnCompleted === true) {
+  if (signal?.running === true) return SUBAGENT_ACTIVITY_RUNNING
+  if (projections?.subagentTiming?.lastTurnCompleted === true) {
     return SUBAGENT_ACTIVITY_COMPLETED
   }
   return SUBAGENT_ACTIVITY_IDLE
 }
 
 /**
- * Project the focused conversation's direct children into the seat model.
+ * Project one pane's direct children into the seat model.
  *
  * `null` means "do not render the entry" — no focused conversation, no catalog
  * projection, or no usable rows. `total` counts every direct child (external
  * included, like the native header); `running` counts the local running ones.
  *
- * @param {object|undefined} sessions raw `useSessions` snapshot
- * @param {string} sessionId focused conversation
- * @param {Map<string, any>|Record<string, any>|undefined} statuses `sessionStatus` snapshot
+ * @param {{projectionsOf?: (sessionId: string) => any, signal?: (sessionId: string) => any}|undefined} catalog the read model
+ * @param {string} sessionId the pane's own conversation
  * @returns {{sessionId: string, total: number, running: number, rows: object[]}|null}
  */
-function projectSubagentCatalog(sessions, sessionId, statuses) {
-  const entries = catalogEntriesOf(sessions, sessionId)
+function projectSubagentCatalog(catalog, sessionId) {
+  const entries = catalogEntriesOf(catalog, sessionId)
   if (entries === undefined) return null
-  const summaries = sessions?.byId ?? {}
   const rows = []
   for (const entry of entries) {
     if (entry === null || typeof entry !== 'object') continue
@@ -134,7 +128,11 @@ function projectSubagentCatalog(sessions, sessionId, statuses) {
       label: subagentLabelOf(entry),
       mode,
       modeKey: SUBAGENT_MODE_KEYS[mode],
-      activity: subagentActivityOf(mode, summaries[id], readStatus(statuses, id)),
+      activity: subagentActivityOf(
+        mode,
+        catalog?.projectionsOf?.(id)?.session,
+        catalog?.signal?.(id),
+      ),
       // External tasks have no local Session to open; every other mode may be
       // opened in a pane (unknown included, like the native catalog).
       navigable: mode !== SUBAGENT_MODE_EXTERNAL,
