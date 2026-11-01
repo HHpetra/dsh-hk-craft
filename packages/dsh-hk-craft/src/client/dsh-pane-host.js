@@ -331,6 +331,11 @@ function createPaneController(ctx, options = {}) {
   let bootSettled = false
   /** `ctx.sidebarRight` when the shell has one. Optional; the strip hides without it. */
   let rightbar = null
+  /** `ctx.sidebarRightTabs`, the registry whose guide entries are the native tool icons. */
+  let rightbarTabs = null
+  let unsubscribeRightbarTabs = () => {}
+  /** @type {ReadonlyArray<{kind: string, entryId: string, providerId: string, title: string, icon: Function|null}>} */
+  let rightbarTools = Object.freeze([])
   /**
    * How deep a controller-originated retain is. `uiSession` current
    * notifications that arrive from our own `mainView` retain must not route
@@ -347,6 +352,7 @@ function createPaneController(ctx, options = {}) {
     error: null,
     rightbarAvailable: false,
     rightbarExpanded: false,
+    rightbarTools: Object.freeze([]),
     maxPanes,
     /** `null` after a successful write; a string when the last write failed. */
     maxPanesError: null,
@@ -368,12 +374,49 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
+  /**
+   * The native right-bar guide: one icon per tool, in the registry's order.
+   * `title` is already localized by the tool's own package.
+   *
+   * @returns {Array<{kind: string, entryId: string, providerId: string, title: string, icon: Function|null}>}
+   */
+  function readRightbarTools() {
+    if (rightbarTabs == null || typeof rightbarTabs.guide !== 'function') return []
+    let entries
+    try {
+      entries = rightbarTabs.guide()
+    } catch {
+      return []
+    }
+    if (!Array.isArray(entries)) return []
+    const tools = []
+    for (const entry of entries) {
+      if (entry == null || typeof entry.kind !== 'string' || entry.kind === '') continue
+      let title = entry.kind
+      try {
+        const named = typeof entry.title === 'function' ? entry.title() : entry.kind
+        if (typeof named === 'string' && named !== '') title = named
+      } catch {
+        title = entry.kind
+      }
+      tools.push({
+        kind: entry.kind,
+        entryId: typeof entry.id === 'string' && entry.id !== '' ? entry.id : entry.kind,
+        providerId: typeof entry.providerId === 'string' ? entry.providerId : '',
+        title,
+        icon: typeof entry.icon === 'function' ? entry.icon : null,
+      })
+    }
+    return tools
+  }
+
   function emit(patch) {
     const next = {
       ...snapshot,
       ...patch,
       rightbarAvailable: rightbar !== null,
       rightbarExpanded: readRightbarExpanded(),
+      rightbarTools,
     }
     const changed = Object.keys(next).some((key) => next[key] !== snapshot[key])
     if (!changed) return
@@ -2115,6 +2158,53 @@ function createPaneController(ctx, options = {}) {
       return true
     },
     /**
+     * Remember `ctx.sidebarRightTabs`. Its `guide()` entries are the native
+     * tool icons (files, browser, terminal, …). A missing registry leaves the
+     * expand icon as the only right-bar control.
+     *
+     * @param {any} service
+     */
+    attachRightbarTabs(service) {
+      unsubscribeRightbarTabs()
+      unsubscribeRightbarTabs = () => {}
+      rightbarTabs = service ?? null
+      if (rightbarTabs != null && typeof rightbarTabs.subscribe === 'function') {
+        try {
+          const unsubscribe = rightbarTabs.subscribe(() => {
+            rightbarTools = Object.freeze(readRightbarTools())
+            emit({})
+          })
+          if (typeof unsubscribe === 'function') unsubscribeRightbarTabs = unsubscribe
+        } catch (error) {
+          emit({ error: messageOf(error) })
+        }
+      }
+      rightbarTools = Object.freeze(readRightbarTools())
+      emit({})
+    },
+    /**
+     * Open one native right-bar tool. `openTab` expands the bar and focuses
+     * that page, which is what its guide icon does.
+     *
+     * @param {string} kind
+     * @returns {boolean}
+     */
+    openRightbarTool(kind) {
+      if (rightbar === null || typeof kind !== 'string' || kind === '') return false
+      if (typeof rightbar.openTab !== 'function') return false
+      try {
+        const result = rightbar.openTab(kind)
+        if (result != null && typeof result.then === 'function') {
+          result.catch((error) => emit({ error: messageOf(error) }))
+        }
+      } catch (error) {
+        emit({ error: messageOf(error) })
+        return false
+      }
+      emit({})
+      return true
+    },
+    /**
      * Follow `uiSession.adapter.current` so a native current change lands in
      * the focused pane. Our own `mainView` retains notify this store too;
      * `routingDepth` drops those. Returns the unsubscribe.
@@ -2152,6 +2242,10 @@ function createPaneController(ctx, options = {}) {
       unsubscribeCurrent()
       unsubscribeCurrent = () => {}
       sessionCurrent = null
+      unsubscribeRightbarTabs()
+      unsubscribeRightbarTabs = () => {}
+      rightbarTabs = null
+      rightbarTools = Object.freeze([])
       rightbar = null
       unsubscribeEntryError()
       unsubscribeViewAvailability()
@@ -2165,6 +2259,7 @@ function createPaneController(ctx, options = {}) {
         error: null,
         rightbarAvailable: false,
         rightbarExpanded: false,
+        rightbarTools: Object.freeze([]),
         workspaceId: null,
         layouts: {},
         root: null,

@@ -257,9 +257,22 @@ test('a missing right bar still lets the plugin load', () => {
   assert.deepEqual(ctx.calls.selectPanel, [])
 })
 
+test('prefers PowerShell for a new terminal when the terminal service exists', () => {
+  const ctx = fakeCtx({
+    services: {
+      ...workspaceServices(),
+      sessions: { list: { getSnapshot: () => ({ byId: {} }), subscribe: () => () => {} } },
+      webTerminals: { launchShells: async () => ({ shells: [] }), selectShell() {} },
+    },
+  })
+  apply(ctx)
+  assert.ok(ctx.calls.injections.some((names) => names.includes('webTerminals')))
+})
+
 test('wires the right bar and the session current when those services exist', () => {
   let expandedReads = 0
   let currentSubs = 0
+  let guideReads = 0
   const ctx = fakeCtx({
     services: {
       ...workspaceServices(),
@@ -269,6 +282,15 @@ test('wires the right bar and the session current when those services exist', ()
           return false
         },
         toggleExpanded() {},
+      },
+      sidebarRightTabs: {
+        guide() {
+          guideReads += 1
+          return [{ id: 'workspace', kind: 'files', title: () => '文件', icon: function FilesIcon() {} }]
+        },
+        subscribe() {
+          return () => {}
+        },
       },
       uiSession: {
         adapter: {
@@ -286,6 +308,7 @@ test('wires the right bar and the session current when those services exist', ()
   apply(ctx)
 
   assert.ok(expandedReads > 0)
+  assert.ok(guideReads > 0)
   assert.equal(currentSubs, 1)
   assert.deepEqual(ctx.calls.selectPanel, [])
   assert.ok(ctx.calls.registered.some((entry) => entry.options.name === 'main'))

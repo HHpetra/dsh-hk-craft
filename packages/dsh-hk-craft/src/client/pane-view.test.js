@@ -501,13 +501,20 @@ test('the strip split control is disabled at the pane cap and explains why', () 
 })
 
 /** The strip element for a right-bar availability pair. */
-function stripWithRightbar({ available, expanded, toggleRightbar = () => {} }) {
+function stripWithRightbar({
+  available,
+  expanded,
+  tools = [],
+  toggleRightbar = () => {},
+  openRightbarTool = () => {},
+}) {
   const controller = {
     closePane: () => {},
     newPane: () => {},
     focusPane: () => {},
     swapPanes: () => {},
     toggleRightbar,
+    openRightbarTool,
   }
   const state = {
     root: { kind: 'leaf', paneId: 'p1' },
@@ -520,6 +527,7 @@ function stripWithRightbar({ available, expanded, toggleRightbar = () => {} }) {
     state,
     rightbarAvailable: available,
     rightbarExpanded: expanded,
+    rightbarTools: tools,
     kit: {
       useSessions: (selector) => selector({ byId: { s1: { title: 'One' } } }),
       useSessionStatus: (selector) => selector({}),
@@ -546,19 +554,48 @@ test('the strip renders one rightbar toggle and clicks it through the controller
     assert.notEqual(button, undefined)
     assert.equal(button.props['aria-pressed'], 'false')
     assert.equal(button.props['aria-label'], '打开右侧边栏')
-    assert.deepEqual(button.props.children, ['右栏'])
+    const glyph = button.props.children[0]
+    assert.equal(glyph.type, 'svg')
     button.props.onClick()
     assert.deepEqual(calls, ['toggle'])
   })
 })
 
-test('the strip rightbar toggle reports expanded', () => {
+test('the strip hides the expand icon while the right bar is open', () => {
   withFakeReact(fakeReact, () => {
     const { button } = stripWithRightbar({ available: true, expanded: true })
+    assert.equal(button, undefined)
+  })
+})
 
-    assert.notEqual(button, undefined)
-    assert.equal(button.props['aria-pressed'], 'true')
-    assert.equal(button.props['aria-label'], '收起右侧边栏')
+test('the strip opens each native right-bar tool from its icon', () => {
+  withFakeReact(fakeReact, () => {
+    function FilesIcon() {
+      return null
+    }
+    function TerminalIcon() {
+      return null
+    }
+    const calls = []
+    const { view } = stripWithRightbar({
+      available: true,
+      expanded: true,
+      tools: [
+        { kind: 'files', entryId: 'workspace', providerId: 'files', title: '文件', icon: FilesIcon },
+        { kind: 'terminal', entryId: 'new', providerId: 'terminal', title: '终端', icon: TerminalIcon },
+      ],
+      openRightbarTool: (kind) => {
+        calls.push(kind)
+      },
+    })
+    const files = elementWhere(view, (node) => node.props?.['data-hkcraft-rightbar-tool'] === 'files')
+    const terminal = elementWhere(view, (node) => node.props?.['data-hkcraft-rightbar-tool'] === 'terminal')
+    assert.equal(files.props['aria-label'], '文件')
+    assert.equal(elementWhere(files, (node) => node.type === FilesIcon) !== undefined, true)
+    assert.equal(terminal.props['aria-label'], '终端')
+    files.props.onClick()
+    terminal.props.onClick()
+    assert.deepEqual(calls, ['files', 'terminal'])
   })
 })
 

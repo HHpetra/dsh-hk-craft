@@ -42,6 +42,7 @@ const { modeRosterRows } = require('./pane-mode.js')
 const { createModeSeat } = require('./pane-mode-seat.js')
 const { registerCommands } = require('./commands.js')
 const { createNotifier } = require('./notifications.js')
+const { installPowerShellDefault } = require('./terminal-shell.js')
 
 const NS = 'dsh-hk-craft'
 
@@ -176,6 +177,26 @@ function apply(ctx) {
   ctx.inject(['sidebarRight'], (scope) => {
     controller.attachRightbar(scope.get('sidebarRight'))
     return () => controller.attachRightbar(null)
+  })
+
+  // The native tool icons (files, browser, terminal, …). Optional, and kept
+  // off the top-level inject list for the same reason as sidebarRight.
+  ctx.inject(['sidebarRightTabs'], (scope) => {
+    controller.attachRightbarTabs(scope.get('sidebarRightTabs'))
+    return () => controller.attachRightbarTabs(null)
+  })
+
+  // dsh remembers the last right-bar shell. Until the user picks one, that
+  // memory is cmd on Windows. Prefer PowerShell 7, then Windows PowerShell,
+  // once, then leave the menu alone.
+  ctx.inject(['webTerminals', 'sessions'], (scope) => {
+    const storage = globalThis.localStorage
+    if (storage == null || typeof storage.getItem !== 'function') return () => {}
+    return installPowerShellDefault({
+      webTerminals: scope.get('webTerminals'),
+      sessions: scope.get('sessions'),
+      storage,
+    })
   })
 
   // Native open/start moves `uiSession` current without unmounting the shadow.

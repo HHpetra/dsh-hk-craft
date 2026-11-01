@@ -133,11 +133,12 @@ const stripRightbarStyle = {
   ...buttonStyle,
   flex: 'none',
   alignSelf: 'center',
+  justifyContent: 'center',
+  width: 28,
+  height: 28,
   border: 'none',
-  borderRadius: 4,
-  padding: '2px 8px',
-  fontSize: 12,
-  whiteSpace: 'nowrap',
+  borderRadius: 6,
+  padding: 0,
 }
 
 /** The `tablist`: the entries only, immediately followed by `+` in the viewport. */

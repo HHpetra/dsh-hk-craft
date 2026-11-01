@@ -326,3 +326,22 @@
 - 依赖上游 keyed slot 的 shadow 语义（同 key 不同 priority 合法，同 priority 抛错，一个子槽一个声明者）。升级 dsh 时复验 `main` 与 `RightbarRoot`。
 - 卸载 shadow 后官方 `ConversationPanel` 赢回 `conversation` 格，不需要 `selectPanel(null)` 来交还主区。
 - 设置页打开期间分屏仍视为 active，引用保留，避免回来时丢掉布局。
+
+---
+
+## ADR-0015 — 标签条使用原生右侧栏工具图标
+
+**背景**：ADR-0014 在标签条放了一个文字开关「右栏」，调用 `toggleExpanded()`。原版 dsh 打开右侧栏靠的是引导页上的工具图标（文件、浏览器、终端等），每个图标打开自己的页面；header 角落里的展开图标只在右栏收起时出现。
+
+**取代关系**：本 ADR 只取代 **ADR-0014 决策 3** 的文字开关。ADR-0014 的 shadow、`mainView` 跟随焦点、以及不自建右栏，继续有效。
+
+**决策**：
+
+1. **工具图标来自 `ctx.sidebarRightTabs.guide()`**，按注册表顺序画在标签条滚动区外。点击调用 `ctx.sidebarRight.openTab(kind)`，与引导卡片相同：展开右栏并打开该页。图标组件用注册项自己的 `icon`，不另画一套。
+2. **展开图标只在右栏收起时出现**，调用 `toggleExpanded()`。右栏已经展开时，收起仍由右栏自己的折叠按钮负责。
+3. **两个服务都可选**，都不进顶层 `inject`。缺 `sidebarRight` 时整组不渲染；缺注册表时只留展开图标。
+
+**后果 / 约束**：
+
+- 图标集合随已安装的右栏插件变化，本插件不写死文件/浏览器/终端名单。
+- `guide()` 没有独立的“当前页”订阅；图标不标出哪一个正开着。展开与否仍只在每次 `emit` 时读 `isExpanded()`。

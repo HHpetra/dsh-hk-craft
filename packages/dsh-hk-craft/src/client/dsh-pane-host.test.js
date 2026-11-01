@@ -489,6 +489,69 @@ test('toggleRightbar flips the sidebar service and publishes expanded', () => {
   controller.dispose()
 })
 
+test('right-bar guide icons open that tool and follow registry updates', () => {
+  const fake = fakeControllerCtx()
+  const controller = createPaneController(fake.ctx)
+  const listeners = new Set()
+  const opened = []
+  function FilesIcon() {}
+  let entries = [
+    { id: 'workspace', providerId: 'files-pkg', kind: 'files', order: 10, title: () => '文件', icon: FilesIcon },
+  ]
+  controller.attachRightbar({
+    isExpanded: () => false,
+    toggleExpanded() {},
+    openTab(kind) {
+      opened.push(kind)
+    },
+  })
+  controller.attachRightbarTabs({
+    guide: () => entries,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  })
+
+  assert.deepEqual(
+    controller.getSnapshot().rightbarTools.map((tool) => [tool.kind, tool.title]),
+    [['files', '文件']],
+  )
+  assert.equal(controller.getSnapshot().rightbarTools[0].icon, FilesIcon)
+  assert.equal(controller.openRightbarTool('files'), true)
+  assert.deepEqual(opened, ['files'])
+
+  entries = [
+    { id: 'workspace', providerId: 'files-pkg', kind: 'files', title: () => '文件', icon: FilesIcon },
+    { id: 'new', providerId: 'terminal-pkg', kind: 'terminal', title: () => '终端', icon: null },
+  ]
+  for (const listener of [...listeners]) listener()
+  assert.deepEqual(
+    controller.getSnapshot().rightbarTools.map((tool) => tool.kind),
+    ['files', 'terminal'],
+  )
+
+  controller.dispose()
+  assert.equal(listeners.size, 0)
+  assert.deepEqual(controller.getSnapshot().rightbarTools, [])
+})
+
+test('a right-bar tool that cannot open is reported', () => {
+  const fake = fakeControllerCtx()
+  const controller = createPaneController(fake.ctx)
+  controller.attachRightbar({
+    isExpanded: () => false,
+    toggleExpanded() {},
+    openTab() {
+      throw new Error('no session surface is mounted')
+    },
+  })
+
+  assert.equal(controller.openRightbarTool('files'), false)
+  assert.match(controller.getSnapshot().error, /no session surface/)
+  controller.dispose()
+})
+
 test('a rightbar toggle failure is reported and does not claim success', () => {
   const fake = fakeControllerCtx()
   const controller = createPaneController(fake.ctx)

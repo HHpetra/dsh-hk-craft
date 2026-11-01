@@ -715,11 +715,38 @@ function splitBlocked(controller, state, workspaceId, maxPanes) {
  * The ARIA roles stay `tablist`/`tab` because the strip is a list of selectable
  * views of the same main region; the domain vocabulary is not "tab".
  *
- * The right-bar toggle sits outside the scrolling viewport, one button for the
- * whole strip. It is hidden when the shell has no `sidebarRight` service.
+ * The native right-bar tool icons sit outside the scrolling viewport, one row
+ * for the whole strip. Each icon opens that tool the way its guide card does.
+ * The expand icon is the header corner button: it is shown only while the bar
+ * is collapsed. The row is hidden when the shell has no `sidebarRight` service.
  *
- * @param {{ controller: any, state: any, workspaceId?: string|null, maxPanes?: number, rightbarAvailable?: boolean, rightbarExpanded?: boolean, kit: any, t: (key: string, params?: object) => string }} props
+ * @param {{ controller: any, state: any, workspaceId?: string|null, maxPanes?: number, rightbarAvailable?: boolean, rightbarExpanded?: boolean, rightbarTools?: Array<{kind: string, entryId: string, providerId: string, title: string, icon: Function|null}>, kit: any, t: (key: string, params?: object) => string }} props
  */
+/** The native header corner glyph: a window with the pane on the right. */
+function RightbarExpandIcon() {
+  const h = react().createElement
+  return h(
+    'svg',
+    {
+      viewBox: '0 0 16 16',
+      width: 16,
+      height: 16,
+      'aria-hidden': 'true',
+      fill: 'none',
+    },
+    h('rect', {
+      x: 1.5,
+      y: 2.5,
+      width: 13,
+      height: 11,
+      rx: 1.5,
+      stroke: 'currentColor',
+      strokeWidth: 1.2,
+    }),
+    h('path', { d: 'M10.5 2.5v11', stroke: 'currentColor', strokeWidth: 1.2 }),
+  )
+}
+
 function PaneStrip({
   controller,
   state,
@@ -727,6 +754,7 @@ function PaneStrip({
   maxPanes = DEFAULT_MAX_PANES,
   rightbarAvailable = false,
   rightbarExpanded = false,
+  rightbarTools = [],
   kit,
   t,
 }) {
@@ -980,24 +1008,53 @@ function PaneStrip({
       'div',
       { style: stripActionGroupStyle, 'data-hkcraft-strip-actions': '' },
       rightbarAvailable === true
-        ? h(
-            'button',
-            {
-              type: 'button',
-              title: rightbarExpanded ? t('strip.rightbar.close') : t('strip.rightbar.open'),
-              'aria-label': rightbarExpanded ? t('strip.rightbar.close') : t('strip.rightbar.open'),
-              'aria-pressed': rightbarExpanded ? 'true' : 'false',
-              'data-hkcraft-rightbar-toggle': '',
-              style: {
-                ...stripRightbarStyle,
-                color: rightbarExpanded
-                  ? 'var(--dsw-alias-state-business-primary, Highlight)'
-                  : undefined,
-              },
-              onClick: () => controller.toggleRightbar(),
-            },
-            t('strip.rightbar'),
-          )
+        ? [
+            ...rightbarTools.map((tool) =>
+              h(
+                'button',
+                {
+                  key: `${tool.providerId}:${tool.entryId}`,
+                  type: 'button',
+                  title: tool.title,
+                  'aria-label': tool.title,
+                  'data-hkcraft-rightbar-tool': tool.kind,
+                  style: stripRightbarStyle,
+                  onClick: () => controller.openRightbarTool(tool.kind),
+                },
+                h(
+                  'span',
+                  {
+                    'aria-hidden': 'true',
+                    style: {
+                      display: 'inline-flex',
+                      width: 18,
+                      height: 18,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      overflow: 'hidden',
+                    },
+                  },
+                  tool.icon != null ? h(tool.icon) : tool.title.slice(0, 1),
+                ),
+              ),
+            ),
+            rightbarExpanded === true
+              ? null
+              : h(
+                  'button',
+                  {
+                    key: 'rightbar-expand',
+                    type: 'button',
+                    title: t('strip.rightbar.open'),
+                    'aria-label': t('strip.rightbar.open'),
+                    'aria-pressed': 'false',
+                    'data-hkcraft-rightbar-toggle': '',
+                    style: stripRightbarStyle,
+                    onClick: () => controller.toggleRightbar(),
+                  },
+                  RightbarExpandIcon(),
+                ),
+          ]
         : null,
     ),
   )
@@ -1091,6 +1148,7 @@ function PaneWorkspace({
   maxPanes = DEFAULT_MAX_PANES,
   rightbarAvailable = false,
   rightbarExpanded = false,
+  rightbarTools = [],
   error = null,
   kit,
   t,
@@ -1135,6 +1193,7 @@ function PaneWorkspace({
           maxPanes,
           rightbarAvailable,
           rightbarExpanded,
+          rightbarTools,
           kit,
           t,
         })
@@ -1244,6 +1303,7 @@ function createPaneHost(controller, options = {}) {
             maxPanes: state.maxPanes,
             rightbarAvailable: state.rightbarAvailable === true,
             rightbarExpanded: state.rightbarExpanded === true,
+            rightbarTools: Array.isArray(state.rightbarTools) ? state.rightbarTools : [],
             error: state.error,
             kit: props,
             t,

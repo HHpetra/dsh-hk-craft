@@ -829,15 +829,17 @@ store and an on-screen session; before either exists, `isExpanded()` may throw
 or report false. The service is optional.
 
 **Why we rely on it:** a pane does not mount the native conversation header,
-which is where dsh puts this button. The strip renders one shared control
-(`右栏` / `Right`) when the service was injected, and renders none when it was
-not. The plugin does not add `sidebarRight` to its top-level `inject` list, so
-a shell without the service still mounts the panes.
+which is where dsh puts the single expand button. The strip instead renders
+the right bar's own guide icons from `ctx.sidebarRightTabs.guide()` — the same
+icons and `openTab(kind)` the guide cards use — and shows the expand icon only
+while the bar is collapsed. Both services are optional and stay off the
+top-level `inject` list, so a shell without them still mounts the panes.
 
-**Verified:** the two methods, and the absence of an expanded subscription,
-were read on the `sidebarRight` face in Desktop `0.2.1-rc.5`. Runtime probe:
-the strip button expands and collapses the native bar. Without the service the
-button is absent and the panes still load.
+**Verified:** `toggleExpanded` / `isExpanded`, `openTab(kind)`, and
+`sidebarRightTabs.guide()` (icon, title, kind) were read in Desktop
+`0.2.1-rc.5`. Runtime probe: the strip shows the same tool icons as the right
+bar's guide; choosing one opens that page. Without the services the icons are
+absent and the panes still load.
 
 ---
 

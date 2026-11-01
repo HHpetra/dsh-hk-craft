@@ -73,7 +73,7 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
 
 ## 6. 当前状态
 
-插件已交付首个能力 **多会话分屏 + 侧栏精简**（ADR-0005 ~ 0014），并在其上补齐本轮管理功能
+插件已交付首个能力 **多会话分屏 + 侧栏精简**（ADR-0005 ~ 0015），并在其上补齐本轮管理功能
 （ADR-0007/0008）。分屏 shadow `main` 的 `conversation` 单元格，不改变 `activePanelId`
 （ADR-0014）：
 
@@ -87,8 +87,11 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
   会话数。进行中的交叉见 ADR-0010。
 - **窗格头部工具栏**：每个窗格顶部显示自己的标题、只读**当前模式**、**子代理查看**、视图切换与
   关闭；模式与子代理读该窗格自己的会话，而不是焦点窗格。标签条只保留标签与紧贴最后标签的
-  `+`。滚动区外有一个共享的右侧栏开关，调用 `ctx.sidebarRight.toggleExpanded()`；服务不存在时
-  不显示按钮。窗格里的文件和图片链接打开焦点窗格会话的原生右侧栏
+  `+`。滚动区外是原生右侧栏的工具图标，点一个调用 `openTab` 打开该工具；右栏收起时末尾还有展开图标。
+  服务不存在时不显示。右侧栏里的「新建终端」按这个顺序选 shell：PowerShell 7（`pwsh`）、
+  Windows 自带的 PowerShell、cmd。商店版 PowerShell 7 的开始菜单别名是 0 字节文件，dsh 的
+  `stat` 会拒绝它，所以插件改用该包里的真实 `pwsh.exe`。只在还没有手动选过时改一次；之后在终端卡片的 shell 菜单里另选的结果会保留。
+  窗格里的文件和图片链接打开焦点窗格会话的原生右侧栏
   （[`upstream-contracts.md`](upstream-contracts.md#shadowing-the-conversation-cell)、
   [`#sidebar-right-toggle`](upstream-contracts.md#sidebar-right-toggle)）。
 - **侧栏工作区**：五态灯（含空闲蓝与未读完成绿）、行内删除（二次确认，不中断会话）、指针拖动
