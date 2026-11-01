@@ -84,7 +84,7 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
 
 - **分屏**：shadow `main.conversation`（priority -1），全程不调用 `selectPanel`，所以
   `activePanelId` 保持 null，原生右侧栏保持可见，并跟随焦点窗格的 `mainView`。每个窗格承载恰好一个会话；`+`、`Ctrl+Shift+E` 与
-  `/resume` 的 Ctrl+Enter 在焦点窗格右侧插入新窗格，并按当前窗格数均分这一排的宽度，不重排顺序。
+  `/resume` 的 Ctrl+Enter 在焦点窗格右侧插入新窗格，并按当前窗格数均分这一排的宽度，不重排顺序。关闭窗格后，同一排同样按剩余窗格数重新均分（拖过的水平比例不保留）。
   每个工作区默认最多 4 格，可在 HK Craft 设置页改为任意格数（`0` = 不限制）。降低上限不会关闭
   已有窗格，也不会取消已经通过检查、会话还在创建的那一次分栏。空工作区没有焦点窗格时
   `Ctrl+Shift+E` 无操作；第一格由 `+` 和 Ctrl+Enter 打开，不占预算。第一格还在创建时再次

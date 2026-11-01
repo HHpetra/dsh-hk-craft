@@ -141,8 +141,13 @@ function openPane(layout, pane) {
  * A pure row therefore shows each pane at `1 / paneCount`. A column of k panes
  * keeps one shared width and occupies `k / n` of a surrounding row. Ratios
  * stay inside `[MIN_RATIO, 1 - MIN_RATIO]`; a spine deeper than ten panes is
- * clamped and is no longer strictly even. Closing a pane does not call this:
- * the sibling still just takes the parent's place.
+ * clamped and is no longer strictly even.
+ *
+ * `split` and `close` both call this: adding a pane re-divides the row it joined,
+ * and closing one re-divides the row it left, so two columns of a row never
+ * inherit a merged double share. A column's own ratios are not touched by it, but
+ * its *count* is what a surrounding row divides by — so closing a pane inside a
+ * column does narrow that column's share of the row.
  *
  * @param {object|null} node
  * @returns {{node: object|null, count: number}}
@@ -208,8 +213,15 @@ function split(layout, paneId, dir, pane) {
  * layout (the workspace renders its empty state).
  *
  * The tree is re-normalised afterwards, which is also what prunes a leaf whose
- * pane record has gone. Session shutdown is the host's job (ticket 09): this is
- * a pure structural transition.
+ * pane record has gone, and then every `row` ratio is re-divided by the pane
+ * count (`equalizeRowRatios`). Without that step both of the shapes are wrong:
+ * because the sibling inherits the *whole* parent slot, three even panes minus
+ * the middle one would land on `1/3 + 2/3` instead of two halves, and closing the
+ * rightmost pane would look exactly the same. A dragged row ratio does not
+ * survive a close either — the same rule a split already follows.
+ *
+ * Session shutdown is the host's job (ticket 09): this is a pure structural
+ * transition.
  *
  * @param {object} layout
  * @param {string} paneId
@@ -235,7 +247,7 @@ function close(layout, paneId) {
     }
   }
 
-  const root = normalizeNode(layout.root, panes, new Set())
+  const root = equalizeRowRatios(normalizeNode(layout.root, panes, new Set())).node
   const ordered = leaves(root)
   const activePaneId =
     layout.activePaneId === paneId || !ordered.includes(layout.activePaneId)

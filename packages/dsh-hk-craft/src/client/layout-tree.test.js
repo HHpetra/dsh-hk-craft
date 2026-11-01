@@ -32,6 +32,7 @@ function pane(paneId, sessionId) {
 const P1 = pane('p1', 's1')
 const P2 = pane('p2', 's2')
 const P3 = pane('p3', 's3')
+const P4 = pane('p4', 's4')
 
 /** One workspace layout with a single pane already open. */
 function single() {
@@ -123,12 +124,41 @@ test('a vertical split still halves only the reference pane', () => {
   assert.equal(three.root.b.ratio, 0.5)
 })
 
-test('closing a pane does not even the row again', () => {
+test('closing any pane of an even row leaves the rest evenly divided', () => {
   const three = split(split(single(), 'p1', 'row', P2), 'p2', 'row', P3)
-  const after = close(three, 'p3')
 
-  assert.deepEqual(leaves(after.root), ['p1', 'p2'])
-  assert.equal(after.root.ratio, 1 / 3)
+  // The sibling takes the closed pane's slot, so without a re-divide the
+  // result would be 1/3 + 2/3 — closing the middle or the rightmost pane would
+  // both look like a merged double-width pane.
+  const middle = close(three, 'p2')
+  assert.deepEqual(leaves(middle.root), ['p1', 'p3'])
+  assert.equal(middle.root.ratio, 1 / 2)
+
+  const right = close(three, 'p3')
+  assert.deepEqual(leaves(right.root), ['p1', 'p2'])
+  assert.equal(right.root.ratio, 1 / 2)
+})
+
+test('a close re-divides the row, so a dragged ratio does not survive it', () => {
+  const dragged = resize(split(split(single(), 'p1', 'row', P2), 'p2', 'row', P3), [], 0.7)
+  const after = close(dragged, 'p2')
+
+  assert.equal(dragged.root.ratio, 0.7)
+  assert.equal(after.root.ratio, 1 / 2)
+})
+
+test('closing inside a column re-divides the row by the column’s new count', () => {
+  // row(row(p1, p4), col(p2, p3)) — two even columns of two panes.
+  let four = split(split(single(), 'p1', 'row', P2), 'p2', 'col', P3)
+  four = split(four, 'p1', 'row', P4)
+  assert.equal(four.root.ratio, 1 / 2)
+
+  const after = close(four, 'p3')
+
+  assert.deepEqual(leaves(after.root), ['p1', 'p4', 'p2'])
+  // The column is down to one pane, so it now takes a third of the row rather
+  // than the half it held while it stacked two.
+  assert.equal(after.root.ratio, 2 / 3)
 })
 
 test('splitting down uses a column split', () => {
@@ -355,7 +385,9 @@ test('a session maps back to the pane that holds it', () => {
 })
 
 test('splitting and closing the new pane is a structural round-trip', () => {
-  const original = resize(split(single(), "p1", "row", P2), [], 0.65)
+  // An even row, because a close re-divides the row it left: starting from a
+  // dragged ratio would assert a rule this module no longer has.
+  const original = split(single(), "p1", "row", P2)
   const splitAgain = split(original, "p2", "col", P3)
   const restored = close(splitAgain, "p3")
 
