@@ -120,9 +120,9 @@ function usePaneSnapshot(React, controller) {
  */
 function useTrajectoryAvailable(React, controller) {
   return React.useSyncExternalStore(
-    controller.subscribeViewAvailability,
-    controller.isTrajectoryAvailable,
-    controller.isTrajectoryAvailable,
+    controller.view.subscribeViewAvailability,
+    controller.view.isTrajectoryAvailable,
+    controller.view.isTrajectoryAvailable,
   )
 }
 
@@ -205,7 +205,7 @@ function PaneShortcuts({ controller, workspaceId }) {
 
       if (action.kind === 'focus') {
         event.preventDefault()
-        controller.focusPaneAt(action.index)
+        controller.layout.focusPaneAt(action.index)
         return
       }
       if (action.kind === 'new') {
@@ -214,7 +214,7 @@ function PaneShortcuts({ controller, workspaceId }) {
         runAttempt(controller.budget.newInFocused(workspaceId ?? undefined))
         return
       }
-      const pane = controller.focusedPane()
+      const pane = controller.layout.focusedPane()
       if (pane === null) return
       event.preventDefault()
       event.stopPropagation()
@@ -387,7 +387,7 @@ function PaneViewToggle({ controller, pane, t }) {
         ...viewToggleStyle,
         ...(selected === TRAJECTORY_VIEW ? viewToggleActiveStyle : {}),
       },
-      onClick: () => controller.setView(pane.paneId, target),
+      onClick: () => controller.view.setView(pane.paneId, target),
     },
     labels[target],
   )
@@ -410,7 +410,7 @@ function PaneViewToggle({ controller, pane, t }) {
 function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
   const React = react()
   const h = React.createElement
-  const reference = controller.paneReference(pane.paneId)
+  const reference = controller.layout.paneReference(pane.paneId)
   const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
   const useSessionStatus =
     typeof kit?.useSessionStatus === 'function' ? kit.useSessionStatus : absentHook
@@ -421,7 +421,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
 
   const close = () => controller.close.request(pane.paneId)
   const focus = () => {
-    if (!focused) controller.focusPane(pane.paneId)
+    if (!focused) controller.layout.focusPane(pane.paneId)
   }
 
   const frameStyle = {
@@ -611,7 +611,7 @@ function PaneSeparator({ controller, separator }) {
     const state = drag.current
     if (state === null) return
     const current = row ? event.clientX : event.clientY
-    controller.resize(
+    controller.layout.resize(
       separator.path,
       ratioFromDrag({
         startRatio: state.ratio,
@@ -746,7 +746,7 @@ function PaneStrip({
   // Pointer capture, hit testing and click suppression live in their own hook;
   // the strip only paints the entries and forwards the drag state.
   const stripDrag = usePaneStripDrag(React, {
-    onSwap: (sourcePaneId, targetPaneId) => controller.swapPanes(sourcePaneId, targetPaneId),
+    onSwap: (sourcePaneId, targetPaneId) => controller.layout.swapPanes(sourcePaneId, targetPaneId),
   })
   const drag = stripDrag.drag
 
@@ -772,7 +772,7 @@ function PaneStrip({
 
   const focusEntry = (entry) => {
     if (stripDrag.consumeSuppressedClick()) return
-    controller.focusPane(entry.paneId)
+    controller.layout.focusPane(entry.paneId)
   }
 
   const hint = paneShortcutHint(t)
@@ -1296,7 +1296,7 @@ function createPaneConversationViews(controller) {
     const trajectoryAvailable = useTrajectoryAvailable(React, controller)
     const openView = (view) => {
       const pane = paneForSession(controller.getSnapshot(), props.sessionId)
-      if (pane !== null) controller.setView(pane.paneId, view)
+      if (pane !== null) controller.view.setView(pane.paneId, view)
     }
     return props.renderSlot('conversation.session', {
       view: effectiveView(remembered, trajectoryAvailable),
@@ -1337,7 +1337,7 @@ function createPaneBody(controller) {
       // The pane's own memory wins over dsh's per-session View preference.
       // `activate` is the same call the native switcher makes, so this swaps the
       // resident view instead of rebuilding the session.
-      controller.restoreViewFor(sessionId)
+      controller.view.restoreViewFor(sessionId)
     }, [sessionId, sessionReady])
     const boundary = errorBoundaryClass()
     const close = () => controller.close.bySession(sessionId)

@@ -242,13 +242,13 @@ function apply(ctx) {
    */
   const paneCommands = {
     active: () => controller.getSnapshot().active,
-    focused: () => controller.focusedPane(),
-    replaceFocused: (sessionId) => controller.replaceFocusedSession(sessionId),
+    focused: () => controller.layout.focusedPane(),
+    replaceFocused: (sessionId) => controller.layout.replaceFocusedSession(sessionId),
     openInNewPane: (sessionId) => controller.budget.openInNewPane(sessionId),
     newConversation: (workspaceId) => controller.budget.newInFocused(workspaceId),
-    paneIndexFor: (sessionId) => controller.paneIndexOf(sessionId),
-    canTrace: () => controller.isTrajectoryAvailable(),
-    setView: (paneId, view) => controller.setView(paneId, view),
+    paneIndexFor: (sessionId) => controller.layout.paneIndexOf(sessionId),
+    canTrace: () => controller.view.isTrajectoryAvailable(),
+    setView: (paneId, view) => controller.view.setView(paneId, view),
   }
 
   ctx.effect(() => {

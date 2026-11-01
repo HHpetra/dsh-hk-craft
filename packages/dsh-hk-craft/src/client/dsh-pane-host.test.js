@@ -745,7 +745,7 @@ test('focusing another pane releases the old main view and takes the new one', a
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
 
-  assert.equal(controller.focusPane('p1'), true)
+  assert.equal(controller.layout.focusPane('p1'), true)
 
   const live = liveMainView(fake)
   assert.equal(live.length, 1)
@@ -920,7 +920,7 @@ test('a failed interrupt keeps the pane mounted, its references and the dialog e
 test('replacing the focused session swaps its references and keeps the pane identity', async () => {
   const { fake, controller } = await readyController()
 
-  assert.equal(controller.replaceFocusedSession('s9'), true)
+  assert.equal(controller.layout.replaceFocusedSession('s9'), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.root, { kind: 'leaf', paneId: 'p1' })
@@ -944,7 +944,7 @@ test('replacing with a session already open elsewhere focuses that pane instead 
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
 
-  assert.equal(controller.replaceFocusedSession('s1'), true)
+  assert.equal(controller.layout.replaceFocusedSession('s1'), true)
 
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
   assert.deepEqual(Object.keys(controller.getSnapshot().panes).sort(), ['p1', 'p2'])
@@ -1042,16 +1042,16 @@ test('a view change drives only that pane and keeps the layout a pure update', a
   const { controller, viewSwitch } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
 
-  assert.equal(controller.setView('p1', 'trajectory'), true)
+  assert.equal(controller.view.setView('p1', 'trajectory'), true)
   assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
   assert.equal(controller.getSnapshot().panes.p1.view, 'trajectory')
   assert.equal(controller.getSnapshot().panes.p2.view, 'chat')
 
-  assert.equal(controller.resize([], 0.8), true)
+  assert.equal(controller.layout.resize([], 0.8), true)
   assert.equal(controller.getSnapshot().root.ratio, 0.8)
-  assert.equal(controller.resize([], 0.8), false)
-  assert.equal(controller.resize(['missing'], 0.2), false)
-  assert.equal(controller.setView('missing', 'chat'), false)
+  assert.equal(controller.layout.resize([], 0.8), false)
+  assert.equal(controller.layout.resize(['missing'], 0.2), false)
+  assert.equal(controller.view.setView('missing', 'chat'), false)
   controller.dispose()
 })
 
@@ -1062,11 +1062,11 @@ test('a view change drives only that pane and keeps the layout a pure update', a
 test('switching a pane view never re-retains its session or touches the tree', async () => {
   const { fake, controller, viewSwitch } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
-  const reference = controller.paneReference('p1')
+  const reference = controller.layout.paneReference('p1')
   const retained = fake.calls.retain.length
   const rootBefore = controller.getSnapshot().root
 
-  assert.equal(controller.setView('p1', 'trajectory'), true)
+  assert.equal(controller.view.setView('p1', 'trajectory'), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(viewSwitch.calls, [{ sessionId: 's1', viewId: 'trajectory' }])
@@ -1074,7 +1074,7 @@ test('switching a pane view never re-retains its session or touches the tree', a
   assert.deepEqual(state.panes.p2, { paneId: 'p2', sessionId: 's2', view: 'chat' })
   // A View switch is not a session swap: same retained reference, same panes,
   // same tree — only the remembered view differs.
-  assert.equal(controller.paneReference('p1'), reference)
+  assert.equal(controller.layout.paneReference('p1'), reference)
   assert.equal(fake.calls.retain.length, retained)
   assert.deepEqual(state.root, rootBefore)
   assert.equal(state.sessionId, 's2')
@@ -1086,8 +1086,8 @@ test('a disabled trajectory View cannot switch a pane even when asked directly',
     viewSwitch: fakeViewSwitch({ trajectoryAvailable: false }),
   })
 
-  assert.equal(controller.isTrajectoryAvailable(), false)
-  assert.equal(controller.setView('p1', 'trajectory'), false)
+  assert.equal(controller.view.isTrajectoryAvailable(), false)
+  assert.equal(controller.view.setView('p1', 'trajectory'), false)
   assert.deepEqual(viewSwitch.calls, [])
   assert.equal(controller.getSnapshot().panes.p1.view, 'chat')
   controller.dispose()
@@ -1096,7 +1096,7 @@ test('a disabled trajectory View cannot switch a pane even when asked directly',
 test('a failed View activation keeps the remembered view and surfaces the error', async () => {
   const { controller } = await readyController({ viewSwitch: fakeViewSwitch({ failActivate: true }) })
 
-  assert.equal(controller.setView('p1', 'trajectory'), false)
+  assert.equal(controller.view.setView('p1', 'trajectory'), false)
   assert.equal(controller.getSnapshot().panes.p1.view, 'chat')
   assert.match(controller.getSnapshot().error, /view switch exploded/)
   controller.dispose()
@@ -1105,12 +1105,12 @@ test('a failed View activation keeps the remembered view and surfaces the error'
 test('mounting a pane re-asserts its remembered view on that session binding', async () => {
   const { controller, viewSwitch } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
-  controller.setView('p1', 'trajectory')
+  controller.view.setView('p1', 'trajectory')
   viewSwitch.calls.length = 0
 
-  assert.equal(controller.restoreViewFor('s1'), true)
-  assert.equal(controller.restoreViewFor('s2'), true)
-  assert.equal(controller.restoreViewFor('gone'), false)
+  assert.equal(controller.view.restoreViewFor('s1'), true)
+  assert.equal(controller.view.restoreViewFor('s2'), true)
+  assert.equal(controller.view.restoreViewFor('gone'), false)
   assert.deepEqual(viewSwitch.calls, [
     { sessionId: 's1', viewId: 'trajectory' },
     { sessionId: 's2', viewId: 'chat' },
@@ -1120,11 +1120,11 @@ test('mounting a pane re-asserts its remembered view on that session binding', a
 
 test('re-enabling developer tools re-applies the pane trajectory memory', async () => {
   const { controller, viewSwitch } = await readyController()
-  controller.setView('p1', 'trajectory')
+  controller.view.setView('p1', 'trajectory')
   viewSwitch.calls.length = 0
 
   viewSwitch.setAvailable(false)
-  assert.equal(controller.isTrajectoryAvailable(), false)
+  assert.equal(controller.view.isTrajectoryAvailable(), false)
   assert.deepEqual(viewSwitch.calls, [])
 
   viewSwitch.setAvailable(true)
@@ -1175,11 +1175,12 @@ test('every pane exposes its retained reference for rendering', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
 
-  assert.equal(controller.paneReference('p1').sessionId, 's1')
-  assert.equal(controller.paneReference('p2').sessionId, 's2')
-  assert.equal(controller.paneReference('p3'), undefined)
-  assert.equal(controller.focusedPane().paneId, 'p2')
-  assert.equal(controller.currentReference().sessionId, 's2')
+  assert.equal(controller.layout.paneReference('p1').sessionId, 's1')
+  assert.equal(controller.layout.paneReference('p2').sessionId, 's2')
+  assert.equal(controller.layout.paneReference('p3'), undefined)
+  assert.equal(controller.layout.focusedPane().paneId, 'p2')
+  // The focused pane's reference is the one dsh reads as the current session.
+  assert.equal(controller.layout.paneReference(controller.layout.focusedPane().paneId).sessionId, 's2')
   controller.dispose()
 })
 
@@ -1268,14 +1269,14 @@ test('focusPaneAt focuses the strip position, using the strip projection', async
   // row(p1, col(p2, p3)): p3 is focused.
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
 
-  assert.equal(controller.focusPaneAt(1), true)
+  assert.equal(controller.layout.focusPaneAt(1), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
-  assert.equal(controller.focusPaneAt(3), true)
+  assert.equal(controller.layout.focusPaneAt(3), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
 
-  assert.equal(controller.focusPaneAt(4), false)
-  assert.equal(controller.focusPaneAt(0), false)
-  assert.equal(controller.focusPaneAt(1.5), false)
+  assert.equal(controller.layout.focusPaneAt(4), false)
+  assert.equal(controller.layout.focusPaneAt(0), false)
+  assert.equal(controller.layout.focusPaneAt(1.5), false)
   controller.dispose()
 })
 
@@ -1304,7 +1305,7 @@ test('+ evens the row by pane count and drops a dragged ratio', async () => {
     paneIds: ['p1', 'p2', 'p3', 'p4'],
   })
   await controller.budget.split('p1', 'row')
-  assert.equal(controller.resize([], 0.7), true)
+  assert.equal(controller.layout.resize([], 0.7), true)
   await controller.budget.split('p2', 'row')
 
   assert.equal(await controller.budget.newPane(), true)
@@ -1429,7 +1430,7 @@ test('a session already open is focused when the pane budget is spent', async ()
   assert.equal(controller.getSnapshot().activePaneId, 'p4')
 
   const creates = fake.calls.create.length
-  assert.equal(controller.focusPane('p1'), true)
+  assert.equal(controller.layout.focusPane('p1'), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
 
   assert.equal(await controller.budget.openInNewPane('s2'), false)
@@ -1795,9 +1796,9 @@ test('a restored layout wider than the cap stays operable and cannot grow', asyn
   assert.deepEqual(leaves(controller.getSnapshot().root), ['p1', 'p2', 'p3', 'p4', 'p5'])
   assert.equal(controller.getSnapshot().root.ratio, 0.7)
   assert.equal(controller.getSnapshot().root.b.dir, 'col')
-  assert.equal(controller.focusPane('p1'), true)
+  assert.equal(controller.layout.focusPane('p1'), true)
   assert.equal(controller.getSnapshot().activePaneId, 'p1')
-  assert.equal(controller.resize(['b'], 0.4), true)
+  assert.equal(controller.layout.resize(['b'], 0.4), true)
   assert.equal(controller.getSnapshot().root.b.dir, 'col')
   assert.equal(controller.getSnapshot().root.b.ratio, 0.4)
   assert.equal(controller.getSnapshot().root.ratio, 0.7)
@@ -1900,10 +1901,10 @@ test('paneIndexOf reports the strip position used by the /resume badge', async (
   await controller.budget.split('p1', 'row')
 
   // row(p1, p2): p1 is position 1, p2 position 2.
-  assert.equal(controller.paneIndexOf('s1'), 1)
-  assert.equal(controller.paneIndexOf('s2'), 2)
-  assert.equal(controller.paneIndexOf('not-open'), null)
-  assert.equal(controller.paneIndexOf(''), null)
+  assert.equal(controller.layout.paneIndexOf('s1'), 1)
+  assert.equal(controller.layout.paneIndexOf('s2'), 2)
+  assert.equal(controller.layout.paneIndexOf('not-open'), null)
+  assert.equal(controller.layout.paneIndexOf(''), null)
   controller.dispose()
 })
 
@@ -1941,10 +1942,10 @@ test('Ctrl+Enter on a conversation already open focuses its pane instead of dupl
 test('swapping two panes exchanges sessions and views, keeping the tree and the focus', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')
-  assert.equal(controller.setView('p1', 'trajectory'), true)
+  assert.equal(controller.view.setView('p1', 'trajectory'), true)
   const rootBefore = controller.getSnapshot().root
 
-  assert.equal(controller.swapPanes('p1', 'p2'), true)
+  assert.equal(controller.layout.swapPanes('p1', 'p2'), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.panes.p1, { paneId: 'p1', sessionId: 's2', view: 'chat' })
@@ -1983,7 +1984,7 @@ test('a swap acquires both pane references before releasing either session', asy
     return observe(retain(sessionId, options))
   }
 
-  assert.equal(controller.swapPanes('p1', 'p2'), true)
+  assert.equal(controller.layout.swapPanes('p1', 'p2'), true)
 
   // A session must never hit a zero retain count between its old and new pane:
   // releasing first would tear down dsh's client generation and lose the
@@ -2001,9 +2002,9 @@ test('swapping a pane with itself or an unknown pane is a no-op', async () => {
   const before = controller.getSnapshot()
   const retains = fake.calls.retain.length
 
-  assert.equal(controller.swapPanes('p1', 'p1'), false)
-  assert.equal(controller.swapPanes('p1', 'missing'), false)
-  assert.equal(controller.swapPanes('missing', 'p1'), false)
+  assert.equal(controller.layout.swapPanes('p1', 'p1'), false)
+  assert.equal(controller.layout.swapPanes('p1', 'missing'), false)
+  assert.equal(controller.layout.swapPanes('missing', 'p1'), false)
 
   assert.equal(controller.getSnapshot(), before)
   assert.equal(fake.calls.retain.length, retains)
@@ -2024,7 +2025,7 @@ test('swapping panes of two different workspaces is refused', async () => {
   assert.deepEqual(Object.keys(controller.getSnapshot().layouts).sort(), ['w1', 'w2'])
 
   const before = controller.getSnapshot()
-  assert.equal(controller.swapPanes('p1', 'p2'), false)
+  assert.equal(controller.layout.swapPanes('p1', 'p2'), false)
 
   assert.equal(controller.getSnapshot(), before)
   controller.dispose()

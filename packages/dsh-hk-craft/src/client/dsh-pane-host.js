@@ -49,6 +49,7 @@ const { hasLayoutKey } = require('./layout-store.js')
 const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
 const { createSplitBudget } = require('./pane-budget.js')
 const { createCloseFlow } = require('./pane-close.js')
+const { createPaneLayout } = require('./pane-layout.js')
 const { createRightbar } = require('./pane-panel.js')
 const { messageOf } = require('./shared.js')
 const { neighbourWorkspaceId, workspaceOrderOf } = require('./workspace-order.js')
@@ -295,11 +296,19 @@ function createPaneController(ctx, options = {}) {
     apply: (next, workspaceId) => apply(next, workspaceId),
     freshPane: (sessionId) => freshPane(sessionId),
     openSessionPane: (layout, sessionId, workspaceId) => openSessionPane(layout, sessionId, workspaceId),
-    focusPane: (paneId) => focusPaneValue(paneId),
-    replaceFocused: (sessionId) => replaceFocusedValue(sessionId),
+    focusPane: (paneId) => layoutRuntime.layout.focusPane(paneId),
+    replaceFocused: (sessionId) => layoutRuntime.layout.replaceFocusedSession(sessionId),
     switchWorkspace: (workspaceId) => switchWorkspaceValue(workspaceId),
     createSession: (workspaceId) => createSession(workspaceId),
   })
+  /**
+   * The layout operations and the View switch (`pane-layout.js`). Two faces over
+   * the transaction this kernel owns; created below, once `emit` and `apply`
+   * exist, because the budget's callbacks come through it.
+   *
+   * @type {ReturnType<typeof createPaneLayout>|null}
+   */
+  let layoutRuntime = null
   let paneSeq = 0
   let registered = false
   let disposed = false
@@ -832,6 +841,9 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
+   * The same projection, resolved once. Used by the empty state, which only
+   * wants the first set of rows the catalogs can name.
+   *
    * @param {string} [workspaceId]
    * @returns {Promise<object[]>} raw conversation rows (never rejects)
    */
@@ -848,48 +860,6 @@ function createPaneController(ctx, options = {}) {
     })
   }
 
-  /**
-   * Whether a pane may offer the trajectory View. Mirrors dsh's own gate
-   * (`doc/upstream-contracts.md#trajectory-gate-developertools-enabled`): the
-   * View only exists while developer tools are enabled. Without an adapter the
-   * pane stays chat-only.
-   */
-  function isTrajectoryAvailable() {
-    return typeof viewSwitch?.isTrajectoryAvailable === 'function'
-      ? viewSwitch.isTrajectoryAvailable() === true
-      : false
-  }
-
-  /**
-   * Follow the developer-tools gate so the View (and a remembered
-   * trajectory choice) react when the setting flips. No-op without an adapter.
-   *
-   * @param {() => void} listener
-   * @returns {() => void}
-   */
-  function subscribeViewAvailability(listener) {
-    return typeof viewSwitch?.subscribeAvailability === 'function'
-      ? viewSwitch.subscribeAvailability(listener)
-      : () => {}
-  }
-
-  /**
-   * Drive the real conversation View through the public binding. This is the
-   * same call dsh's own View switcher makes, so the session is not rebuilt and the
-   * draft / scroll state are dsh's own.
-   *
-   * @returns {{ok: boolean, error?: string}}
-   */
-  function activateView(pane, view) {
-    if (typeof viewSwitch?.activate !== 'function') {
-      return { ok: false, error: 'view switching is unavailable in this shell' }
-    }
-    try {
-      return viewSwitch.activate(pane.sessionId, view) ?? { ok: false, error: 'view switch returned no result' }
-    } catch (error) {
-      return { ok: false, error: messageOf(error) }
-    }
-  }
 
   // The renderer contains a Factory crash inside its own boundary and renders
   // an empty `[data-factory-error]` cell. Its supervision channel is the only
@@ -905,19 +875,6 @@ function createPaneController(ctx, options = {}) {
         },
       })
     }) ?? (() => {})
-
-  // Developer tools gate the trajectory View. Turning them back on re-asserts
-  // the trajectory choice each pane remembered; turning them off is left to
-  // dsh, whose own refreshViews restores every tracked binding (usually chat).
-  const unsubscribeViewAvailability = subscribeViewAvailability(() => {
-    if (disposed) return
-    if (!isTrajectoryAvailable()) return
-    for (const layoutValue of Object.values(book.layoutsMap())) {
-      for (const pane of Object.values(layoutValue.panes)) {
-        if (pane.view === 'trajectory') activateView(pane, pane.view)
-      }
-    }
-  })
 
   /**
    * Workspace and session catalog notifications.
@@ -993,17 +950,6 @@ function createPaneController(ctx, options = {}) {
     focusOrOpenWorkspaceConversation(target)
   }
 
-  /** Focus a pane; false when it is absent or already focused. */
-  function focusPaneValue(paneId) {
-    if (disposed) return false
-    const located = book.locatePane(paneId)
-    if (located === null) return false
-    if (located.workspaceId !== book.getActiveWorkspaceId()) {
-      if (!switchWorkspaceValue(located.workspaceId)) return false
-    }
-    return apply(layoutTree.focus(book.layoutOf(located.workspaceId), paneId), located.workspaceId)
-  }
-
   /** The catalog row of one session, or undefined when the shell no longer lists it. */
   function rowOf(sessionId) {
     return catalogNow().session(sessionId)
@@ -1041,22 +987,23 @@ function createPaneController(ctx, options = {}) {
     closePane: (paneId) => closePaneValue(paneId),
   })
 
-  /** Replace the focused pane's session, focusing an existing holder instead. */
-  function replaceFocusedValue(sessionId) {
-    if (disposed || !registered) return false
-    const value = book.activeLayout()
-    const paneId = value.activePaneId
-    if (paneId === null) return false
-    const holder = book.locatePaneIn(sessionId)
-    if (holder !== null) {
-      return holder.paneId === paneId && holder.workspaceId === book.getActiveWorkspaceId()
-        ? true
-        : focusPaneValue(holder.paneId)
-    }
-    const next = layoutTree.replaceSession(value, paneId, sessionId)
-    if (next === value) return true
-    return apply(next)
-  }
+  // The layout operations and the View switch (`pane-layout.js`). Two faces over
+  // the transaction above; every mutation still goes through `apply`, so the
+  // reference reconcile stays in exactly one place.
+  layoutRuntime = createPaneLayout({
+    book,
+    layoutTree,
+    apply: (next, workspaceId) => apply(next, workspaceId),
+    emit: (patch) => emit(patch),
+    isDisposed: () => disposed,
+    isRegistered: () => registered,
+    switchWorkspace: (workspaceId) => switchWorkspaceValue(workspaceId),
+    paneReference: (paneId) => refs.get(paneId)?.pane,
+    focusedWorkspaceId: () => focusedWorkspaceId(),
+    viewSwitch,
+    paneIdForStripIndex,
+    openConversationItems,
+  })
 
   /**
    * Show one workspace's tree without closing anything. This is the D5 seam:
@@ -1158,40 +1105,6 @@ function createPaneController(ctx, options = {}) {
     return true
   }
 
-  /** Ctrl+1..4: focus the open conversation at that strip position. */
-  function focusPaneAtValue(index) {
-    if (disposed) return false
-    const paneId = paneIdForStripIndex(book.activeLayout(), index)
-    return paneId === null ? false : focusPaneValue(paneId)
-  }
-
-  /**
-   * Drag a strip entry onto another entry: exchange the two panes' contents
-   * (spec §4.2).
-   *
-   * The two panes must live in the same workspace tree — a drag can never leave
-   * one strip (spec D3) — and the transition is the pure `swap` of
-   * `layout-tree.js`: pane ids, leaf positions, ratios and the focus stay put,
-   * while the session and the remembered view move. The reference reconciliation
-   * acquires both new pane retentions before releasing the old ones, so neither
-   * conversation's client generation is torn down by the swap.
-   *
-   * @param {string} a
-   * @param {string} b
-   * @returns {boolean} whether the contents were swapped
-   */
-  function swapPanesValue(a, b) {
-    if (disposed) return false
-    if (typeof a !== 'string' || typeof b !== 'string' || a === b) return false
-    const first = book.locatePane(a)
-    const second = book.locatePane(b)
-    if (first === null || second === null) return false
-    if (first.workspaceId !== second.workspaceId) return false
-    const current = book.layoutOf(first.workspaceId)
-    const next = layoutTree.swap(current, a, b)
-    if (next === current) return false
-    return apply(next, first.workspaceId)
-  }
 
   /**
    * The workspace that inherits the view when `deletedId` goes away: the next
@@ -1297,11 +1210,11 @@ function createPaneController(ctx, options = {}) {
     try {
       const holder = book.locatePaneIn(sessionId)
       if (holder !== null) {
-        focusPaneValue(holder.paneId)
+        layoutRuntime.layout.focusPane(holder.paneId)
         return
       }
       if (book.activeLayout().activePaneId !== null) {
-        replaceFocusedValue(sessionId)
+        layoutRuntime.layout.replaceFocusedSession(sessionId)
         return
       }
       face.activate(sessionId)
@@ -1316,18 +1229,6 @@ function createPaneController(ctx, options = {}) {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    /** The retained reference backing one pane, if that pane is mounted. */
-    paneReference(paneId) {
-      return refs.get(paneId)?.pane
-    },
-    /** The focused pane's retained reference (the one dsh treats as current). */
-    currentReference() {
-      const pane = focusedPane()
-      return pane === null ? undefined : refs.get(pane.paneId)?.pane
-    },
-    focusedPane,
-    /** The workspace the pane workspace is currently showing. */
-    focusedWorkspaceId,
     /**
      * Whether a workspace was ever opened in split: a loaded layout or a
      * persisted layout key. The sidebar uses it to gate the four-state light; it
@@ -1499,10 +1400,6 @@ function createPaneController(ctx, options = {}) {
     reactivate() {
       return reactivateValue()
     },
-    /** Move the focus (and with it dsh's "current session"). */
-    focusPane(paneId) {
-      return focusPaneValue(paneId)
-    },
     /**
      * Pane creation and the pane cap: `split`, `newPane`, `openInNewPane`,
      * `newInFocused`, `setMaxPanes` and `splitBlock`. See `pane-budget.js`,
@@ -1510,122 +1407,23 @@ function createPaneController(ctx, options = {}) {
      */
     budget,
     /**
-     * Ctrl+1..4: focus the open conversation at that strip position. The
-     * numbering is the strip's own projection, not a raw leaf walk.
-     *
-     * @param {number} index 1-based strip position
-     * @returns {boolean}
-     */
-    focusPaneAt: focusPaneAtValue,
-    /**
-     * The 1-based strip position of a conversation already open in the visible
-     * workspace's panes, or null. `/resume` uses it for the "已在窗格 N" badge
-     * (spec D10); selecting such a row focuses that pane instead of remounting.
-     *
-     * @param {string} sessionId
-     * @returns {number|null}
-     */
-    paneIndexOf(sessionId) {
-      if (disposed || typeof sessionId !== 'string' || sessionId === '') return null
-      const item = openConversationItems(book.activeLayout()).find(
-        (entry) => entry.sessionId === sessionId,
-      )
-      return item === undefined ? null : item.index
-    },
-    /**
-     * Strip-entry drag: exchange two panes' sessions and remembered views while
-     * keeping the tree shape, the ratios and the focus (ticket 10). Dropping on
-     * the same entry, an unknown pane or a pane of another workspace is a no-op.
-     *
-     * @param {string} a
-     * @param {string} b
-     * @returns {boolean}
-     */
-    swapPanes: swapPanesValue,
-    /**
      * The staged close: `request(paneId)` may only stage an interrupt dialog,
      * `bySession(sessionId)` finds the pane that holds a conversation,
-     * `confirm()` / `cancel()` answer that dialog. See `pane-close.js`, which
-     * owns `pendingClose`, `closeBusy` and `closeError`.
+     * `confirm()` / `cancel()` answer that dialog. See `pane-close.js`.
      */
     close,
     /**
-     * Pane-aware `/resume`: swap the focused pane's conversation without
-     * touching the tree, the focus or the panel selection. If the session is
-     * already mounted elsewhere, focus that pane (switching workspace when it
-     * belongs to another one).
-     *
-     * @param {string} sessionId
-     * @returns {boolean}
+     * The tree operations: `paneReference`, `focusedPane`, `focusPane`,
+     * `focusPaneAt`, `paneIndexOf`, `swapPanes`, `replaceFocusedSession`,
+     * `resize`. Every one of them goes through this kernel's `apply`.
+     * See `pane-layout.js`.
      */
-    replaceFocusedSession(sessionId) {
-      return replaceFocusedValue(sessionId)
-    },
+    layout: layoutRuntime.layout,
     /**
-     * Switch one pane's conversation view. The remembered choice lives on that
-     * pane only; the tree, the focus and every retained reference are
-     * untouched, and the session itself is not rebuilt (ticket 07).
-     *
-     * A trajectory request while developer tools are disabled is refused rather
-     * than remembered as an unreachable selection; the View is not rendered
-     * for the same reason (ADR-0006).
-     *
-     * @param {string} paneId
-     * @param {'chat'|'trajectory'} view
-     * @returns {boolean}
+     * The chat/trajectory switch over the same tree: `setView`,
+     * `restoreViewFor`, `isTrajectoryAvailable`, `subscribeViewAvailability`.
      */
-    setView(paneId, view) {
-      if (disposed) return false
-      const located = book.locatePane(paneId)
-      if (located === null) return false
-      const pane = located.pane
-      if (view !== 'chat' && view !== 'trajectory') return false
-      if (pane.view === view) return true
-      if (view === 'trajectory' && !isTrajectoryAvailable()) return false
-      if (viewSwitch !== undefined) {
-        const result = activateView(pane, view)
-        if (result?.ok !== true) {
-          emit({ error: result?.error ?? 'could not switch the conversation view' })
-          return false
-        }
-      }
-      return apply(
-        layoutTree.setView(book.layoutOf(located.workspaceId), paneId, view),
-        located.workspaceId,
-      )
-    },
-    /**
-     * Re-assert the view a pane remembered, once its conversation binding is
-     * available. Called from the pane body after mount; dsh restores the
-     * per-session preference on its own, but the pane's memory must win.
-     *
-     * @param {string} sessionId
-     * @returns {boolean}
-     */
-    restoreViewFor(sessionId) {
-      if (disposed) return false
-      const holder = book.locatePaneIn(sessionId)
-      if (holder === null) return false
-      const pane = book.layoutOf(holder.workspaceId).panes[holder.paneId]
-      if (pane === undefined) return false
-      if (pane.view === 'trajectory' && !isTrajectoryAvailable()) return false
-      return activateView(pane, pane.view).ok === true
-    },
-    /** Whether the trajectory View is offered (developer-tools gate). */
-    isTrajectoryAvailable,
-    subscribeViewAvailability,
-    /**
-     * Drag a separator: `path` addresses the split (a/b steps from the root).
-     *
-     *
-     * @param {string[]} path
-     * @param {number} ratio
-     * @returns {boolean}
-     */
-    resize(path, ratio) {
-      if (disposed) return false
-      return apply(layoutTree.resize(book.activeLayout(), path, ratio))
-    },
+    view: layoutRuntime.view,
     /**
      * The native right bar: `attach` / `attachTabs` / `toggle` / `openTool`
      * plus the three snapshot fields it owns. See `pane-panel.js`.
@@ -1672,7 +1470,7 @@ function createPaneController(ctx, options = {}) {
       panel.dispose()
       close.dispose()
       unsubscribeEntryError()
-      unsubscribeViewAvailability()
+      layoutRuntime.dispose()
       unsubscribeCatalog()
       releaseAll()
       book.clear()

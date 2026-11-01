@@ -57,10 +57,12 @@ function fakeController() {
   return {
     subscribe: () => () => {},
     getSnapshot: () => state,
-    restoreViewFor: () => {},
     close: { bySession: () => {} },
-    subscribeViewAvailability: () => () => {},
-    isTrajectoryAvailable: () => true,
+    view: {
+      restoreViewFor: () => {},
+      subscribeViewAvailability: () => () => {},
+      isTrajectoryAvailable: () => true,
+    },
   }
 }
 
@@ -151,11 +153,13 @@ test('the views override renders conversation.session with the layout view', () 
     const controller = {
       subscribe: () => () => {},
       getSnapshot: () => state,
-      subscribeViewAvailability: () => () => {},
-      isTrajectoryAvailable: () => true,
-      setView: (paneId, view) => {
-        switches.push([paneId, view])
-        return true
+      view: {
+        subscribeViewAvailability: () => () => {},
+        isTrajectoryAvailable: () => true,
+        setView: (paneId, view) => {
+          switches.push([paneId, view])
+          return true
+        },
       },
     }
     const Views = createPaneConversationViews(controller)
@@ -187,9 +191,11 @@ test('the views override falls back to chat while developer tools hide trajector
     const controller = {
       subscribe: () => () => {},
       getSnapshot: () => state,
-      subscribeViewAvailability: () => () => {},
-      isTrajectoryAvailable: () => false,
-      setView: () => true,
+      view: {
+        subscribeViewAvailability: () => () => {},
+        isTrajectoryAvailable: () => false,
+        setView: () => true,
+      },
     }
     const Views = createPaneConversationViews(controller)
     const renders = []
@@ -224,15 +230,19 @@ function elementsOf(element, out = []) {
 function headerController({ trajectory = true, calls = [] } = {}) {
   return {
     calls,
-    paneReference: () => ({ sessionId: 's1' }),
     close: { request: (paneId) => calls.push(['close', paneId]) },
-    focusPane: () => {},
-    setView: (paneId, view) => {
-      calls.push(['view', paneId, view])
-      return true
+    layout: {
+      paneReference: () => ({ sessionId: 's1' }),
+      focusPane: () => {},
     },
-    subscribeViewAvailability: () => () => {},
-    isTrajectoryAvailable: () => trajectory,
+    view: {
+      setView: (paneId, view) => {
+        calls.push(['view', paneId, view])
+        return true
+      },
+      subscribeViewAvailability: () => () => {},
+      isTrajectoryAvailable: () => trajectory,
+    },
   }
 }
 
@@ -468,8 +478,7 @@ function stripPlus(maxPanes) {
   const controller = {
     close: { request: () => {} },
     budget: { newPane: () => {} },
-    focusPane: () => {},
-    swapPanes: () => {},
+    layout: { focusPane: () => {}, swapPanes: () => {} },
   }
   const state = {
     root: { kind: 'leaf', paneId: 'p1' },

@@ -441,8 +441,11 @@ function createNotifier(options) {
    */
   function sessionIsVisible(sessionId) {
     try {
-      if (controller?.getSnapshot?.()?.active === true && typeof controller?.paneIndexOf === 'function') {
-        const index = controller.paneIndexOf(sessionId)
+      if (
+        controller?.getSnapshot?.()?.active === true &&
+        typeof controller?.layout?.paneIndexOf === 'function'
+      ) {
+        const index = controller.layout.paneIndexOf(sessionId)
         return index !== null && index !== undefined
       }
     } catch (_error) {

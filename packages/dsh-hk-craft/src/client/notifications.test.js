@@ -373,7 +373,7 @@ test('the foreground gate treats every pane of the visible workspace as on scree
     byId: { s1: { title: 'S' } },
     controller: {
       getSnapshot: () => ({ active: true }),
-      paneIndexOf: (sessionId) => (visible.has(sessionId) ? 1 : null),
+      layout: { paneIndexOf: (sessionId) => (visible.has(sessionId) ? 1 : null) },
     },
   })
   const { notifier } = createTestNotifier(env, { documentRef })

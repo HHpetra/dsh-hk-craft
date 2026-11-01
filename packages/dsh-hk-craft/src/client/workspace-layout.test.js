@@ -233,7 +233,7 @@ test('each workspace keeps its own layout: switching shows the other tree and cl
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
   // Switching workspaces stays in split mode and never selects a panel.
   assert.deepEqual(fake.calls.selectPanel, [])
-  assert.equal(controller.paneReference('p1').sessionId, 's1')
+  assert.equal(controller.layout.paneReference('p1').sessionId, 's1')
 
   assert.equal(controller.switchWorkspace('w1'), true)
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s1'])
@@ -440,8 +440,8 @@ test('every layout change persists under its own workspace key', () => {
   const { controller } = readyController({ storage, paneIds: ['p2'] })
 
   controller.activate('s1')
-  controller.setView('p1', 'trajectory')
-  controller.resize([], 0.5)
+  controller.view.setView('p1', 'trajectory')
+  controller.layout.resize([], 0.5)
   const state = controller.getSnapshot()
 
   assert.notEqual(storage.raw('w1'), null)
@@ -503,9 +503,9 @@ test('pane ids restored for different workspaces are made unique', () => {
   const w1Panes = Object.keys(controller.getSnapshot().layouts.w1.panes)
   assert.deepEqual(w2Panes, ['pane-renamed'])
   assert.deepEqual(w1Panes, ['pane-1'])
-  assert.equal(controller.paneReference('pane-renamed').sessionId, 's3')
-  assert.equal(controller.paneReference('pane-1').sessionId, 's1')
-  assert.equal(controller.paneReference('pane-renamed').options.source, PANE_SOURCE)
+  assert.equal(controller.layout.paneReference('pane-renamed').sessionId, 's3')
+  assert.equal(controller.layout.paneReference('pane-1').sessionId, 's1')
+  assert.equal(controller.layout.paneReference('pane-renamed').options.source, PANE_SOURCE)
   assert.deepEqual(
     livePaneRefs(fake).map((reference) => reference.sessionId).sort(),
     ['s1', 's3'],
@@ -620,7 +620,7 @@ test('the focused workspace falls back to the host workspace list while empty', 
 
   assert.equal(controller.activate(), true)
   assert.equal(controller.getSnapshot().workspaceId, 'w1')
-  assert.equal(controller.focusedWorkspaceId(), 'w1')
+  assert.equal(controller.layout.focusedWorkspaceId(), 'w1')
   controller.dispose()
 })
 
