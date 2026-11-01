@@ -372,6 +372,7 @@
 - `workspace.createdAt` 被显式承认为契约字段，由 catalog 解析成数字后再参与冷启动兜底（见 `doc/upstream-contracts.md#workspace-catalog`）。
 - 接口按需增长：只有出现真实调用方才加查询（例如子代理会话的 `subagent` 位、终端默认 shell 用的 `sessionIds()`），不为对称预先造接口。
 - 新增读取路径时**先问 catalog**；需要**动作**或**订阅**时才另开 module。跨工作区同屏、纵向分割等 ADR-0005 / 0006 / 0009 的约束不因本决策改变。
+---
 
 ## ADR-0017 — 窗格控制器按状态持有者切开，布局事务留在内核
 
@@ -396,9 +397,11 @@
 - face 从 **41 键降到 18 键**（13 个自有成员 + 5 个持有者/面）。`dsh-pane-host.js` 从 2228 行降到 1506 行，新增 `pane-panel.js`（191 行 / 4 成员）、`pane-layout.js`（249 行 / 9 + 4 成员），`pane-close.js` 从 166 振到 222 行（多了自己的 face），`pane-budget.js` 从 178 到 609 行（多了创建策略）。
 - **未达成的验收条件**：内核 1506 行，远超 600 行上限，也超出最初给「事务文件」留的 900 行例外。要压到 900 以下只能做第 4 条已拒绝的工作区生命周期搬迁。也就是说：**接口变深了，文件没有变短**；把行数当验收口径会诱导假接缝。`pane-budget.js` 609 行，超出 600 行 1.5%，已明确接受。
 - `layout` 面是 **9 个成员**而不是 8：`focusedWorkspaceId` 的回退行为（空工作区仍报出宿主列表里的第一个工作区，让 `/clear` 能开出首个窗格）有测试钉住，为凑数字删掉会删掉被测行为。
-- 删除 `currentReference()`：非测试代码零调用方，`paneReference(focusedPane().paneId)` 表达同一件事。`reactivate()` 保留（`.scratch/split-rightbar/spec.md` 记的幂等恢复入口）。
+- 删除 `currentReference()`：非测试代码零调用方，`paneReference(focusedPane().paneId)` 表达同一件事。`reactivate()` 保留，但没有生产调用方：shadow 让原生 reveal 不再卸载分屏，所以它可能永远不被调用。它留下是因为它是**唯一可执行的「重新 reconcile 是幂等的」这句话**——`workspace-layout.test.js` 用它钉住「再 reconcile 一次不移动引用、不移动唯一的 `mainView`、不调 `selectPanel`」。删掉它，这条不变量就只剩注释。
 - 两个持有者带自己的测试：`pane-panel.test.js`、`pane-close.test.js`、`pane-layout.test.js`（新增 39 个用例：面板 9、关闭流 11、布局 10、预算 9）；内核那 2000 行整根测试不动——它们断言的是服务调用（`retain` / `create` / `interrupt`），与实现位置无关，按模块重写买不到新信息。
-- 新增持有者时**先问「它有没有自己的寄存器」**；只是事务的调用方，就不要造模块（ADR-0016 的同一条纪律：先问拥有者）。
+
+---
+
 ## ADR-0018 — 关闭窗格后同一排重新均分宽度
 
 **背景**：真机验证时报「关掉中间窗格，后两格的宽度会合并，而不是重新均分」。查证后的机制是 `layoutTree.close()` 只做结构崩缩——兄弟子树提升到父节点的位置——**不调用** `equalizeRowRatios`；只有 `split()` 会调用它。这条规则不是意外，而是被记录过的：ADR-0011 决策 2 写着「关闭窗格仍只提升兄弟子树，不重新均分」，ADR-0011 的后果与 ADR-0006 的后果各写了一遍，代码注释与 GLOSSARY 又各复制了一份。
