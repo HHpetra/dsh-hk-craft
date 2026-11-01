@@ -760,7 +760,7 @@ test('closing a pane releases both of its references and promotes the sibling', 
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
 
-  assert.equal(controller.closePane('p2'), true)
+  assert.equal(controller.close.request('p2'), true)
 
   assert.deepEqual(controller.getSnapshot().root, { kind: 'leaf', paneId: 'p1' })
   assert.deepEqual(Object.keys(controller.getSnapshot().panes), ['p1'])
@@ -779,7 +779,7 @@ test('closing the focused pane of three moves focus and the main view to the nei
 
   // row(p1, col(p2, p3)); p3 is focused and bottom-right.
   assert.equal(controller.getSnapshot().activePaneId, 'p3')
-  assert.equal(controller.closePane('p3'), true)
+  assert.equal(controller.close.request('p3'), true)
 
   assert.equal(controller.getSnapshot().activePaneId, 'p2')
   assert.equal(controller.getSnapshot().sessionId, 's2')
@@ -791,7 +791,7 @@ test('closing the focused pane of three moves focus and the main view to the nei
 test('closing the last pane keeps the panel active with the empty state and no references', async () => {
   const { fake, controller } = await readyController()
 
-  assert.equal(controller.closePane('p1'), true)
+  assert.equal(controller.close.request('p1'), true)
 
   const state = controller.getSnapshot()
   assert.equal(state.active, true)
@@ -817,7 +817,7 @@ function runningRows() {
 test('closing a running pane asks first and leaves the session and its refs untouched', async () => {
   const { fake, controller } = await readyController({ rows: runningRows() })
 
-  assert.equal(controller.closePane('p1'), false)
+  assert.equal(controller.close.request('p1'), false)
 
   const state = controller.getSnapshot()
   assert.deepEqual(state.pendingClose, { paneId: 'p1', sessionId: 's1' })
@@ -832,9 +832,9 @@ test('closing a running pane asks first and leaves the session and its refs unto
 
 test('cancelling the close confirmation changes nothing', async () => {
   const { fake, controller } = await readyController({ rows: runningRows() })
-  controller.closePane('p1')
+  controller.close.request('p1')
 
-  assert.equal(controller.cancelClose(), true)
+  assert.equal(controller.close.cancel(), true)
 
   const state = controller.getSnapshot()
   assert.equal(state.pendingClose, null)
@@ -848,9 +848,9 @@ test('cancelling the close confirmation changes nothing', async () => {
 
 test('confirming interrupts the turn once, then releases the pane and keeps the history row', async () => {
   const { fake, controller } = await readyController({ rows: runningRows() })
-  controller.closePane('p1')
+  controller.close.request('p1')
 
-  assert.equal(await controller.confirmClose(), true)
+  assert.equal(await controller.close.confirm(), true)
 
   const state = controller.getSnapshot()
   assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
@@ -863,7 +863,7 @@ test('confirming interrupts the turn once, then releases the pane and keeps the 
   // Release is a client-reference teardown, not a delete: the row /resume reads
   // is still in the host list snapshot.
   assert.equal(fake.rows.s1.running, true)
-  assert.equal(await controller.confirmClose(), false)
+  assert.equal(await controller.close.confirm(), false)
   assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
   controller.dispose()
 })
@@ -874,11 +874,11 @@ test('a second confirm while the interrupt is in flight is ignored', async () =>
     rows: runningRows(),
     deferredInterrupts: deferred,
   })
-  controller.closePane('p1')
+  controller.close.request('p1')
 
-  const first = controller.confirmClose()
+  const first = controller.close.confirm()
   assert.equal(controller.getSnapshot().closeBusy, true)
-  assert.equal(await controller.confirmClose(), false)
+  assert.equal(await controller.close.confirm(), false)
   assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
 
   deferred[0].resolve({ ok: true })
@@ -893,9 +893,9 @@ test('a failed interrupt keeps the pane mounted, its references and the dialog e
     rows: runningRows(),
     interruptFails: true,
   })
-  controller.closePane('p1')
+  controller.close.request('p1')
 
-  assert.equal(await controller.confirmClose(), false)
+  assert.equal(await controller.close.confirm(), false)
 
   const state = controller.getSnapshot()
   assert.match(state.closeError, /interrupt failed/)
@@ -908,7 +908,7 @@ test('a failed interrupt keeps the pane mounted, its references and the dialog e
 
   // The user can retry after the transient failure, and that retry closes it.
   fake.setInterruptFailure(false)
-  assert.equal(await controller.confirmClose(), true)
+  assert.equal(await controller.close.confirm(), true)
   assert.equal(controller.getSnapshot().root, null)
   assert.deepEqual(fake.calls.interrupt, [
     { sessionId: 's1', route: 'conversation' },
@@ -970,7 +970,7 @@ test('/clear in a focused pane creates a conversation and swaps it into that pan
 
 test('/clear with no pane creates the first pane instead of leaving the workspace empty', async () => {
   const { fake, controller } = await readyController()
-  controller.closePane('p1')
+  controller.close.request('p1')
 
   assert.equal(await controller.newInFocused('w1'), true)
   const activePaneId = controller.getSnapshot().activePaneId
@@ -1199,10 +1199,10 @@ test('closing a pane by its session is how the conversation fallbacks escape', a
   const { controller } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
 
-  assert.equal(controller.closePaneBySession('s1'), true)
+  assert.equal(controller.close.bySession('s1'), true)
   assert.deepEqual(Object.keys(controller.getSnapshot().panes), ['p2'])
   assert.equal(controller.getSnapshot().activePaneId, 'p2')
-  assert.equal(controller.closePaneBySession('gone'), false)
+  assert.equal(controller.close.bySession('gone'), false)
   controller.dispose()
 })
 
@@ -1241,7 +1241,7 @@ test('switching workspace dismisses the staged close of the workspace being left
   controller.markRegistered()
   controller.activate('s1')
 
-  assert.equal(controller.closePane('p1'), false)
+  assert.equal(controller.close.request('p1'), false)
   assert.deepEqual(controller.getSnapshot().pendingClose, { paneId: 'p1', sessionId: 's1' })
 
   assert.equal(controller.switchWorkspace('w2'), true)
@@ -1358,7 +1358,7 @@ test('the default four-pane budget refuses a fifth pane and frees up after a clo
   assert.equal(fake.calls.create.length, creates)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 4)
 
-  assert.equal(controller.closePane('p4'), true)
+  assert.equal(controller.close.request('p4'), true)
   assert.equal(controller.splitBlock(), undefined)
   assert.equal(await controller.newPane(), true)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 4)
@@ -1447,7 +1447,7 @@ test('an empty workspace opens its first pane without spending the split budget'
     created: ['s2', 's3'],
     paneIds: ['p1', 'p2', 'p3'],
   })
-  assert.equal(controller.closePane('p1'), true)
+  assert.equal(controller.close.request('p1'), true)
   assert.equal(controller.setMaxPanes(1), 1)
   assert.equal(controller.splitBlock(), undefined)
 
@@ -1585,7 +1585,7 @@ test('a second new conversation is ignored while an empty workspace is still ope
     created: ['s2', 's3', 's4'],
     paneIds: ['p1', 'p2', 'p3', 'p4'],
   })
-  assert.equal(controller.closePane('p1'), true)
+  assert.equal(controller.close.request('p1'), true)
 
   const attempted = []
   const originalCreate = fake.ctx.sessions.create.bind(fake.ctx.sessions)
@@ -1649,7 +1649,7 @@ test('an empty workspace\'s first session lands in that workspace only while it 
     created: ['s-created'],
     paneIds: ['p1', 'p2', 'p3'],
   })
-  assert.equal(replaced.controller.closePane('p1'), true)
+  assert.equal(replaced.controller.close.request('p1'), true)
 
   const replacedCreate = replaced.fake.ctx.sessions.create.bind(replaced.fake.ctx.sessions)
   let releaseReplaced
@@ -1698,7 +1698,7 @@ test('an empty workspace\'s first session lands in that workspace only while it 
   })
   assert.equal(switched.controller.activate('s3'), true)
   assert.equal(switched.controller.switchWorkspace('w1'), true)
-  assert.equal(switched.controller.closePane('p1'), true)
+  assert.equal(switched.controller.close.request('p1'), true)
 
   const switchedCreate = switched.fake.ctx.sessions.create.bind(switched.fake.ctx.sessions)
   let releaseSwitched
@@ -1884,7 +1884,7 @@ test('+ aborts instead of writing a pane when the controller is disposed mid-cre
 
 test('+ from the empty state opens the first pane instead of doing nothing', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
-  controller.closePane('p1')
+  controller.close.request('p1')
 
   assert.equal(await controller.newPane(), true)
 

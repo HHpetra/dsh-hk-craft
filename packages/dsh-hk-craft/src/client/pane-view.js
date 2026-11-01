@@ -219,7 +219,7 @@ function PaneShortcuts({ controller, workspaceId }) {
       event.preventDefault()
       event.stopPropagation()
       if (action.kind === 'split') runAttempt(controller.split(pane.paneId, action.dir))
-      else if (action.kind === 'close') controller.closePane(pane.paneId)
+      else if (action.kind === 'close') controller.close.request(pane.paneId)
     }
     document.addEventListener('keydown', onKeyDown, true)
     return () => document.removeEventListener('keydown', onKeyDown, true)
@@ -419,7 +419,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
   const catalog = openCatalog({ sessions, statuses })
   const title = catalog.session(pane.sessionId)?.title
 
-  const close = () => controller.closePane(pane.paneId)
+  const close = () => controller.close.request(pane.paneId)
   const focus = () => {
     if (!focused) controller.focusPane(pane.paneId)
   }
@@ -755,11 +755,11 @@ function PaneStrip({
   const budgetHint = budgetBlocked ? t('strip.budget', { n: maxPanes }) : null
 
   const closeEntry = (entry) => {
-    // Closing a pane is `controller.closePane`: idle panes close immediately,
+    // Closing a pane is `controller.close.request`: idle panes close immediately,
     // a running one stages `pendingClose`, which the shared `PaneCloseConfirm`
     // dialog (ticket 09) interrupts and closes after confirmation. The strip
     // does not own a second confirmation UI.
-    controller.closePane(entry.paneId)
+    controller.close.request(entry.paneId)
   }
 
   const createEntry = () => {
@@ -986,7 +986,7 @@ function PaneCloseConfirm({ controller, t }) {
   if (pending === null || pending === undefined) return null
 
   const confirm = () => {
-    const attempt = controller.confirmClose()
+    const attempt = controller.close.confirm()
     if (attempt !== null && typeof attempt === 'object' && typeof attempt.catch === 'function') {
       attempt.catch(() => {})
     }
@@ -1026,7 +1026,7 @@ function PaneCloseConfirm({ controller, t }) {
             type: 'button',
             style: buttonStyle,
             disabled: state.closeBusy,
-            onClick: () => controller.cancelClose(),
+            onClick: () => controller.close.cancel(),
           },
           t('pane.close.confirm.cancel'),
         ),
@@ -1340,7 +1340,7 @@ function createPaneBody(controller) {
       controller.restoreViewFor(sessionId)
     }, [sessionId, sessionReady])
     const boundary = errorBoundaryClass()
-    const close = () => controller.closePaneBySession(sessionId)
+    const close = () => controller.close.bySession(sessionId)
 
     const closeButton = () =>
       h('button', { type: 'button', style: buttonStyle, onClick: close }, t('pane.close'))

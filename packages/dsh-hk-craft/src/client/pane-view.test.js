@@ -58,7 +58,7 @@ function fakeController() {
     subscribe: () => () => {},
     getSnapshot: () => state,
     restoreViewFor: () => {},
-    closePaneBySession: () => {},
+    close: { bySession: () => {} },
     subscribeViewAvailability: () => () => {},
     isTrajectoryAvailable: () => true,
   }
@@ -225,7 +225,7 @@ function headerController({ trajectory = true, calls = [] } = {}) {
   return {
     calls,
     paneReference: () => ({ sessionId: 's1' }),
-    closePane: (paneId) => calls.push(['close', paneId]),
+    close: { request: (paneId) => calls.push(['close', paneId]) },
     focusPane: () => {},
     setView: (paneId, view) => {
       calls.push(['view', paneId, view])
@@ -466,7 +466,7 @@ function elementWhere(node, predicate) {
 /** The strip's `+` element for one snapshot and pane cap. */
 function stripPlus(maxPanes) {
   const controller = {
-    closePane: () => {},
+    close: { request: () => {} },
     newPane: () => {},
     focusPane: () => {},
     swapPanes: () => {},
@@ -511,7 +511,7 @@ function stripWithRightbar({
   openTool = () => {},
 }) {
   const controller = {
-    closePane: () => {},
+    close: { request: () => {} },
     newPane: () => {},
     focusPane: () => {},
     swapPanes: () => {},

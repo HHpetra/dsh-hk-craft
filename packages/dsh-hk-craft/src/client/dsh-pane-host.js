@@ -326,6 +326,13 @@ function createPaneController(ctx, options = {}) {
    */
   let panel = null
   /**
+   * The staged close flow (`pane-close.js`), which owns `pendingClose`,
+   * `closeBusy` and `closeError`. Created below with the other holders.
+   *
+   * @type {ReturnType<typeof createCloseFlow>|null}
+   */
+  let close = null
+  /**
    * How deep a controller-originated retain is. `uiSession` current
    * notifications that arrive from our own `mainView` retain must not route
    * again.
@@ -359,7 +366,10 @@ function createPaneController(ctx, options = {}) {
 
   /** The fields a holder owns, merged into every publish after the caller's patch. */
   function holderPatch() {
-    return panel === null ? {} : panel.snapshotPatch()
+    return {
+      ...(panel === null ? {} : panel.snapshotPatch()),
+      ...(close === null ? {} : close.snapshotPatch()),
+    }
   }
 
   function emit(patch) {
@@ -1014,13 +1024,15 @@ function createPaneController(ctx, options = {}) {
   }
 
   // The staged-close flow (interrupt first, then close) lives in
-  // `pane-close.js`; it reads this controller's state through the callbacks.
-  const closeFlow = createCloseFlow({
+  // `pane-close.js`; it reads this kernel through the callbacks and owns the
+  // three snapshot fields of the confirmation.
+  close = createCloseFlow({
     sessions,
     getSnapshot: () => snapshot,
-    emit,
+    publish: (patch) => emit(patch ?? {}),
     isDisposed: () => disposed,
     locatePane: (paneId) => book.locatePane(paneId),
+    locateSession: (sessionId) => book.locatePaneIn(sessionId),
     rowOf,
     isSessionRunning,
     closePane: (paneId) => closePaneValue(paneId),
@@ -1069,12 +1081,10 @@ function createPaneController(ctx, options = {}) {
     // A staged close belongs to a pane of the workspace being left; leaving the
     // confirmation open over another workspace would be a trap. The interrupt
     // itself is never started by a switch, so there is nothing to cancel.
+    close.clear()
     emit({
       ...statePatch(snapshot.active),
       error: null,
-      pendingClose: null,
-      closeBusy: false,
-      closeError: null,
     })
     return true
   }
@@ -1590,12 +1600,10 @@ function createPaneController(ctx, options = {}) {
       const reconciled = reconcileAll(book.allLayouts())
       failure = reconciled.failure
     }
+    close.clear()
     emit({
       ...statePatch(snapshot.active),
       error: failure,
-      pendingClose: null,
-      closeBusy: false,
-      closeError: null,
     })
     return true
   }
@@ -1923,34 +1931,12 @@ function createPaneController(ctx, options = {}) {
      */
     swapPanes: swapPanesValue,
     /**
-     * Ask to close one pane. An idle session closes immediately; a running one
-     * only stages `pendingClose` so the view can show the interrupt confirmation
-     * (ticket 09). The actual close happens in `confirmClose`.
-     *
-     * @param {string} paneId
-     * @returns {boolean} whether the pane closed immediately
+     * The staged close: `request(paneId)` may only stage an interrupt dialog,
+     * `bySession(sessionId)` finds the pane that holds a conversation,
+     * `confirm()` / `cancel()` answer that dialog. See `pane-close.js`, which
+     * owns `pendingClose`, `closeBusy` and `closeError`.
      */
-    closePane(paneId) {
-      return closeFlow.requestClose(paneId)
-    },
-    /** Close the pane showing `sessionId` (the conversation fallbacks' exit). */
-    closePaneBySession(sessionId) {
-      const holder = book.locatePaneIn(sessionId)
-      return holder === null ? false : closeFlow.requestClose(holder.paneId)
-    },
-    /**
-     * Confirm a staged close: interrupt the running turn, then close the pane.
-     * A failure is reported through `closeError` and the pane stays mounted.
-     *
-     * @returns {Promise<boolean>} whether the pane was closed
-     */
-    confirmClose() {
-      return closeFlow.confirmClose()
-    },
-    /** Dismiss the staged close; the session and the layout are unchanged. */
-    cancelClose() {
-      return closeFlow.cancelClose()
-    },
+    close,
     /**
      * Pane-aware `/resume`: swap the focused pane's conversation without
      * touching the tree, the focus or the panel selection. If the session is
@@ -2082,6 +2068,7 @@ function createPaneController(ctx, options = {}) {
       unsubscribeCurrent = () => {}
       sessionCurrent = null
       panel.dispose()
+      close.dispose()
       unsubscribeEntryError()
       unsubscribeViewAvailability()
       unsubscribeCatalog()
@@ -2098,9 +2085,6 @@ function createPaneController(ctx, options = {}) {
         root: null,
         panes: {},
         activePaneId: null,
-        pendingClose: null,
-        closeBusy: false,
-        closeError: null,
       })
     },
   }

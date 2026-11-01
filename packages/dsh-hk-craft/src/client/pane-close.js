@@ -53,38 +53,69 @@ async function interruptSession(sessions, sessionId) {
 }
 
 /**
- * The staged close flow.
+ * The staged close flow, as one holder with its own face (ADR-0017).
  *
  * An idle session closes immediately. A running one is only staged in
  * `pendingClose`: the user must confirm, because closing the pane interrupts
  * the turn (spec D4). A failed interrupt keeps the pane mounted and the dialog
  * open with `closeError`, so nothing is half-closed.
  *
+ * This holder owns the three snapshot fields of the confirmation and reports
+ * them through `snapshotPatch()`. The kernel merges that into every publish
+ * *after* the caller's patch, so no other module can claim a close state this
+ * flow does not hold — which is why `write()` and not `publish()` is the only
+ * way those fields move.
+ *
  * @param {object} deps
  * @param {any} deps.sessions the `ctx.sessions` face
- * @param {() => any} deps.getSnapshot current controller snapshot
- * @param {(patch: object) => void} deps.emit state emitter
+ * @param {() => any} deps.getSnapshot current kernel snapshot, read for `active`
+ * @param {(patch?: object) => void} deps.publish kernel state emitter
  * @param {() => boolean} deps.isDisposed
  * @param {(paneId: string) => {workspaceId: string|null, pane: object}|null} deps.locatePane
+ * @param {(sessionId: string) => {paneId: string}|null} deps.locateSession
  * @param {(sessionId: string) => any} deps.rowOf the session's catalog row
  * @param {(sessionId: string) => boolean} deps.isSessionRunning
  * @param {(paneId: string) => boolean} deps.closePane structural close
- * @returns {{clearPendingClose: () => void, requestClose: (paneId: string) => boolean, confirmClose: () => Promise<boolean>, cancelClose: () => boolean}}
  */
 function createCloseFlow(deps) {
-  const { sessions, getSnapshot, emit, isDisposed, locatePane, rowOf, isSessionRunning, closePane } = deps
+  const {
+    sessions,
+    getSnapshot,
+    publish,
+    isDisposed,
+    locatePane,
+    locateSession,
+    rowOf,
+    isSessionRunning,
+    closePane,
+  } = deps
+
+  /** @type {{paneId: string, sessionId: string, title?: string}|null} */
+  let pendingClose = null
+  let closeBusy = false
+  /** @type {string|null} */
+  let closeError = null
+
+  /**
+   * Move the fields this flow owns. Publishes only when one of them changed,
+   * mirroring the kernel's own identity-based change detection.
+   *
+   * @param {{pendingClose?: any, closeBusy?: boolean, closeError?: string|null}} patch
+   */
+  function write(patch) {
+    const nextPending = 'pendingClose' in patch ? patch.pendingClose : pendingClose
+    const nextBusy = 'closeBusy' in patch ? patch.closeBusy : closeBusy
+    const nextError = 'closeError' in patch ? patch.closeError : closeError
+    if (nextPending === pendingClose && nextBusy === closeBusy && nextError === closeError) return
+    pendingClose = nextPending
+    closeBusy = nextBusy
+    closeError = nextError
+    if (typeof publish === 'function') publish({})
+  }
 
   /** Drop a pending close (and its error); no layout or session change. */
-  function clearPendingClose() {
-    const snapshot = getSnapshot()
-    if (
-      snapshot.pendingClose === null &&
-      snapshot.closeError === null &&
-      snapshot.closeBusy === false
-    ) {
-      return
-    }
-    emit({ pendingClose: null, closeBusy: false, closeError: null })
+  function clear() {
+    write({ pendingClose: null, closeBusy: false, closeError: null })
   }
 
   /**
@@ -95,18 +126,18 @@ function createCloseFlow(deps) {
    * @param {string} paneId
    * @returns {boolean} whether the pane closed immediately
    */
-  function requestClose(paneId) {
+  function request(paneId) {
     if (isDisposed()) return false
     const located = locatePane(paneId)
     if (located === null) return false
     const pane = located.pane
     if (!isSessionRunning(pane.sessionId)) {
       const closed = closePane(paneId)
-      if (closed) clearPendingClose()
+      if (closed) clear()
       return closed
     }
     const title = rowOf(pane.sessionId)?.title
-    emit({
+    write({
       pendingClose: {
         paneId,
         sessionId: pane.sessionId,
@@ -119,6 +150,18 @@ function createCloseFlow(deps) {
   }
 
   /**
+   * The pane holding one session, closed through the same staged flow. False
+   * when no pane holds it.
+   *
+   * @param {string} sessionId
+   * @returns {boolean}
+   */
+  function bySession(sessionId) {
+    const holder = typeof locateSession === 'function' ? locateSession(sessionId) : null
+    return holder === null || holder === undefined ? false : request(holder.paneId)
+  }
+
+  /**
    * Confirm the staged close: interrupt the running turn first, then release the
    * pane. A failed interrupt keeps the pane mounted and leaves the dialog open
    * with `closeError`, so nothing is half-closed and the user can retry or
@@ -126,41 +169,54 @@ function createCloseFlow(deps) {
    *
    * @returns {Promise<boolean>} whether the pane was closed
    */
-  async function confirmClose() {
+  async function confirm() {
     if (isDisposed()) return false
-    const pending = getSnapshot().pendingClose
-    if (pending === null || getSnapshot().closeBusy) return false
-    emit({ closeBusy: true, closeError: null })
+    if (pendingClose === null || closeBusy) return false
+    const pending = pendingClose
+    write({ closeBusy: true, closeError: null })
     try {
       await interruptSession(sessions, pending.sessionId)
     } catch (error) {
       if (isDisposed()) return false
-      emit({ closeBusy: false, closeError: messageOf(error) })
+      write({ closeBusy: false, closeError: messageOf(error) })
       return false
     }
     if (isDisposed()) return false
     // The panel may have been hidden (or another close requested) while the
     // interrupt was in flight; in that case the pane already lost its refs and
     // must not be structurally re-reconciled from an inactive panel.
-    const snapshot = getSnapshot()
-    if (!snapshot.active || snapshot.pendingClose?.paneId !== pending.paneId) {
-      emit({ closeBusy: false })
+    if (!getSnapshot().active || pendingClose?.paneId !== pending.paneId) {
+      write({ closeBusy: false })
       return false
     }
     const closed = closePane(pending.paneId)
-    emit({ pendingClose: null, closeBusy: false, closeError: null })
+    write({ pendingClose: null, closeBusy: false, closeError: null })
     return closed
   }
 
   /** Dismiss the staged close without changing the session or the layout. */
-  function cancelClose() {
-    const snapshot = getSnapshot()
-    if (isDisposed() || snapshot.pendingClose === null || snapshot.closeBusy) return false
-    emit({ pendingClose: null, closeError: null })
+  function cancel() {
+    if (isDisposed() || pendingClose === null || closeBusy) return false
+    write({ pendingClose: null, closeError: null })
     return true
   }
 
-  return { clearPendingClose, requestClose, confirmClose, cancelClose }
+  return {
+    snapshotPatch() {
+      return { pendingClose, closeBusy, closeError }
+    },
+    request,
+    bySession,
+    confirm,
+    cancel,
+    /** Drop a staged confirmation from the outside (workspace forgotten, teardown). */
+    clear,
+    dispose() {
+      pendingClose = null
+      closeBusy = false
+      closeError = null
+    },
+  }
 }
 
 module.exports = { interruptSession, createCloseFlow }
