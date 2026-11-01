@@ -116,6 +116,10 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
   通知不改变五态灯与 `completionUnread`；不可用/被拒时安静降级。见 ADR-0012 / ADR-0013。
 - **兼容与降级**：新增的可选能力（Agent 预设名册、子代理目录、设置分区、桌面通知）在服务缺失时安静降级；
   上游契约集中在 [`upstream-contracts.md`](upstream-contracts.md)，升级时按该清单复验。
+- **已知限制（v1 接受）**：只剩一个窗格时显示的仍然是本插件的窗格，不是原生 `ConversationPanel`；
+  原生 session header / lineage 不渲染，模式、子代理、视图与关闭由窗格头部自己承担；右侧栏的展开态
+  没有可订阅的观察者（`sidebarRight` 只给 `isExpanded()` / `toggleExpanded()`），所以图标可能短暂不准；
+  将来若把原生右栏或头部控件挂进窗格，必须按 `(handle, scopeKey)` 记忆化，不能假定单例。
 
 ## 7. 验证
 
@@ -126,4 +130,5 @@ pnpm test      # 单元测试
 #      C:\Agent\Agent14-dsh-hk-craft\packages\dsh-hk-craft
 # 重启 dsh，确认行装载无错误
 # 卸载：dsh → Plugins → Installed plugins → dsh-hk-craft
+# 通知：设置页 →「发送测试通知」，确认真机 Windows toast
 ```
