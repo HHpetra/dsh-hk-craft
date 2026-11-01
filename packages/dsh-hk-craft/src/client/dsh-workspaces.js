@@ -281,14 +281,13 @@ function nativeConversationId(workspacesSnapshot, sessionsSnapshot, workspaceId)
 /**
  * The section's behaviors, over public client services only.
  *
- * `options.panes` is the pane controller face. While the plugin
- * pane workspace is showing, clicking a workspace must not call the native
- * reveal: that path goes through `replaceMain(..., "reveal")`, which calls
- * `selectPanel(null)` and dismisses the pane workspace, unmounting every pane
- * (the exact loss D5 forbids). In pane mode the click switches which workspace
- * tree is visible, and the pane controller shows that workspace's conversation
- * when the tree is not already showing one. When the pane workspace is not
- * showing, the click reveals that workspace's existing conversation; a workspace
+ * `options.panes` is the pane controller face. While split mode is active,
+ * clicking a workspace must not call the native reveal: that path goes through
+ * `replaceMain(..., "reveal")`, which moves the shell's current session instead
+ * of switching the layout tree (the loss D5 forbids). In split mode the click
+ * switches which workspace tree is visible, and the pane controller shows that
+ * workspace's conversation when the tree is not already showing one. When split
+ * mode is not active, the click reveals that workspace's existing conversation; a workspace
  * with nothing to reveal falls back to the native blank session, which is also
  * the fallback when the pane controller refuses the switch. Deleting is the
  * mirror image: the public registration goes first and the pane controller

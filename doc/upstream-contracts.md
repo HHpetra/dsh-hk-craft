@@ -37,14 +37,45 @@ unmounts the native Conversation instead of stacking a second one on top.
 panel unregisters, the layout controller resets `activePanelId`, which is why
 the plugin does not have to clean it up by hand.
 
-**Why we rely on it:** the pane workspace is one `main` entry (`key =
-"hkcraft.panes"`); selecting it is the whole "enter split view" mechanism, and
-`selectPanel(null)` is the clean way back to native dsh.
+**Why we rely on it:** choosing any `main` key other than the fallback
+unmounts the native Conversation. This plugin does not. It shadows the
+`conversation` cell and never calls `selectPanel`, so `activePanelId` stays
+null — see [Shadowing the conversation cell](#shadowing-the-conversation-cell).
+`selectPanel(null)` is still how the shell returns from a global panel.
+`selectPanel('conversation')` is not that return: it sets `activePanelId` to
+`"conversation"` and the right bar hides.
 
 **Verified:** slot key fallback, `selectPanel` validation, and the
-unregistration reset were read in the ui-layout bundle. Runtime probe: enter the
-split panes from the HK Craft settings page and confirm the native conversation
-unmounts.
+unregistration reset were read in the ui-layout bundle. Runtime probe: open
+settings and come back; the split is still showing and `activePanelId` is null.
+
+---
+
+## Shadowing the conversation cell
+
+**Provider:** `@deepseek-ai/dsh-client-ui-layout` (the keyed `main` slot) and
+the slot core's priority order.
+
+**Semantics:** entries that share a `main` key are ordered by `priority ?? 0`
+ascending, and the first one renders. The shipped conversation entry registers
+`key: "conversation"` with no priority, so its priority is 0. Another entry on
+that same key with a lower priority renders instead. This plugin uses `-1`.
+Two entries with the same priority throw. A child slot has one declarer.
+Unregistering the shadow lets the official `ConversationPanel` win the cell
+again. Shadowing does not write `activePanelId`. While that id is null, the
+frame's `activePanelId ?? "conversation"` still resolves to this cell.
+
+**Why we rely on it:** the pane host is that shadow. Because nothing selects a
+panel, the right bar's `activePanelId === null` gate stays open and the focused
+pane's `mainView` is the on-screen session. A global panel such as settings
+still calls `selectPanel('settings')`, which hides the right bar by the native
+rule; `selectPanel(null)` returns to this shadow.
+
+**Verified:** keyed-cell priority, the same-priority throw and the single child
+declarer were read against Desktop `0.2.1-rc.5`, with a source cross-check on
+`0.2.2-alpha.2`. Runtime probe: with the plugin loaded, `activePanelId` is
+null and the right bar is visible; after uninstall and restart the official
+conversation panel is back.
 
 ---
 
@@ -491,19 +522,25 @@ Runtime probe: add a workspace from the slim sidebar and confirm it appears.
 and the shared `replaceMain(…, "reveal")` path).
 
 **Semantics:** both `openSession(sessionId)` and `startSession(workspaceId)`
-eventually reveal the target through `replaceMain(…, "reveal")`, which
-selects the native conversation panel (`selectPanel(null)`). That is the right
-behaviour outside the pane workspace, but fatal inside it: the pane panel would
-be dismissed and every pane unmounted. There is no public "reveal without
-selecting the panel" variant.
+eventually reveal the target through `replaceMain(…, "reveal")`, which calls
+`selectPanel(null)` and moves the shell's current session. While the pane host
+shadows `conversation`, `selectPanel(null)` does not unmount the panes. It does
+move current, and the pane host follows that current onto the focused pane
+(focus a pane that already holds it, otherwise replace the focused pane, or
+open the first pane when none is open). There is still no public "reveal
+without moving current" variant. `startSession` also reuses the workspace's
+blank session.
 
-**Why we rely on it:** `/resume` uses `openSession` only when the pane panel is
-not showing; while it is showing, selection replaces/focuses a pane instead.
-`/clear` for the same reason uses `sessions.create`, never `startSession`.
+**Why we rely on it:** `/resume` and `/clear` stay on the pane controller while
+split mode is active, so they do not reuse a blank session or point the right
+bar at a session no pane is showing. A native current change that does arrive
+is routed onto the focused pane rather than leaving the bar on an off-pane
+session.
 
 **Verified:** openSession/startSession and the reveal branch were read in the
-ui-workspace bundle. Runtime probe: run `/resume` outside the pane workspace,
-then inside it, and confirm the split survives only in the second case.
+ui-workspace bundle. Runtime probe: from split view, a native New Session or
+`openSession` keeps the panes mounted and the focused pane agrees with the
+right bar.
 
 ---
 
@@ -516,8 +553,10 @@ and publishes its catalog row before resolving. It creates a **new** session;
 it never reuses an existing blank one. By contrast the native
 `uiWorkspace.startSession(workspaceId)` reuses the workspace's blank session
 (creating one when none exists) and then reveals it through
-`replaceMain(…, "reveal")`, which calls `ctx.layout.selectPanel(null)` and
-would dismiss the pane workspace.
+`replaceMain(…, "reveal")`, which calls `ctx.layout.selectPanel(null)`. Under
+the conversation shadow that call does not unmount the panes, but it does move
+the shell's current session off the focused pane unless the pane host routes
+it back.
 
 **Why we rely on it:** `/clear`, `+`, and splitting a pane must put a new
 conversation in the pane workspace. That is why the pane path calls
@@ -749,25 +788,54 @@ occupant and `ctx.sidebarRight`) and the layout service's `panelInfo`.
 column, but the occupant decides what is visible. Its `RightbarRoot` treats the
 Session views as `visible` only while `panelInfo.activePanelId === null`, and
 the same effect publishes the on-screen Session to `ctx.sidebarRight` as
-`activePanelId === null ? selected?.sessionId : undefined`. With a plugin panel
-selected — the pane workspace — native dsh hides the right bar and the public
-face has no "current session" to act on. Its navigation calls (`openResource`,
-`openTab`) act on that on-screen Session, and there is no public "open this
-Session's right bar" call.
+`activePanelId === null ? selected?.sessionId : undefined`. Selecting a custom
+`main` key (the old `hkcraft.panes` panel) makes that id non-null, so native
+dsh hides the right bar and `sidebarRight.require()` throws
+`no session surface is mounted`. Navigation calls (`openResource`, `openTab`)
+act on the on-screen Session, and there is no public "open this Session's
+right bar" call.
 
-**Why we rely on it:** the pane strip's pinned native-action group therefore
-ships no "open right sidebar" button in this version: it could not
-open the native right bar for a split pane, and falling back to the native
-conversation would silently leave the split. The group is the reserved home for
-native header tools that can work inside a pane — the read-only mode badge
-and the subagent viewer — and any future native tool
-needs an explicit seat there.
+That custom-key conclusion does not apply to the conversation shadow. This
+plugin leaves `activePanelId` null, so the native right bar stays visible and
+follows the focused pane's `mainView`. The plugin does not replace the
+`rightbar` occupant and does not render a second seat. `RightbarRoot`,
+`sidebarRight.show` and `sidebarRight.require` keep the contract above.
+
+**Why we rely on it:** a file or image link inside a pane calls
+`sidebarRight.require()` for the on-screen session. That succeeds only while
+the gate is open. The strip's one right-bar button calls `toggleExpanded()`
+([Sidebar right toggle](#sidebar-right-toggle)); it does not build a right bar.
 
 **Verified:** `RightbarRoot`'s `activePanelId === null` visibility and the
 `show(activePanelId === null ? selected?.sessionId : undefined)` sync were read
 in `dsh-client-ui-sidebar-right` 0.2.1-rc.5 (the installed Desktop bundle).
-Runtime probe: enter split view, confirm the native right bar is hidden and the
-strip offers no right-bar button.
+Runtime probe: in split view the right bar is visible and follows the focused
+pane; opening a file from a pane does not report `no session surface is
+mounted`. Settings hides the bar; leaving settings brings the split and the
+bar back.
+
+---
+
+## Sidebar right toggle
+
+**Provider:** `ctx.sidebarRight` in `@deepseek-ai/dsh-client-ui-sidebar-right`.
+
+**Semantics:** `toggleExpanded()` flips the bar. `isExpanded()` reads the
+current flag. The face has no expanded observable, so a button can be briefly
+wrong around a focus change. Both calls depend on an adopted sidebar-right
+store and an on-screen session; before either exists, `isExpanded()` may throw
+or report false. The service is optional.
+
+**Why we rely on it:** a pane does not mount the native conversation header,
+which is where dsh puts this button. The strip renders one shared control
+(`右栏` / `Right`) when the service was injected, and renders none when it was
+not. The plugin does not add `sidebarRight` to its top-level `inject` list, so
+a shell without the service still mounts the panes.
+
+**Verified:** the two methods, and the absence of an expanded subscription,
+were read on the `sidebarRight` face in Desktop `0.2.1-rc.5`. Runtime probe:
+the strip button expands and collapses the native bar. Without the service the
+button is absent and the panes still load.
 
 ---
 

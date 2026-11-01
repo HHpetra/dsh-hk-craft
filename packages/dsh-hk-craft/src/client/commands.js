@@ -58,13 +58,11 @@ function focusedPane(panes) {
  * and the same run path; `/new` is the name carried over from dsh-tui, and
  * `/clear` stays as the compatible name.
  *
- * When the pane workspace is showing, the new conversation must land in the
- * focused pane. The pane host creates it through `sessions.create`, because the
- * native `uiWorkspace.startSession` path reveals the session with
- * `replaceMain(..., "reveal")` → `selectPanel(null)`, which would dismiss the
- * split layout. Note that `sessions.create` always creates a new session; it
- * never reuses the workspace's blank one (that reuse lives only in the native
- * `startSession` path, which the pane host deliberately avoids). See
+ * When split mode is active, the new conversation must land in the focused
+ * pane. The pane host creates it through `sessions.create`. The native
+ * `uiWorkspace.startSession` path reuses the workspace's blank session and
+ * then reveals it, which moves the shell's current session. `sessions.create`
+ * always creates a new session. See
  * `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
  *
  * @param {object} deps
@@ -256,10 +254,10 @@ function buildResumeCommand({ t, workspaceIdFor, conversations, open, now, panes
         })
       },
       onSelect: async (option) => {
-        // Pane-aware `/resume`: with the pane workspace showing, the chosen
+        // Pane-aware `/resume`: while split mode is active, the chosen
         // conversation either replaces the focused pane (plain Enter) or opens
         // in a new pane beside it (Ctrl+Enter). The shell-level reveal would
-        // otherwise call selectPanel(null) and dismiss the split layout. An
+        // move the current session instead of editing the layout. An
         // already-open conversation makes `replaceFocused` focus its pane, which
         // is exactly the D10 "focus instead of reopen" rule. Ctrl+Enter still
         // goes through the pane host when the workspace is empty: that opens

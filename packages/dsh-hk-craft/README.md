@@ -12,7 +12,7 @@
 - **侧栏精简与工作区管理**：工作区行有五态灯（灰/蓝空闲/绿未读/黄/红）、行内删除（二次确认、不中断运行中的会话）与指针拖动排序（顺序由 Host 持久化）。
 - **HK Craft 设置页**：内联诊断与分屏上限设置；侧栏 footer 不再注入按钮。上限写不进去时，这一次修改仍留在内存里，页面会提示保存失败。
 
-决策见仓库 `ai-docs/ADR/decisions.md`（ADR-0005 ~ 0011），上游契约见 `doc/upstream-contracts.md`。
+决策见仓库 `ai-docs/ADR/decisions.md`（ADR-0005 ~ 0014），上游契约见 `doc/upstream-contracts.md`。
 
 ## 安装
 

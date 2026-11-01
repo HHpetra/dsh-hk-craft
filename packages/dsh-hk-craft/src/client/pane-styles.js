@@ -119,6 +119,27 @@ const stripViewportStyle = {
   scrollbarWidth: 'thin',
 }
 
+/** Pinned strip actions. Tabs scroll inside the viewport; this group does not. */
+const stripActionGroupStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  flex: 'none',
+  gap: 2,
+  marginLeft: 4,
+  minWidth: 0,
+}
+
+const stripRightbarStyle = {
+  ...buttonStyle,
+  flex: 'none',
+  alignSelf: 'center',
+  border: 'none',
+  borderRadius: 4,
+  padding: '2px 8px',
+  fontSize: 12,
+  whiteSpace: 'nowrap',
+}
+
 /** The `tablist`: the entries only, immediately followed by `+` in the viewport. */
 const stripTablistStyle = {
   display: 'flex',
@@ -433,6 +454,8 @@ module.exports = {
   hiddenWorkspaceStyle,
   PANE_STRIP_HEIGHT,
   paneStripStyle,
+  stripActionGroupStyle,
+  stripRightbarStyle,
   stripViewportStyle,
   stripTablistStyle,
   headerSeatStyle,

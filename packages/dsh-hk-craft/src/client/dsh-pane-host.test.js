@@ -7,7 +7,8 @@ const {
   CONTENT_FACTORY,
   PANE_SOURCE,
   MAIN_SOURCE,
-  PANEL_KEY,
+  CONVERSATION_KEY,
+  MAIN_PANEL_PRIORITY,
   probeConversationContent,
   derivePanePhase,
   createPaneController,
@@ -329,7 +330,8 @@ test('activating retains the chosen session for the pane and for main-view focus
     { sessionId: 's1', options: { source: PANE_SOURCE } },
     { sessionId: 's1', options: { source: MAIN_SOURCE } },
   ])
-  assert.deepEqual(fake.calls.selectPanel, [PANEL_KEY])
+  assert.deepEqual(fake.calls.selectPanel, [])
+  assert.equal(fake.panel.activePanelId, null)
   assert.equal(fake.references[0].released, false)
   assert.equal(fake.references[1].released, false)
   assert.equal(controller.getSnapshot().active, true)
@@ -347,44 +349,41 @@ test('activating without a session still shows the pane with a hint and no refer
 
   assert.equal(controller.activate(), true)
   assert.deepEqual(fake.calls.retain, [])
-  assert.deepEqual(fake.calls.selectPanel, [PANEL_KEY])
+  assert.deepEqual(fake.calls.selectPanel, [])
   assert.equal(controller.getSnapshot().active, true)
   assert.equal(controller.getSnapshot().sessionId, null)
   controller.dispose()
 })
 
-test('an external return to the native panel releases the pane reference', () => {
+test('an external panel change keeps split mode and the pane references', () => {
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
   const controller = createPaneController(fake.ctx)
   controller.markRegistered()
   controller.activate('s1')
 
+  fake.setPanel('settings')
   fake.setPanel(null)
 
-  assert.equal(fake.references[0].released, true)
-  assert.equal(controller.getSnapshot().active, false)
+  assert.equal(controller.getSnapshot().active, true)
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(fake.references[0].released, false)
+  assert.equal(fake.references[1].released, false)
+  assert.deepEqual(fake.calls.selectPanel, [])
+  controller.dispose()
 })
 
-test('a failed panel switch reports an error and does not leak a reference', () => {
-  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, selectPanelFails: true })
-  const controller = createPaneController(fake.ctx)
-  controller.markRegistered()
-
-  assert.equal(controller.activate('s1'), false)
-  assert.equal(fake.references[0].released, true)
-  assert.match(controller.getSnapshot().error, /panel not registered/)
-  assert.equal(controller.getSnapshot().active, false)
-})
-
-test('a failed retain keeps the native view and surfaces the error', () => {
+test('a failed retain stays in split mode, drops the reference and surfaces the error', () => {
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, retainFails: true })
   const controller = createPaneController(fake.ctx)
   controller.markRegistered()
 
   assert.equal(controller.activate('s1'), false)
   assert.deepEqual(fake.calls.selectPanel, [])
+  assert.deepEqual(fake.calls.retain, [])
   assert.match(controller.getSnapshot().error, /cannot be retained/)
-  assert.equal(controller.getSnapshot().active, false)
+  assert.equal(controller.getSnapshot().active, true)
+  assert.equal(controller.getSnapshot().sessionId, null)
+  controller.dispose()
 })
 
 test('activating before the main entry is registered is a visible no-op', () => {
@@ -432,7 +431,7 @@ test('unrelated slot crashes do not disable the pane factory', () => {
   assert.equal(controller.getSnapshot().probe.status, 'present')
 })
 
-test('dispose releases every reference and unsubscribes from the layout source', () => {
+test('dispose releases every reference and does not select a panel', () => {
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
   const controller = createPaneController(fake.ctx)
   controller.markRegistered()
@@ -441,8 +440,155 @@ test('dispose releases every reference and unsubscribes from the layout source',
   controller.dispose()
 
   assert.equal(fake.references[0].released, true)
+  assert.equal(fake.references[1].released, true)
+  assert.deepEqual(fake.calls.selectPanel, [])
   fake.setPanel(null)
   assert.equal(controller.getSnapshot().active, false)
+})
+
+/** A stand-in for `uiSession.adapter.current`. `setKey` notifies subscribers. */
+function sessionCurrent() {
+  const listeners = new Set()
+  let key = null
+  return {
+    getSnapshot: () => ({ key }),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    setKey(next) {
+      key = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+test('toggleRightbar flips the sidebar service and publishes expanded', () => {
+  const fake = fakeControllerCtx()
+  const controller = createPaneController(fake.ctx)
+  let expanded = false
+  const calls = []
+  controller.attachRightbar({
+    isExpanded: () => expanded,
+    toggleExpanded() {
+      calls.push('toggle')
+      expanded = !expanded
+    },
+  })
+
+  assert.equal(controller.getSnapshot().rightbarAvailable, true)
+  assert.equal(controller.getSnapshot().rightbarExpanded, false)
+  assert.equal(controller.toggleRightbar(), true)
+  assert.deepEqual(calls, ['toggle'])
+  assert.equal(controller.getSnapshot().rightbarExpanded, true)
+
+  controller.attachRightbar(null)
+  assert.equal(controller.getSnapshot().rightbarAvailable, false)
+  assert.equal(controller.getSnapshot().rightbarExpanded, false)
+  assert.equal(controller.toggleRightbar(), false)
+  controller.dispose()
+})
+
+test('a rightbar toggle failure is reported and does not claim success', () => {
+  const fake = fakeControllerCtx()
+  const controller = createPaneController(fake.ctx)
+  controller.attachRightbar({
+    isExpanded: () => {
+      throw new Error('no surface')
+    },
+    toggleExpanded() {
+      throw new Error('rightbar down')
+    },
+  })
+
+  assert.equal(controller.getSnapshot().rightbarAvailable, true)
+  assert.equal(controller.getSnapshot().rightbarExpanded, false)
+  assert.equal(controller.toggleRightbar(), false)
+  assert.match(controller.getSnapshot().error, /rightbar down/)
+  controller.dispose()
+})
+
+test('a current session that no pane holds replaces the focused pane', async () => {
+  const { controller } = await readyController()
+  const current = sessionCurrent()
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(controller.getSnapshot().sessionId, 's9')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's9')
+  controller.dispose()
+})
+
+test('a current session that a pane already holds focuses that pane', async () => {
+  const { fake, controller } = await readyController({ created: ['s2'] })
+  await controller.split('p1', 'row')
+  const current = sessionCurrent()
+  controller.attachSessionSelection(current)
+  const retainsBefore = fake.calls.retain.length
+
+  current.setKey('s1')
+
+  assert.equal(controller.getSnapshot().activePaneId, 'p1')
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(liveMainView(fake)[0].sessionId, 's1')
+  assert.ok(fake.calls.retain.length > retainsBefore)
+  controller.dispose()
+})
+
+test('a current session with no focused pane opens that session', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
+  const controller = createPaneController(fake.ctx)
+  controller.markRegistered()
+  assert.equal(controller.activate(), true)
+  const current = sessionCurrent()
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+
+  assert.equal(controller.getSnapshot().active, true)
+  assert.equal(controller.getSnapshot().sessionId, 's9')
+  const pane = controller.getSnapshot().panes[controller.getSnapshot().activePaneId]
+  assert.equal(pane.sessionId, 's9')
+  controller.dispose()
+})
+
+test('retaining mainView does not re-enter current routing', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
+  const current = sessionCurrent()
+  const retain = fake.ctx.sessions.retain.bind(fake.ctx.sessions)
+  fake.ctx.sessions.retain = (sessionId, options) => {
+    const reference = retain(sessionId, options)
+    if (options?.source === MAIN_SOURCE) current.setKey(sessionId)
+    return reference
+  }
+  const controller = createPaneController(fake.ctx)
+  controller.markRegistered()
+  controller.attachSessionSelection(current)
+
+  assert.equal(controller.activate('s1'), true)
+
+  assert.equal(fake.calls.retain.length, 2)
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.deepEqual(
+    fake.calls.retain.map((call) => call.options.source),
+    [PANE_SOURCE, MAIN_SOURCE],
+  )
+  controller.dispose()
+})
+
+test('current changes are ignored until split mode is active', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
+  const controller = createPaneController(fake.ctx)
+  const current = sessionCurrent()
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+
+  assert.equal(controller.getSnapshot().active, false)
+  assert.deepEqual(fake.calls.retain, [])
+  controller.dispose()
 })
 
 // ---------------------------------------------------------------------------
@@ -771,9 +917,10 @@ test('/clear with no pane creates the first pane instead of leaving the workspac
   controller.dispose()
 })
 
-test('/clear is refused while the pane panel is not showing', async () => {
-  const { fake, controller } = await readyController()
-  fake.setPanel(null)
+test('/clear is refused before split mode is active', async () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, workspaces: WORKSPACE })
+  const controller = createPaneController(fake.ctx)
+  controller.markRegistered()
 
   assert.equal(controller.getSnapshot().active, false)
   assert.equal(await controller.newInFocused('w1'), false)
@@ -924,18 +1071,18 @@ test('re-enabling developer tools re-applies the pane trajectory memory', async 
   assert.equal(viewSwitch.listenerCount(), 0)
 })
 
-test('the shell leaving the pane panel keeps the layout; activating restores it', async () => {
+test('another panel does not leave split mode; activate keeps the focused pane', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
   const layoutBefore = controller.getSnapshot()
 
-  fake.setPanel(null)
+  fake.setPanel('settings')
 
-  assert.equal(controller.getSnapshot().active, false)
-  assert.equal(controller.getSnapshot().sessionId, null)
+  assert.equal(controller.getSnapshot().active, true)
+  assert.equal(controller.getSnapshot().sessionId, 's2')
   assert.deepEqual(controller.getSnapshot().root, layoutBefore.root)
-  assert.equal(livePaneRefs(fake).length, 0)
-  assert.equal(liveMainView(fake).length, 0)
+  assert.equal(livePaneRefs(fake).length, 2)
+  assert.equal(liveMainView(fake).length, 1)
 
   assert.equal(controller.activate(), true)
   assert.equal(controller.getSnapshot().active, true)
@@ -943,19 +1090,22 @@ test('the shell leaving the pane panel keeps the layout; activating restores it'
   assert.equal(controller.getSnapshot().sessionId, 's2')
   assert.equal(livePaneRefs(fake).length, 2)
   assert.equal(liveMainView(fake).length, 1)
+  assert.deepEqual(fake.calls.selectPanel, [])
   controller.dispose()
 })
 
-test('an external return to the native panel keeps the layout but drops references', async () => {
+test('an external panel change keeps the layout and the pane references', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.split('p1', 'row')
 
   fake.setPanel(null)
 
-  assert.equal(controller.getSnapshot().active, false)
+  assert.equal(controller.getSnapshot().active, true)
   assert.equal(Object.keys(controller.getSnapshot().panes).length, 2)
-  assert.equal(livePaneRefs(fake).length, 0)
-  assert.equal(liveMainView(fake).length, 0)
+  assert.equal(livePaneRefs(fake).length, 2)
+  assert.equal(liveMainView(fake).length, 1)
+  assert.equal(liveMainView(fake)[0].sessionId, 's2')
+  controller.dispose()
 })
 
 test('every pane exposes its retained reference for rendering', async () => {

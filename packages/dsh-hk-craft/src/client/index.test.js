@@ -18,7 +18,7 @@ const {
 } = require('./index.js')
 const { zh, en } = require('./locale.js')
 const { BUILT_IN_MODE_KEYS } = require('./pane-mode.js')
-const { CONTENT_FACTORY, PANEL_KEY, PANE_SLOT } = require('./dsh-pane-host.js')
+const { CONTENT_FACTORY, CONVERSATION_KEY, MAIN_PANEL_PRIORITY, PANE_SLOT } = require('./dsh-pane-host.js')
 
 /** @returns {object} one fake workspace snapshot store */
 function workspaceService(items = []) {
@@ -213,22 +213,82 @@ test('the running-pane close confirmation says the conversation is kept in histo
   assert.match(en['pane.close.confirm.title'], /history/)
 })
 
-test('registers its main key with a session-scoped child slot', () => {
+test('shadows the conversation cell and never selects a panel', () => {
   const ctx = fakeCtx()
   apply(ctx)
 
   const main = ctx.calls.registered.find((entry) => entry.options.name === 'main')
   assert.notEqual(main, undefined)
-  assert.equal(main.options.key, PANEL_KEY)
+  assert.equal(main.options.key, CONVERSATION_KEY)
+  assert.equal(CONVERSATION_KEY, 'conversation')
+  assert.equal(main.options.priority, MAIN_PANEL_PRIORITY)
+  assert.equal(MAIN_PANEL_PRIORITY, -1)
   assert.equal(main.options.locale, NS)
   assert.deepEqual(main.options.children, {
     [PANE_SLOT]: { kind: 'single', scope: 'session' },
   })
+  assert.deepEqual(ctx.calls.selectPanel, [])
+  assert.equal(ctx.panel.activePanelId, null)
   assert.equal(typeof main.component, 'function')
 
   const body = ctx.calls.registered.find((entry) => entry.options.name === PANE_SLOT)
   assert.notEqual(body, undefined)
   assert.equal(typeof body.component, 'function')
+})
+
+test('the strip rightbar labels exist in both locales', () => {
+  assert.equal(zh['strip.rightbar'], '右栏')
+  assert.equal(en['strip.rightbar'], 'Right')
+  assert.equal(zh['strip.rightbar.open'], '打开右侧边栏')
+  assert.equal(en['strip.rightbar.open'], 'Open right sidebar')
+  assert.equal(zh['strip.rightbar.close'], '收起右侧边栏')
+  assert.equal(en['strip.rightbar.close'], 'Collapse right sidebar')
+})
+
+test('a missing right bar still lets the plugin load', () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+
+  assert.equal(
+    ctx.calls.injections.some((names) => names.includes('sidebarRight')),
+    false,
+  )
+  assert.ok(ctx.calls.registered.some((entry) => entry.options.name === 'main'))
+  assert.deepEqual(ctx.calls.selectPanel, [])
+})
+
+test('wires the right bar and the session current when those services exist', () => {
+  let expandedReads = 0
+  let currentSubs = 0
+  const ctx = fakeCtx({
+    services: {
+      ...workspaceServices(),
+      sidebarRight: {
+        isExpanded() {
+          expandedReads += 1
+          return false
+        },
+        toggleExpanded() {},
+      },
+      uiSession: {
+        adapter: {
+          current: {
+            getSnapshot: () => ({ key: null }),
+            subscribe() {
+              currentSubs += 1
+              return () => {}
+            },
+          },
+        },
+      },
+    },
+  })
+  apply(ctx)
+
+  assert.ok(expandedReads > 0)
+  assert.equal(currentSubs, 1)
+  assert.deepEqual(ctx.calls.selectPanel, [])
+  assert.ok(ctx.calls.registered.some((entry) => entry.options.name === 'main'))
 })
 
 test('registers a dedicated HK Craft settings section instead of sidebar footer actions', () => {

@@ -8,9 +8,12 @@ const { withFakeReact } = require('./fake-react.js')
 const {
   PANE_CONTENT_OCCURRENCE,
   PaneFrame,
+  PaneEmptyState,
+  PaneWorkspace,
   PaneStrip,
   PaneViewToggle,
   createPaneBody,
+  createPaneHost,
   createPaneConversationViews,
   paneViewOfSession,
   workspaceGroups,
@@ -494,6 +497,131 @@ test('the strip split control is disabled at the pane cap and explains why', () 
     assert.equal(plus.props['aria-disabled'], 'true')
     assert.equal(plus.props['data-hkcraft-strip-budget'], 'true')
     assert.equal(plus.props.title, zh['strip.budget'].replace('{n}', '1'))
+  })
+})
+
+/** The strip element for a right-bar availability pair. */
+function stripWithRightbar({ available, expanded, toggleRightbar = () => {} }) {
+  const controller = {
+    closePane: () => {},
+    newPane: () => {},
+    focusPane: () => {},
+    swapPanes: () => {},
+    toggleRightbar,
+  }
+  const state = {
+    root: { kind: 'leaf', paneId: 'p1' },
+    panes: { p1: { paneId: 'p1', sessionId: 's1', view: 'chat' } },
+    activePaneId: 'p1',
+  }
+  const t = (key) => zh[key] ?? key
+  const view = PaneStrip({
+    controller,
+    state,
+    rightbarAvailable: available,
+    rightbarExpanded: expanded,
+    kit: {
+      useSessions: (selector) => selector({ byId: { s1: { title: 'One' } } }),
+      useSessionStatus: (selector) => selector({}),
+    },
+    t,
+  })
+  return {
+    view,
+    button: elementWhere(view, (node) => node.props?.['data-hkcraft-rightbar-toggle'] === ''),
+  }
+}
+
+test('the strip renders one rightbar toggle and clicks it through the controller', () => {
+  withFakeReact(fakeReact, () => {
+    const calls = []
+    const { button } = stripWithRightbar({
+      available: true,
+      expanded: false,
+      toggleRightbar: () => {
+        calls.push('toggle')
+      },
+    })
+
+    assert.notEqual(button, undefined)
+    assert.equal(button.props['aria-pressed'], 'false')
+    assert.equal(button.props['aria-label'], '打开右侧边栏')
+    assert.deepEqual(button.props.children, ['右栏'])
+    button.props.onClick()
+    assert.deepEqual(calls, ['toggle'])
+  })
+})
+
+test('the strip rightbar toggle reports expanded', () => {
+  withFakeReact(fakeReact, () => {
+    const { button } = stripWithRightbar({ available: true, expanded: true })
+
+    assert.notEqual(button, undefined)
+    assert.equal(button.props['aria-pressed'], 'true')
+    assert.equal(button.props['aria-label'], '收起右侧边栏')
+  })
+})
+
+test('the strip hides the rightbar toggle when the service is absent', () => {
+  withFakeReact(fakeReact, () => {
+    const { button } = stripWithRightbar({ available: false, expanded: false })
+    assert.equal(button, undefined)
+  })
+})
+
+test('the pane host stays mounted when split mode is off', () => {
+  withFakeReact(fakeReact, () => {
+    const controller = {
+      subscribe: () => () => {},
+      getSnapshot: () => ({
+        active: false,
+        error: null,
+        workspaceId: null,
+        layouts: {},
+        root: null,
+        panes: {},
+        activePaneId: null,
+        maxPanes: 4,
+        pendingClose: null,
+        rightbarAvailable: false,
+        rightbarExpanded: false,
+      }),
+      refreshProbe: () => {},
+    }
+    const view = createPaneHost(controller)({ t: (key) => zh[key] ?? key })
+    assert.notEqual(view, null)
+    assert.equal(view.type, fakeReact.Fragment)
+  })
+})
+
+test('an empty workspace explains a split-mode error', () => {
+  withFakeReact(fakeReact, () => {
+    const view = PaneWorkspace({
+      controller: {
+        watchConversations: () => () => {},
+        recentConversations: async () => [],
+        newInFocused: () => {},
+      },
+      workspaceId: null,
+      layout: { root: null, panes: {}, activePaneId: null },
+      visible: true,
+      error: 'cannot retain',
+      t: (key) => zh[key] ?? key,
+    })
+    const emptySeat = elementWhere(view, (node) => node.type === PaneEmptyState)
+    assert.notEqual(emptySeat, undefined)
+    assert.equal(emptySeat.props.error, 'cannot retain')
+
+    const empty = PaneEmptyState({
+      controller: { watchConversations: () => () => {} },
+      workspaceId: null,
+      visible: true,
+      error: 'cannot retain',
+      t: (key) => zh[key] ?? key,
+    })
+    const error = elementWhere(empty, (node) => node.props?.['data-hkcraft-empty-error'] === '')
+    assert.notEqual(error, undefined)
+    assert.deepEqual(error.props.children, ['cannot retain'])
   })
 })
 

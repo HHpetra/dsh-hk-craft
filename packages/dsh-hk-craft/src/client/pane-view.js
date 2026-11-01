@@ -50,6 +50,8 @@ const {
   hostStyle,
   hiddenWorkspaceStyle,
   paneStripStyle,
+  stripActionGroupStyle,
+  stripRightbarStyle,
   stripViewportStyle,
   stripTablistStyle,
   headerSeatStyle,
@@ -236,9 +238,9 @@ const EMPTY_RECENT_LIMIT = 5
  * scoping, same blank/archived filtering, same newest-first order, same
  * title → first-prompt fallback.
  *
- * @param {{ controller: any, workspaceId: string|null, visible: boolean, t: (key: string) => string }} props
+ * @param {{ controller: any, workspaceId: string|null, visible: boolean, error?: string|null, t: (key: string) => string }} props
  */
-function PaneEmptyState({ controller, workspaceId, visible, t }) {
+function PaneEmptyState({ controller, workspaceId, visible, error = null, t }) {
   const React = react()
   const h = React.createElement
   const [recent, setRecent] = React.useState(null)
@@ -292,6 +294,13 @@ function PaneEmptyState({ controller, workspaceId, visible, t }) {
         t('pane.empty.workspace.title'),
       ),
       h('div', { style: { opacity: 0.75 } }, t('pane.empty.workspace.body')),
+      typeof error === 'string' && error !== ''
+        ? h(
+            'div',
+            { 'data-hkcraft-empty-error': '', style: { opacity: 0.8, fontSize: 12, marginTop: 8 } },
+            error,
+          )
+        : null,
       h(
         'button',
         {
@@ -706,9 +715,21 @@ function splitBlocked(controller, state, workspaceId, maxPanes) {
  * The ARIA roles stay `tablist`/`tab` because the strip is a list of selectable
  * views of the same main region; the domain vocabulary is not "tab".
  *
- * @param {{ controller: any, state: any, workspaceId?: string|null, maxPanes?: number, kit: any, t: (key: string, params?: object) => string }} props
+ * The right-bar toggle sits outside the scrolling viewport, one button for the
+ * whole strip. It is hidden when the shell has no `sidebarRight` service.
+ *
+ * @param {{ controller: any, state: any, workspaceId?: string|null, maxPanes?: number, rightbarAvailable?: boolean, rightbarExpanded?: boolean, kit: any, t: (key: string, params?: object) => string }} props
  */
-function PaneStrip({ controller, state, workspaceId, maxPanes = DEFAULT_MAX_PANES, kit, t }) {
+function PaneStrip({
+  controller,
+  state,
+  workspaceId,
+  maxPanes = DEFAULT_MAX_PANES,
+  rightbarAvailable = false,
+  rightbarExpanded = false,
+  kit,
+  t,
+}) {
   const React = react()
   const h = React.createElement
   const useSessions = typeof kit?.useSessions === 'function' ? kit.useSessions : absentHook
@@ -955,6 +976,30 @@ function PaneStrip({ controller, state, workspaceId, maxPanes = DEFAULT_MAX_PANE
         '＋',
       ),
     ),
+    h(
+      'div',
+      { style: stripActionGroupStyle, 'data-hkcraft-strip-actions': '' },
+      rightbarAvailable === true
+        ? h(
+            'button',
+            {
+              type: 'button',
+              title: rightbarExpanded ? t('strip.rightbar.close') : t('strip.rightbar.open'),
+              'aria-label': rightbarExpanded ? t('strip.rightbar.close') : t('strip.rightbar.open'),
+              'aria-pressed': rightbarExpanded ? 'true' : 'false',
+              'data-hkcraft-rightbar-toggle': '',
+              style: {
+                ...stripRightbarStyle,
+                color: rightbarExpanded
+                  ? 'var(--dsw-alias-state-business-primary, Highlight)'
+                  : undefined,
+              },
+              onClick: () => controller.toggleRightbar(),
+            },
+            t('strip.rightbar'),
+          )
+        : null,
+    ),
   )
 }
 
@@ -1038,7 +1083,19 @@ function PaneCloseConfirm({ controller, t }) {
  *
  * @param {{ controller: any, workspaceId: string|null, layout: object, visible: boolean, maxPanes?: number, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneWorkspace({ controller, workspaceId, layout, visible, maxPanes = DEFAULT_MAX_PANES, kit, t, seats }) {
+function PaneWorkspace({
+  controller,
+  workspaceId,
+  layout,
+  visible,
+  maxPanes = DEFAULT_MAX_PANES,
+  rightbarAvailable = false,
+  rightbarExpanded = false,
+  error = null,
+  kit,
+  t,
+  seats,
+}) {
   const React = react()
   const h = React.createElement
   const attributes = {
@@ -1058,7 +1115,7 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, maxPanes = DE
       'div',
       attributes,
       shortcuts,
-      h(PaneEmptyState, { controller, workspaceId, visible, t }),
+      h(PaneEmptyState, { controller, workspaceId, visible, error: visible ? error : null, t }),
     )
   }
 
@@ -1070,7 +1127,18 @@ function PaneWorkspace({ controller, workspaceId, layout, visible, maxPanes = DE
     // Only the visible workspace owns a strip: hidden strips would render a
     // second row over an invisible tree. The pane bodies below stay mounted
     // regardless, which is what D5 actually protects.
-    visible ? h(PaneStrip, { controller, state: layout, workspaceId, maxPanes, kit, t }) : null,
+    visible
+      ? h(PaneStrip, {
+          controller,
+          state: layout,
+          workspaceId,
+          maxPanes,
+          rightbarAvailable,
+          rightbarExpanded,
+          kit,
+          t,
+        })
+      : null,
     h(
       'div',
       { style: layoutStyle, 'data-hkcraft-layout': '' },
@@ -1154,8 +1222,8 @@ function createPaneHost(controller, options = {}) {
       controller.refreshProbe()
     }, [])
 
-    if (!state.active) return null
-
+    // The shadow occupies the conversation cell even before split mode is
+    // active. Returning null here would leave the main area blank.
     // One dialog for the whole pane host: a close is a single pending action
     // even though several workspace trees are mounted at once.
     const dialog = h(PaneCloseConfirm, { controller, t })
@@ -1174,6 +1242,9 @@ function createPaneHost(controller, options = {}) {
             layout: group.layout,
             visible: group.visible,
             maxPanes: state.maxPanes,
+            rightbarAvailable: state.rightbarAvailable === true,
+            rightbarExpanded: state.rightbarExpanded === true,
+            error: state.error,
             kit: props,
             t,
             seats,

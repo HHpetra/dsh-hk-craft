@@ -6,11 +6,14 @@
  * the 0.2.0-rc.2 bundles; the `conversation.content` occurrence contract was
  * re-checked on the pinned 0.2.1-rc.5 train). The parts relevant here:
  *
- * - `main` is a keyed root slot; the frame renders `activePanelId ??
- *   "conversation"`, so selecting a different key unmounts the native
- *   Conversation instead of stacking on it — `#main-keyed-slot-and-selectpanel`.
- * - `ctx.layout.selectPanel(id)` rejects ids without a live `main` entry;
- *   `selectPanel(null)` returns to the native Conversation.
+ * - `main` is a keyed root slot. The frame renders `activePanelId ??
+ *   "conversation"`. This plugin shadows the `conversation` cell at priority
+ *   -1 and never calls `selectPanel`, so `activePanelId` stays null and the
+ *   native right bar stays visible — `#shadowing-the-conversation-cell`.
+ * - `selectPanel(null)` returns from a global panel (settings, plugins). It
+ *   does not unmount this shadow, because the conversation cell was never
+ *   selected away. `selectPanel('conversation')` is not null and would hide
+ *   the right bar — `#main-keyed-slot-and-selectpanel`.
  * - A `main` entry that declares a non-root child gets `SessionProvider` and
  *   `renderSlot` in its kit, plus `renderFactorySlot` for
  *   `conversation.content` — `#sessionprovider-and-conversationcontent`.
@@ -18,20 +21,18 @@
  *   `sessions.retain(id, { source })` … `reference.release()`. "Current
  *   session" is derived from the first row with `retainedBy.mainView > 0`, so
  *   the focused pane holds one `mainView` reference and every other pane holds
- *   a `hkcraftPane` reference only — `#retention-sources-and-the-single-mainview-derivation`.
+ *   a `hkcraftPane` reference only. The right bar follows that same mainView
+ *   — `#retention-sources-and-the-single-mainview-derivation`.
  * - `sessions.create({ workspaceId })` publishes the catalog row before
- *   resolving and never reuses a blank session; the native
- *   `uiWorkspace.startSession(workspaceId)` reveals through
- *   `replaceMain(…, "reveal")` → `selectPanel(null)`, which would dismiss the
- *   pane workspace, so the pane host never calls it —
+ *   resolving and never reuses a blank session. Native reveal still moves
+ *   the shell's current session; the pane host follows that current onto the
+ *   focused pane instead of calling the reveal —
  *   `#creating-a-session-without-leaving-the-panel`.
  * - Workspace membership comes from the `workspaces.list` snapshot —
  *   `#workspace-catalog`.
- * - While a plugin panel is selected the shell gates its own "current session"
- *   consumers on the panel state (sidebar current row, rename/fork shortcuts).
- *   There is no public API to release the native `uiWorkspace.mainReference`
- *   without revealing a session, so the pane host can only guarantee the
- *   mainView references it owns: one, on the focused pane.
+ * - The right bar is visible only while `activePanelId === null`.
+ *   `ctx.sidebarRight.toggleExpanded()` / `isExpanded()` are the public
+ *   controls, and there is no expanded observable — `#sidebar-right-toggle`.
  */
 
 const { listWorkspaceConversations, workspaceIdOf } = require('./dsh-sessions.js')
@@ -53,7 +54,10 @@ const { neighbourWorkspaceId, workspaceOrderOf } = require('./workspace-order.js
 const { openConversationItems, paneIdForStripIndex } = require('./pane-strip.js')
 
 const MAIN_SLOT = 'main'
-const PANEL_KEY = 'hkcraft.panes'
+/** The official conversation cell. Shadowing it leaves `activePanelId` null. */
+const CONVERSATION_KEY = 'conversation'
+/** Below the shipped conversation entry (priority 0), so this one renders. */
+const MAIN_PANEL_PRIORITY = -1
 const PANE_SLOT = 'hkcraft.pane'
 const CONTENT_FACTORY = 'conversation.content'
 const PANE_SOURCE = 'hkcraftPane'
@@ -228,7 +232,7 @@ function subscribeList(list, listener) {
 /**
  * Own the pane workspace: one layout per workspace, the focused pane of the
  * active workspace, one retained session reference per mounted pane, and
- * whether the plugin panel is selected.
+ * whether split mode is active. Split mode does not select a panel.
  *
  * Per-workspace scope (ticket 08): `layouts` is keyed by workspace id and every
  * transition targets one workspace's tree. Switching workspace only changes
@@ -270,7 +274,6 @@ function subscribeList(list, listener) {
  */
 function createPaneController(ctx, options = {}) {
   const sessions = ctx?.sessions
-  const layout = ctx?.layout
   const slots = ctx?.slots
   const storage = options.storage === undefined ? defaultStorage() : options.storage
   const viewSwitch = options?.viewSwitch
@@ -326,11 +329,24 @@ function createPaneController(ctx, options = {}) {
    */
   let bootOwned = true
   let bootSettled = false
+  /** `ctx.sidebarRight` when the shell has one. Optional; the strip hides without it. */
+  let rightbar = null
+  /**
+   * How deep a controller-originated retain is. `uiSession` current
+   * notifications that arrive from our own `mainView` retain must not route
+   * again.
+   */
+  let routingDepth = 0
+  /** `uiSession.adapter.current`, once attached. */
+  let sessionCurrent = null
+  let unsubscribeCurrent = () => {}
   let snapshot = Object.freeze({
     active: false,
     sessionId: null,
     probe: probeConversationContent(slots),
     error: null,
+    rightbarAvailable: false,
+    rightbarExpanded: false,
     maxPanes,
     /** `null` after a successful write; a string when the last write failed. */
     maxPanesError: null,
@@ -344,8 +360,21 @@ function createPaneController(ctx, options = {}) {
     closeError: null,
   })
 
+  function readRightbarExpanded() {
+    try {
+      return rightbar?.isExpanded?.() === true
+    } catch {
+      return false
+    }
+  }
+
   function emit(patch) {
-    const next = { ...snapshot, ...patch }
+    const next = {
+      ...snapshot,
+      ...patch,
+      rightbarAvailable: rightbar !== null,
+      rightbarExpanded: readRightbarExpanded(),
+    }
     const changed = Object.keys(next).some((key) => next[key] !== snapshot[key])
     if (!changed) return
     snapshot = Object.freeze(next)
@@ -363,14 +392,6 @@ function createPaneController(ctx, options = {}) {
       panes: value.panes,
       activePaneId: value.activePaneId,
       sessionId: active && focused !== undefined ? focused.sessionId : null,
-    }
-  }
-
-  function panelId() {
-    try {
-      return layout?.panelInfo?.getSnapshot?.()?.activePanelId ?? null
-    } catch {
-      return null
     }
   }
 
@@ -466,6 +487,15 @@ function createPaneController(ctx, options = {}) {
    * @returns {{failure: string|null, failed: Array<{paneId: string, workspaceId: string, error: any}>}}
    */
   function reconcileAll(nextLayouts) {
+    routingDepth += 1
+    try {
+      return reconcileAllNow(nextLayouts)
+    } finally {
+      routingDepth -= 1
+    }
+  }
+
+  function reconcileAllNow(nextLayouts) {
     const failed = []
     const desired = new Map()
     for (const [workspaceId, value] of Object.entries(nextLayouts)) {
@@ -864,26 +894,6 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
-  const unsubscribePanel =
-    layout?.panelInfo?.subscribe?.(() => {
-      if (disposed) return
-      if (panelId() !== PANEL_KEY && snapshot.active) {
-        // The shell switched away (native navigation, panel unregistration, or
-        // the layout controller resetting activePanelId). The panes are already
-        // unmounted, so drop the references but keep the layout for the next
-        // activation.
-        releaseAll()
-        emit({
-          ...statePatch(false),
-          active: false,
-          error: null,
-          pendingClose: null,
-          closeBusy: false,
-          closeError: null,
-        })
-      }
-    }) ?? (() => {})
-
   // The renderer contains a Factory crash inside its own boundary and renders
   // an empty `[data-factory-error]` cell. Its supervision channel is the only
   // way the pane can replace that cell with an explicit fallback.
@@ -1158,9 +1168,8 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
-   * Re-select the plugin panel without touching any layout. The sidebar uses
-   * this after a native workspace reveal bounced the shell back to the native
-   * Conversation; references for every loaded workspace are retained again.
+   * Re-retain every loaded workspace without touching the layout. Idempotent
+   * while the conversation cell stays shadowed: nothing here selects a panel.
    *
    * @returns {boolean}
    */
@@ -1175,14 +1184,7 @@ function createPaneController(ctx, options = {}) {
     const { failure } = reconcileAll(previous)
     if (failure !== null) {
       reconcileAll({})
-      emit({ error: failure })
-      return false
-    }
-    try {
-      layout.selectPanel(PANEL_KEY)
-    } catch (error) {
-      reconcileAll({})
-      emit({ error: messageOf(error) })
+      emit({ ...statePatch(true), active: true, error: failure })
       return false
     }
     emit({ ...statePatch(true), active: true, error: null })
@@ -1644,7 +1646,47 @@ function createPaneController(ctx, options = {}) {
     return true
   }
 
-  return {
+  function currentSessionId() {
+    try {
+      const key = sessionCurrent?.getSnapshot?.()?.key
+      return typeof key === 'string' && key !== '' ? key : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Land the shell's current session on the focused pane.
+   *
+   * A session that some pane already holds is focused, switching workspace
+   * first when that pane is elsewhere. An unknown session replaces the focused
+   * pane. With no pane open it becomes the first pane. Notifications caused by
+   * this controller's own `mainView` retain are ignored.
+   */
+  function syncCurrent() {
+    if (routingDepth > 0 || disposed || !snapshot.active) return
+    const sessionId = currentSessionId()
+    if (sessionId === null) return
+    const focused = focusedPane()
+    if (focused !== null && focused.sessionId === sessionId) return
+    routingDepth += 1
+    try {
+      const holder = book.locatePaneIn(sessionId)
+      if (holder !== null) {
+        focusPaneValue(holder.paneId)
+        return
+      }
+      if (book.activeLayout().activePaneId !== null) {
+        replaceFocusedValue(sessionId)
+        return
+      }
+      face.activate(sessionId)
+    } finally {
+      routingDepth -= 1
+    }
+  }
+
+  const face = {
     getSnapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener)
@@ -1698,24 +1740,26 @@ function createPaneController(ctx, options = {}) {
     watchConversations(workspaceId, listener) {
       return watchConversationsValue(workspaceId, listener)
     },
-    /** Called by apply once the `main` entry exists, so selectPanel can succeed. */
+    /** Called once the shadow `conversation` entry is registered. */
     markRegistered() {
       registered = true
       refreshProbe()
     },
     refreshProbe,
     /**
-     * Show the pane workspace, restoring the layout of the workspace the target
-     * session belongs to.
+     * Enter or restore split mode for the workspace the target session belongs to.
      *
      * Omitted `sessionId` means "the session dsh currently treats as the
      * conversation". With panes already open in that workspace, a known session
-     * focuses its pane and an unknown one replaces the focused pane's content —
-     * the settings-page switch never dismantles the layout. A session of another
-     * workspace switches the visible workspace first (ticket 08).
+     * focuses its pane and an unknown one replaces the focused pane's content.
+     * A session of another workspace switches the visible workspace first.
+     *
+     * This never calls `layout.selectPanel`. The conversation cell is shadowed,
+     * so `activePanelId` stays null. A failure still leaves split mode active
+     * and records `error`, so the main area can explain it instead of going blank.
      *
      * @param {string} [sessionId]
-     * @returns {boolean} whether the plugin panel is now selected
+     * @returns {boolean} whether the requested session is now the focused pane
      */
     activate(sessionId) {
       if (disposed) return false
@@ -1732,7 +1776,11 @@ function createPaneController(ctx, options = {}) {
         target === undefined ? focusedWorkspaceId() : (workspaceOf(target) ?? focusedWorkspaceId())
       if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
         if (!ensureWorkspace(targetWorkspace)) {
-          emit({ error: `cannot show workspace ${targetWorkspace}` })
+          emit({
+            ...statePatch(true),
+            active: true,
+            error: `cannot show workspace ${targetWorkspace}`,
+          })
           return false
         }
         book.setActiveWorkspace(targetWorkspace)
@@ -1747,13 +1795,6 @@ function createPaneController(ctx, options = {}) {
         }
         const holder = layoutTree.paneOfSession(current, target)
         if (holder !== undefined && holder === current.activePaneId) {
-          // Already visible and focused; just make sure the panel is selected.
-          try {
-            layout.selectPanel(PANEL_KEY)
-          } catch (error) {
-            emit({ error: messageOf(error) })
-            return false
-          }
           emit({ ...statePatch(true), active: true, error: null })
           settleBootWorkspace()
           return true
@@ -1778,14 +1819,7 @@ function createPaneController(ctx, options = {}) {
       const { failure } = reconcileAll(proposed)
       if (failure !== null) {
         reconcileAll(previous)
-        emit({ error: failure })
-        return false
-      }
-      try {
-        layout.selectPanel(PANEL_KEY)
-      } catch (error) {
-        reconcileAll(previous)
-        emit({ error: messageOf(error) })
+        emit({ ...statePatch(true), active: true, error: failure })
         return false
       }
       book.store(book.getActiveWorkspaceId(), next)
@@ -1833,9 +1867,8 @@ function createPaneController(ctx, options = {}) {
       return forgetWorkspaceValue(workspaceId, options)
     },
     /**
-     * Re-select the plugin panel without changing any layout. The sidebar calls
-     * this after a native workspace reveal bounced the shell to the native
-     * Conversation; every loaded workspace's panes are retained again.
+     * Re-retain every loaded workspace without changing the layout or selecting
+     * a panel. Safe to call again while split mode is already active.
      *
      * @returns {boolean}
      */
@@ -2051,26 +2084,84 @@ function createPaneController(ctx, options = {}) {
       if (disposed) return false
       return apply(layoutTree.resize(book.activeLayout(), path, ratio))
     },
-    /** Plugin unload: release everything and hand the main area back to the shell. */
+    /**
+     * Remember `ctx.sidebarRight`. A missing service hides the strip button.
+     * The returned state is whatever `isExpanded()` says right now; the service
+     * has no expanded subscription, so later emits re-read it.
+     *
+     * @param {any} service
+     */
+    attachRightbar(service) {
+      rightbar = service ?? null
+      emit({})
+    },
+    /**
+     * Flip the native right bar. False when the service is missing or the call throws.
+     *
+     * @returns {boolean}
+     */
+    toggleRightbar() {
+      if (rightbar === null) return false
+      try {
+        rightbar.toggleExpanded()
+      } catch (error) {
+        emit({ error: messageOf(error) })
+        return false
+      }
+      emit({})
+      return true
+    },
+    /**
+     * Follow `uiSession.adapter.current` so a native current change lands in
+     * the focused pane. Our own `mainView` retains notify this store too;
+     * `routingDepth` drops those. Returns the unsubscribe.
+     *
+     * @param {any} current
+     * @returns {() => void}
+     */
+    attachSessionSelection(current) {
+      unsubscribeCurrent()
+      unsubscribeCurrent = () => {}
+      sessionCurrent = current ?? null
+      if (sessionCurrent === null || typeof sessionCurrent.subscribe !== 'function') {
+        sessionCurrent = null
+        return () => {}
+      }
+      let unsubscribe = () => {}
+      try {
+        const result = sessionCurrent.subscribe(() => syncCurrent())
+        if (typeof result === 'function') unsubscribe = result
+      } catch (error) {
+        sessionCurrent = null
+        emit({ error: messageOf(error) })
+        return () => {}
+      }
+      unsubscribeCurrent = () => {
+        unsubscribe()
+        if (sessionCurrent === current) sessionCurrent = null
+      }
+      return unsubscribeCurrent
+    },
+    /** Plugin unload: release everything. Unregistering the shadow hands `conversation` back. */
     dispose() {
       if (disposed) return
       disposed = true
-      unsubscribePanel()
+      unsubscribeCurrent()
+      unsubscribeCurrent = () => {}
+      sessionCurrent = null
+      rightbar = null
       unsubscribeEntryError()
       unsubscribeViewAvailability()
       unsubscribeCatalog()
       releaseAll()
-      try {
-        if (panelId() === PANEL_KEY) layout.selectPanel(null)
-      } catch {
-        // The layout may already be gone during shell teardown.
-      }
       book.clear()
       snapshot = Object.freeze({
         ...snapshot,
         active: false,
         sessionId: null,
         error: null,
+        rightbarAvailable: false,
+        rightbarExpanded: false,
         workspaceId: null,
         layouts: {},
         root: null,
@@ -2082,11 +2173,13 @@ function createPaneController(ctx, options = {}) {
       })
     },
   }
+  return face
 }
 
 module.exports = {
   MAIN_SLOT,
-  PANEL_KEY,
+  CONVERSATION_KEY,
+  MAIN_PANEL_PRIORITY,
   PANE_SLOT,
   CONTENT_FACTORY,
   PANE_SOURCE,

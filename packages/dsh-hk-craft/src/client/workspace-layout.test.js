@@ -3,7 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { MAIN_SOURCE, PANE_SOURCE, PANEL_KEY, createPaneController } = require('./dsh-pane-host.js')
+const { MAIN_SOURCE, PANE_SOURCE, createPaneController } = require('./dsh-pane-host.js')
 const { layoutKey, encodeLayout, decodeLayout } = require('./layout-store.js')
 const {
   createLayout,
@@ -231,8 +231,8 @@ test('each workspace keeps its own layout: switching shows the other tree and cl
   // Both workspaces' panes stay retained; only the visible focus holds mainView.
   assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId).sort(), ['s1', 's3'])
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
-  // Switching is a view change, not a panel navigation.
-  assert.deepEqual(fake.calls.selectPanel, [PANEL_KEY])
+  // Switching workspaces stays in split mode and never selects a panel.
+  assert.deepEqual(fake.calls.selectPanel, [])
   assert.equal(controller.paneReference('p1').sessionId, 's1')
 
   assert.equal(controller.switchWorkspace('w1'), true)
@@ -515,24 +515,55 @@ test('pane ids restored for different workspaces are made unique', () => {
   controller.dispose()
 })
 
-test('the shell leaving and re-entering the pane view keeps every workspace layout', () => {
+test('a current session held in another workspace focuses that workspace pane', () => {
+  const layouts = twoWorkspaces()
+  const storage = memoryStorage(layouts)
+  const { controller } = readyController({ storage })
+  controller.activate('s1')
+  controller.switchWorkspace('w2')
+  controller.switchWorkspace('w1')
+  const listeners = new Set()
+  let key = null
+  controller.attachSessionSelection({
+    getSnapshot: () => ({ key }),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  })
+
+  key = 's3'
+  for (const listener of listeners) listener()
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+  assert.equal(controller.getSnapshot().sessionId, 's3')
+  assert.deepEqual(controller.getSnapshot().layouts.w1, layouts.w1)
+  controller.dispose()
+})
+
+test('opening another panel keeps split mode, every workspace layout and its references', () => {
   const layouts = twoWorkspaces()
   const storage = memoryStorage(layouts)
   const { fake, controller } = readyController({ storage })
 
   controller.activate('s1')
   controller.switchWorkspace('w2')
-  fake.setPanel(null)
+  fake.setPanel('settings')
 
-  assert.equal(controller.getSnapshot().active, false)
+  assert.equal(controller.getSnapshot().active, true)
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.deepEqual(Object.keys(controller.getSnapshot().layouts).sort(), ['w1', 'w2'])
-  assert.deepEqual(livePaneRefs(fake).length, 0)
+  assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId).sort(), ['s1', 's3'])
+  assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
+  assert.deepEqual(fake.calls.selectPanel, [])
 
   assert.equal(controller.reactivate(), true)
   assert.equal(controller.getSnapshot().active, true)
   assert.equal(controller.getSnapshot().workspaceId, 'w2')
   assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId).sort(), ['s1', 's3'])
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
+  assert.deepEqual(fake.calls.selectPanel, [])
   controller.dispose()
 })
 
@@ -762,9 +793,9 @@ test('deleting the visible workspace drops its layout and key, releases its pane
   assert.equal(controller.isWorkspaceEnabled('w2'), true, 'the neighbour it moved to is enabled')
   assert.deepEqual(livePaneRefs(fake).map((reference) => reference.sessionId), ['s3'])
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s3'])
-  // Deleting a registration is not closing panes: no interrupt, no panel nav.
+  // Deleting a registration is not closing panes and does not select a panel.
   assert.deepEqual(fake.calls.interrupt, [])
-  assert.deepEqual(fake.calls.selectPanel, [PANEL_KEY])
+  assert.deepEqual(fake.calls.selectPanel, [])
   assert.ok(emissions > 0, 'the controller publishes a new snapshot')
   controller.dispose()
 })

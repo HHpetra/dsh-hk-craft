@@ -73,10 +73,12 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
 
 ## 6. 当前状态
 
-插件已交付首个能力 **多会话分屏 + 侧栏精简**（ADR-0005 ~ 0011），并在其上补齐本轮管理功能
-（ADR-0007/0008）：
+插件已交付首个能力 **多会话分屏 + 侧栏精简**（ADR-0005 ~ 0014），并在其上补齐本轮管理功能
+（ADR-0007/0008）。分屏 shadow `main` 的 `conversation` 单元格，不改变 `activePanelId`
+（ADR-0014）：
 
-- **分屏**：`main` 键控槽接管主区域，每个窗格承载恰好一个会话；`+`、`Ctrl+Shift+E` 与
+- **分屏**：shadow `main.conversation`（priority -1），全程不调用 `selectPanel`，所以
+  `activePanelId` 保持 null，原生右侧栏保持可见，并跟随焦点窗格的 `mainView`。每个窗格承载恰好一个会话；`+`、`Ctrl+Shift+E` 与
   `/resume` 的 Ctrl+Enter 在焦点窗格右侧插入新窗格，并按当前窗格数均分这一排的宽度，不重排顺序。
   每个工作区默认最多 4 格，可在 HK Craft 设置页改为任意格数（`0` = 不限制）。降低上限不会关闭
   已有窗格，也不会取消已经通过检查、会话还在创建的那一次分栏。空工作区没有焦点窗格时
@@ -85,13 +87,16 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
   会话数。进行中的交叉见 ADR-0010。
 - **窗格头部工具栏**：每个窗格顶部显示自己的标题、只读**当前模式**、**子代理查看**、视图切换与
   关闭；模式与子代理读该窗格自己的会话，而不是焦点窗格。标签条只保留标签与紧贴最后标签的
-  `+`，不再承载右侧原生功能组。右侧边栏按钮不做，因为上游在分屏面板激活时隐藏原生右侧栏
-  （[`upstream-contracts.md`](upstream-contracts.md#split-panel-hides-the-native-right-bar)）。
+  `+`。滚动区外有一个共享的右侧栏开关，调用 `ctx.sidebarRight.toggleExpanded()`；服务不存在时
+  不显示按钮。窗格里的文件和图片链接打开焦点窗格会话的原生右侧栏
+  （[`upstream-contracts.md`](upstream-contracts.md#shadowing-the-conversation-cell)、
+  [`#sidebar-right-toggle`](upstream-contracts.md#sidebar-right-toggle)）。
 - **侧栏工作区**：五态灯（含空闲蓝与未读完成绿）、行内删除（二次确认，不中断会话）、指针拖动
   排序（Host 持久化顺序），以及“添加工作区”。
 - **HK Craft 设置页**：诊断信息内联展示、分屏上限设置（默认 4，`0` = 不限制，持久化到
   `dsh.hkcraft.settings.v1`）；侧栏 footer 不再注入按钮。
-  插件加载并注册主面板后进入分屏，设置页不提供回到原生视图的开关。
+  插件加载并 shadow `conversation` 后进入分屏，设置页不提供回到原生视图的开关。
+  打开设置时右侧栏按原生规则隐藏；回到会话后分屏与右侧栏一起恢复。
   写入失败时内存中的上限仍然生效，页面显示失败原因；读失败或值非法回落到 4。
 - **桌面通知**：五类——等待授权 / 等待回答 / 计划待审阅 / 本轮完成 / 本轮失败。前三种来自
   `sessionStatus.pendingInteraction.kind`，完成来自 `running` 的 true→false，失败来自

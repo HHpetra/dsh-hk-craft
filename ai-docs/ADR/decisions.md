@@ -303,3 +303,26 @@
 - 判据依赖渲染进程的 `document.hasFocus()` 与 `visibilityState`；DevTools 获得焦点、或窗口被其它应用覆盖但 Chromium 仍报告 focused 时，行为以浏览器报告为准。
 - 分屏可见性依赖 `paneIndexOf` 的“当前工作区布局”语义；如果未来支持把窗格折叠/隐藏，需要重新定义“可见”。
 - 该选项只影响系统通知，不改变五态灯、`completionUnread`、审批/提问面板与点击回会话。
+
+---
+
+## ADR-0014 — shadow `conversation`，保留原生右侧栏
+
+**背景**：分屏本身是成立的：每个窗格用 `SessionProvider` 和 `conversation.content`（`variant: "embedded"`）渲染真实对话，焦点窗格持有 `mainView`。问题只在接管位置。ADR-0005 决策 1 注册了新的 `main` key `hkcraft.panes` 并调用 `ctx.layout.selectPanel(...)`。上游右侧栏只在 `panelInfo.activePanelId === null` 时可见，并把屏上会话交给 `sidebarRight`。插件面板一旦被选中，右侧栏隐藏，窗格里打开文件会报 `no session surface is mounted`。
+
+**取代关系**：本 ADR 取代 **ADR-0005 决策 1** 中“注册新 `main` key 并 `selectPanel`”的部分。ADR-0005 的其余决策（每窗格一个会话、标签条只是索引、侧栏替换、纯客户端命令等）继续有效。同时取代 **ADR-0007 / ADR-0008** 里“右侧边栏在分屏中不可用、因此不做开关”的限制。ADR-0008 把模式与子代理放进每个窗格头部的决定继续有效。
+
+**决策**：
+
+1. **shadow `conversation`，不 `selectPanel`**：在 `main` 槽注册 `key: "conversation"`、`priority: -1` 的条目，遮住官方 `ConversationPanel`。全程不调用 `ctx.layout.selectPanel`，让 `activePanelId` 保持 `null`。不要用 `selectPanel('conversation')` 冒充回到会话，那会把 `activePanelId` 设成非 null，右侧栏再次隐藏。
+2. **焦点窗格继续持有 `mainView`**：右侧栏因此跟随焦点窗格的会话。插件不替换 `rightbar` occupant，不在每个窗格里再挂一份右侧栏。
+3. **标签条补一个右侧栏开关**：调用 `ctx.sidebarRight.toggleExpanded()`。服务缺失时不渲染按钮，也不把 `sidebarRight` 放进顶层 `inject`。`isExpanded()` 不可订阅，按钮状态允许短暂不准。
+4. **原生 current 跟到焦点窗格**：`uiSession.adapter.current` 变到未打开的会话时，替换焦点窗格的会话；变到已打开的会话时，聚焦那个窗格（必要时先切工作区）。不因此自动新开一格。控制器自己 retain `mainView` 时不递归。
+5. **v1 仍是一格也用插件窗格**：不在单窗格时交还原生对话，不渲染原生 header / lineage / hero。关掉最后一个窗格显示空态，不把主区留白。打开设置时右侧栏按原生规则隐藏，返回后 shadow 重新挂上，分屏状态保留。
+
+**后果 / 约束**：
+
+- 单窗格不是逐字节原生；窗格头部继续由插件自建。原生 header 里的右栏按钮不存在，由标签条上的开关补上。
+- 依赖上游 keyed slot 的 shadow 语义（同 key 不同 priority 合法，同 priority 抛错，一个子槽一个声明者）。升级 dsh 时复验 `main` 与 `RightbarRoot`。
+- 卸载 shadow 后官方 `ConversationPanel` 赢回 `conversation` 格，不需要 `selectPanel(null)` 来交还主区。
+- 设置页打开期间分屏仍视为 active，引用保留，避免回来时丢掉布局。

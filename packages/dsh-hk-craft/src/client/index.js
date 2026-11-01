@@ -27,7 +27,13 @@
 const { dictionaries } = require('./locale.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
-const { PANEL_KEY, PANE_SLOT, MAIN_SLOT, createPaneController } = require('./dsh-pane-host.js')
+const {
+  CONVERSATION_KEY,
+  MAIN_PANEL_PRIORITY,
+  PANE_SLOT,
+  MAIN_SLOT,
+  createPaneController,
+} = require('./dsh-pane-host.js')
 const { createViewSwitch } = require('./dsh-view-switch.js')
 const { createPaneBody, createPaneHost } = require('./pane-view.js')
 const { createSubagentSeat } = require('./pane-subagents-view.js')
@@ -165,6 +171,23 @@ function apply(ctx) {
     scope.effect(() => notifier.start(), 'dsh-hk-craft: desktop notifications')
   })
 
+  // Optional. A shell without a right bar must still mount the panes, so this
+  // is not part of the top-level inject list.
+  ctx.inject(['sidebarRight'], (scope) => {
+    controller.attachRightbar(scope.get('sidebarRight'))
+    return () => controller.attachRightbar(null)
+  })
+
+  // Native open/start moves `uiSession` current without unmounting the shadow.
+  // Follow that current onto the focused pane. Separate from the notifier so
+  // a status-only shell still routes, and a missing service mounts nothing here.
+  ctx.inject(['uiSession'], (scope) => {
+    scope.effect(
+      () => controller.attachSessionSelection(scope.get('uiSession')?.adapter?.current),
+      'dsh-hk-craft: session current routing',
+    )
+  })
+
   const headerSeats = createHeaderSeats(ctx)
   const PaneHost = createPaneHost(controller, { headerSeats })
   const PaneBody = createPaneBody(controller)
@@ -190,7 +213,7 @@ function apply(ctx) {
   /**
    * The pane face the slash commands see: enough to keep `/resume`, `/clear`
    * and `/new` inside the split workspace instead of calling the native session
-   * navigation, which resets the active panel. `openInNewPane` is the `/resume`
+   * navigation, which would move the shell's current session. `openInNewPane` is the `/resume`
    * Ctrl+Enter action and the `/fork` "open the copy beside the focus" action.
    * `canTrace` / `setView` are the `/trace` pass-through to the controller.
    * `paneIndexFor` feeds the "已在窗格 N" badge. The pane strip itself talks to
@@ -208,14 +231,16 @@ function apply(ctx) {
   }
 
   ctx.effect(() => {
-    // The `main` keyed root slot is declared by ui-layout. Register our key
-    // first, then the child slot entry the main entry declares. The generator
-    // form matches how ui-conversation registers `main` plus its child slots.
+    // The `main` keyed root slot is declared by ui-layout. Shadow the
+    // `conversation` cell (priority -1) and then the child slot that entry
+    // declares. Never select a panel: `activePanelId` must stay null so the
+    // native right bar keeps its gate open.
     const disposeMain = ctx.slots.inject(MAIN_SLOT, function* () {
       yield ctx.slots.register(
         {
           name: MAIN_SLOT,
-          key: PANEL_KEY,
+          key: CONVERSATION_KEY,
+          priority: MAIN_PANEL_PRIORITY,
           locale: NS,
           children: {
             [PANE_SLOT]: { kind: 'single', scope: 'session' },
@@ -225,9 +250,8 @@ function apply(ctx) {
       )
       yield ctx.slots.register({ name: PANE_SLOT, locale: NS }, PaneBody)
       controller.markRegistered()
-      // Split view is selected as soon as the pane panel exists. There is no
-      // control that returns to the native conversation. A failed activate
-      // leaves the shell on whatever panel it already had selected.
+      // Split mode starts as soon as the shadow is registered. There is no
+      // control that returns to the native conversation cell.
       controller.activate()
     })
 
