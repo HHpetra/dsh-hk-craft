@@ -38,6 +38,7 @@ dsh 的端口、`DSH_HOME`、会话存储与登录态都不归本项目管理。
 | host | `packages/dsh-hk-craft/src/index.js` | 宿主服务、工具、路由、会话粘合；经 Cordis `ctx` 使用 dsh 公开能力 |
 | client | `packages/dsh-hk-craft/src/client/` | 浏览器面板 / 设置页；构建为 `lib/client.js`，经 `dsh.client` 声明 |
 | read model | `packages/dsh-hk-craft/src/client/catalog.js` | dsh 清单与状态映射的唯一解析处；其余 module 只问领域问题（ADR-0016） |
+| pane kernel | `packages/dsh-hk-craft/src/client/dsh-pane-host.js` | 窗格布局的唯一事务点（布局簿、引用保留、`apply`、聚合快照）；右栏 / 关闭确认 / 窗格上限各有自己的持有者（ADR-0017） |
 | config | `packages/dsh-hk-craft/cordis.patch.yml` | 只插入一条 `dsh-hk-craft` 行；不复制上游配置 |
 
 host 与 client 同属一个包、同一版本，避免半套升级。客户端入口 id 必须与 patch 行 `name` 完全一致。
