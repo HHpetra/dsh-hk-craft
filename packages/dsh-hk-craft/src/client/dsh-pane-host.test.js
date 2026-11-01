@@ -463,12 +463,12 @@ function sessionCurrent() {
   }
 }
 
-test('toggleRightbar flips the sidebar service and publishes expanded', () => {
+test('the panel toggle flips the sidebar service and publishes expanded', () => {
   const fake = fakeControllerCtx()
   const controller = createPaneController(fake.ctx)
   let expanded = false
   const calls = []
-  controller.attachRightbar({
+  controller.panel.attach({
     isExpanded: () => expanded,
     toggleExpanded() {
       calls.push('toggle')
@@ -478,14 +478,14 @@ test('toggleRightbar flips the sidebar service and publishes expanded', () => {
 
   assert.equal(controller.getSnapshot().rightbarAvailable, true)
   assert.equal(controller.getSnapshot().rightbarExpanded, false)
-  assert.equal(controller.toggleRightbar(), true)
+  assert.equal(controller.panel.toggle(), true)
   assert.deepEqual(calls, ['toggle'])
   assert.equal(controller.getSnapshot().rightbarExpanded, true)
 
-  controller.attachRightbar(null)
+  controller.panel.attach(null)
   assert.equal(controller.getSnapshot().rightbarAvailable, false)
   assert.equal(controller.getSnapshot().rightbarExpanded, false)
-  assert.equal(controller.toggleRightbar(), false)
+  assert.equal(controller.panel.toggle(), false)
   controller.dispose()
 })
 
@@ -498,14 +498,14 @@ test('right-bar guide icons open that tool and follow registry updates', () => {
   let entries = [
     { id: 'workspace', providerId: 'files-pkg', kind: 'files', order: 10, title: () => '文件', icon: FilesIcon },
   ]
-  controller.attachRightbar({
+  controller.panel.attach({
     isExpanded: () => false,
     toggleExpanded() {},
     openTab(kind) {
       opened.push(kind)
     },
   })
-  controller.attachRightbarTabs({
+  controller.panel.attachTabs({
     guide: () => entries,
     subscribe(listener) {
       listeners.add(listener)
@@ -518,7 +518,7 @@ test('right-bar guide icons open that tool and follow registry updates', () => {
     [['files', '文件']],
   )
   assert.equal(controller.getSnapshot().rightbarTools[0].icon, FilesIcon)
-  assert.equal(controller.openRightbarTool('files'), true)
+  assert.equal(controller.panel.openTool('files'), true)
   assert.deepEqual(opened, ['files'])
 
   entries = [
@@ -536,10 +536,10 @@ test('right-bar guide icons open that tool and follow registry updates', () => {
   assert.deepEqual(controller.getSnapshot().rightbarTools, [])
 })
 
-test('a right-bar tool that cannot open is reported', () => {
+test('a right-bar tool that cannot open is reported through the panel', () => {
   const fake = fakeControllerCtx()
   const controller = createPaneController(fake.ctx)
-  controller.attachRightbar({
+  controller.panel.attach({
     isExpanded: () => false,
     toggleExpanded() {},
     openTab() {
@@ -547,15 +547,15 @@ test('a right-bar tool that cannot open is reported', () => {
     },
   })
 
-  assert.equal(controller.openRightbarTool('files'), false)
+  assert.equal(controller.panel.openTool('files'), false)
   assert.match(controller.getSnapshot().error, /no session surface/)
   controller.dispose()
 })
 
-test('a rightbar toggle failure is reported and does not claim success', () => {
+test('a panel toggle failure is reported and does not claim success', () => {
   const fake = fakeControllerCtx()
   const controller = createPaneController(fake.ctx)
-  controller.attachRightbar({
+  controller.panel.attach({
     isExpanded: () => {
       throw new Error('no surface')
     },
@@ -566,7 +566,7 @@ test('a rightbar toggle failure is reported and does not claim success', () => {
 
   assert.equal(controller.getSnapshot().rightbarAvailable, true)
   assert.equal(controller.getSnapshot().rightbarExpanded, false)
-  assert.equal(controller.toggleRightbar(), false)
+  assert.equal(controller.panel.toggle(), false)
   assert.match(controller.getSnapshot().error, /rightbar down/)
   controller.dispose()
 })

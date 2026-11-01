@@ -930,7 +930,7 @@ function PaneStrip({
                   'aria-label': tool.title,
                   'data-hkcraft-rightbar-tool': tool.kind,
                   style: stripRightbarStyle,
-                  onClick: () => controller.openRightbarTool(tool.kind),
+                  onClick: () => controller.panel.openTool(tool.kind),
                 },
                 h(
                   'span',
@@ -961,7 +961,7 @@ function PaneStrip({
                     'aria-pressed': 'false',
                     'data-hkcraft-rightbar-toggle': '',
                     style: stripRightbarStyle,
-                    onClick: () => controller.toggleRightbar(),
+                    onClick: () => controller.panel.toggle(),
                   },
                   RightbarExpandIcon(),
                 ),

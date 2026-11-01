@@ -1,6 +1,10 @@
 'use strict'
 
 /**
+ * The pane kernel: the layout book, the pane references, the one layout
+ * transaction (`apply`), the aggregate snapshot, and the composition of the
+ * holders that sit beside it (ADR-0017).
+ *
  * Every dsh assumption this plugin makes about mounting a Session into the
  * central `main` area is recorded in `doc/upstream-contracts.md` (read against
  * the 0.2.0-rc.2 bundles; the `conversation.content` occurrence contract was
@@ -33,6 +37,8 @@
  * - The right bar is visible only while `activePanelId === null`.
  *   `ctx.sidebarRight.toggleExpanded()` / `isExpanded()` are the public
  *   controls, and there is no expanded observable — `#sidebar-right-toggle`.
+ *   The service pair and the three snapshot fields it produces belong to
+ *   `pane-panel.js`, not to this file.
  */
 
 const { listWorkspaceConversations } = require('./dsh-sessions.js')
@@ -49,6 +55,7 @@ const {
   writeMaxPanes,
 } = require('./pane-budget.js')
 const { createCloseFlow } = require('./pane-close.js')
+const { createRightbar } = require('./pane-panel.js')
 const { messageOf } = require('./shared.js')
 const { neighbourWorkspaceId, workspaceOrderOf } = require('./workspace-order.js')
 const { openConversationItems, paneIdForStripIndex } = require('./pane-strip.js')
@@ -310,13 +317,14 @@ function createPaneController(ctx, options = {}) {
    */
   let bootOwned = true
   let bootSettled = false
-  /** `ctx.sidebarRight` when the shell has one. Optional; the strip hides without it. */
-  let rightbar = null
-  /** `ctx.sidebarRightTabs`, the registry whose guide entries are the native tool icons. */
-  let rightbarTabs = null
-  let unsubscribeRightbarTabs = () => {}
-  /** @type {ReadonlyArray<{kind: string, entryId: string, providerId: string, title: string, icon: Function|null}>} */
-  let rightbarTools = Object.freeze([])
+  /**
+   * The native right bar, which owns its own state and snapshot fields
+   * (`pane-panel.js`). Created below, once `emit` exists, because the panel
+   * reports through the same publish path as everything else.
+   *
+   * @type {ReturnType<typeof createRightbar>|null}
+   */
+  let panel = null
   /**
    * How deep a controller-originated retain is. `uiSession` current
    * notifications that arrive from our own `mainView` retain must not route
@@ -347,57 +355,18 @@ function createPaneController(ctx, options = {}) {
     closeError: null,
   })
 
-  function readRightbarExpanded() {
-    try {
-      return rightbar?.isExpanded?.() === true
-    } catch {
-      return false
-    }
-  }
+  panel = createRightbar({ publish: (patch) => emit(patch ?? {}) })
 
-  /**
-   * The native right-bar guide: one icon per tool, in the registry's order.
-   * `title` is already localized by the tool's own package.
-   *
-   * @returns {Array<{kind: string, entryId: string, providerId: string, title: string, icon: Function|null}>}
-   */
-  function readRightbarTools() {
-    if (rightbarTabs == null || typeof rightbarTabs.guide !== 'function') return []
-    let entries
-    try {
-      entries = rightbarTabs.guide()
-    } catch {
-      return []
-    }
-    if (!Array.isArray(entries)) return []
-    const tools = []
-    for (const entry of entries) {
-      if (entry == null || typeof entry.kind !== 'string' || entry.kind === '') continue
-      let title = entry.kind
-      try {
-        const named = typeof entry.title === 'function' ? entry.title() : entry.kind
-        if (typeof named === 'string' && named !== '') title = named
-      } catch {
-        title = entry.kind
-      }
-      tools.push({
-        kind: entry.kind,
-        entryId: typeof entry.id === 'string' && entry.id !== '' ? entry.id : entry.kind,
-        providerId: typeof entry.providerId === 'string' ? entry.providerId : '',
-        title,
-        icon: typeof entry.icon === 'function' ? entry.icon : null,
-      })
-    }
-    return tools
+  /** The fields a holder owns, merged into every publish after the caller's patch. */
+  function holderPatch() {
+    return panel === null ? {} : panel.snapshotPatch()
   }
 
   function emit(patch) {
     const next = {
       ...snapshot,
       ...patch,
-      rightbarAvailable: rightbar !== null,
-      rightbarExpanded: readRightbarExpanded(),
-      rightbarTools,
+      ...holderPatch(),
     }
     const changed = Object.keys(next).some((key) => next[key] !== snapshot[key])
     if (!changed) return
@@ -2070,79 +2039,10 @@ function createPaneController(ctx, options = {}) {
       return apply(layoutTree.resize(book.activeLayout(), path, ratio))
     },
     /**
-     * Remember `ctx.sidebarRight`. A missing service hides the strip button.
-     * The returned state is whatever `isExpanded()` says right now; the service
-     * has no expanded subscription, so later emits re-read it.
-     *
-     * @param {any} service
+     * The native right bar: `attach` / `attachTabs` / `toggle` / `openTool`
+     * plus the three snapshot fields it owns. See `pane-panel.js`.
      */
-    attachRightbar(service) {
-      rightbar = service ?? null
-      emit({})
-    },
-    /**
-     * Flip the native right bar. False when the service is missing or the call throws.
-     *
-     * @returns {boolean}
-     */
-    toggleRightbar() {
-      if (rightbar === null) return false
-      try {
-        rightbar.toggleExpanded()
-      } catch (error) {
-        emit({ error: messageOf(error) })
-        return false
-      }
-      emit({})
-      return true
-    },
-    /**
-     * Remember `ctx.sidebarRightTabs`. Its `guide()` entries are the native
-     * tool icons (files, browser, terminal, …). A missing registry leaves the
-     * expand icon as the only right-bar control.
-     *
-     * @param {any} service
-     */
-    attachRightbarTabs(service) {
-      unsubscribeRightbarTabs()
-      unsubscribeRightbarTabs = () => {}
-      rightbarTabs = service ?? null
-      if (rightbarTabs != null && typeof rightbarTabs.subscribe === 'function') {
-        try {
-          const unsubscribe = rightbarTabs.subscribe(() => {
-            rightbarTools = Object.freeze(readRightbarTools())
-            emit({})
-          })
-          if (typeof unsubscribe === 'function') unsubscribeRightbarTabs = unsubscribe
-        } catch (error) {
-          emit({ error: messageOf(error) })
-        }
-      }
-      rightbarTools = Object.freeze(readRightbarTools())
-      emit({})
-    },
-    /**
-     * Open one native right-bar tool. `openTab` expands the bar and focuses
-     * that page, which is what its guide icon does.
-     *
-     * @param {string} kind
-     * @returns {boolean}
-     */
-    openRightbarTool(kind) {
-      if (rightbar === null || typeof kind !== 'string' || kind === '') return false
-      if (typeof rightbar.openTab !== 'function') return false
-      try {
-        const result = rightbar.openTab(kind)
-        if (result != null && typeof result.then === 'function') {
-          result.catch((error) => emit({ error: messageOf(error) }))
-        }
-      } catch (error) {
-        emit({ error: messageOf(error) })
-        return false
-      }
-      emit({})
-      return true
-    },
+    panel,
     /**
      * Follow `uiSession.adapter.current` so a native current change lands in
      * the focused pane. Our own `mainView` retains notify this store too;
@@ -2181,11 +2081,7 @@ function createPaneController(ctx, options = {}) {
       unsubscribeCurrent()
       unsubscribeCurrent = () => {}
       sessionCurrent = null
-      unsubscribeRightbarTabs()
-      unsubscribeRightbarTabs = () => {}
-      rightbarTabs = null
-      rightbarTools = Object.freeze([])
-      rightbar = null
+      panel.dispose()
       unsubscribeEntryError()
       unsubscribeViewAvailability()
       unsubscribeCatalog()
@@ -2193,12 +2089,10 @@ function createPaneController(ctx, options = {}) {
       book.clear()
       snapshot = Object.freeze({
         ...snapshot,
+        ...holderPatch(),
         active: false,
         sessionId: null,
         error: null,
-        rightbarAvailable: false,
-        rightbarExpanded: false,
-        rightbarTools: Object.freeze([]),
         workspaceId: null,
         layouts: {},
         root: null,

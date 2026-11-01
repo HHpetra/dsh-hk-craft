@@ -507,16 +507,15 @@ function stripWithRightbar({
   available,
   expanded,
   tools = [],
-  toggleRightbar = () => {},
-  openRightbarTool = () => {},
+  toggle = () => {},
+  openTool = () => {},
 }) {
   const controller = {
     closePane: () => {},
     newPane: () => {},
     focusPane: () => {},
     swapPanes: () => {},
-    toggleRightbar,
-    openRightbarTool,
+    panel: { toggle, openTool },
   }
   const state = {
     root: { kind: 'leaf', paneId: 'p1' },
@@ -548,7 +547,7 @@ test('the strip renders one rightbar toggle and clicks it through the controller
     const { button } = stripWithRightbar({
       available: true,
       expanded: false,
-      toggleRightbar: () => {
+      toggle: () => {
         calls.push('toggle')
       },
     })
@@ -586,7 +585,7 @@ test('the strip opens each native right-bar tool from its icon', () => {
         { kind: 'files', entryId: 'workspace', providerId: 'files', title: '文件', icon: FilesIcon },
         { kind: 'terminal', entryId: 'new', providerId: 'terminal', title: '终端', icon: TerminalIcon },
       ],
-      openRightbarTool: (kind) => {
+      openTool: (kind) => {
         calls.push(kind)
       },
     })
