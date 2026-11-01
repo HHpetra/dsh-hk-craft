@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "description": "dsh-hk-craft — DeepSeek Harness native plugin. Installs into an existing dsh profile; no separate launcher, home, profile, or port.",
   "main": "src/index.js",
   "exports": {
@@ -15,7 +16,8 @@
     "src",
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
