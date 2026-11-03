@@ -75,7 +75,7 @@ function paneIdForStripIndex(layout, index) {
  *
  * Precedence mirrors the sidebar lights (red > yellow > green): waiting for the
  * user beats a running turn. dsh's client status has no failure bit (see
- * `workspace-status.js` and `doc/upstream-contracts.md#session-summary-fields`),
+ * `workspace-status.js` and `docs/upstream-contracts.md#session-summary-fields`),
  * so there is no error state.
  *
  * @param {{running?: boolean, waiting?: boolean}|undefined} signal the pane session's `catalog.signal`

@@ -8,7 +8,7 @@
  * reaches the model. `/resume` is a `popupSelect`; the others are `action`s.
  * None of them calls `command.execute`, so nothing is appended to the session
  * log. The dsh contracts are recorded in
- * `doc/upstream-contracts.md`.
+ * `docs/upstream-contracts.md`.
  *
  * The descriptors only touch the adapter (`dsh-sessions.js`) and the pure list
  * builder (`resume-list.js`), which keeps this file about wiring, not data.
@@ -62,7 +62,7 @@ function focusedPane(panes) {
  * `uiWorkspace.startSession` path reuses the workspace's blank session and
  * then reveals it, which moves the shell's current session. `sessions.create`
  * always creates a new session. See
- * `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
+ * `docs/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
  *
  * @param {object} deps
  * @param {'clear'|'new'} [deps.name] registration name
@@ -330,7 +330,7 @@ function whenRejected(attempt, onError) {
  * `{ allowMigration: false }`, and does not navigate. In the pane workspace the
  * host's `onCreated` opens the copy beside the focused pane; a refused new pane
  * leaves the copy in the session list. See
- * `doc/upstream-contracts.md#forking-a-session-uiworkspaceforksession`.
+ * `docs/upstream-contracts.md#forking-a-session-uiworkspaceforksession`.
  *
  * `catalogOf` is a getter, not a catalog: `available` runs long after
  * registration, so it must read the current snapshot.

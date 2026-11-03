@@ -113,7 +113,7 @@ function createModeRosterLoader(ctx) {
  * The subagent seat's on-open projection refresh.
  *
  * `refreshProjections(parentSessionId)` is a public `sessions` method (see
- * `doc/upstream-contracts.md#subagent-catalog-direct-children`), but reading it
+ * `docs/upstream-contracts.md#subagent-catalog-direct-children`), but reading it
  * through `ctx.get` keeps the seat a pure consumer: a shell that ever ships
  * without the service leaves the refresh a no-op instead of failing to mount.
  *

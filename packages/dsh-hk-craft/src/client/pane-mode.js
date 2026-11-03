@@ -5,7 +5,7 @@
  *
  * A conversation records the Agent preset it was composed with on its session
  * summary row (`projectionValues.agentPreset`, the same value the native
- * session header reads — `doc/upstream-contracts.md#session-preset-and-optional-roster`).
+ * session header reads — `docs/upstream-contracts.md#session-preset-and-optional-roster`).
  * That id is all a pane can know: dsh fixes the composition after the first
  * turn, so this module resolves copy only; it never offers a switch.
  *

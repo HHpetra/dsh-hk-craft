@@ -9,22 +9,22 @@
  * The shapes documented below are the *actions* and the history window, which no
  * read model can answer. Verified against the 0.2.0-rc.2 bundles; the pinned
  * train is 0.2.1-rc.5 (`deps/VERSIONS.md`), and the durable record is
- * `doc/upstream-contracts.md`:
+ * `docs/upstream-contracts.md`:
  *
  * - `ClientSessions.using(target, {source, signal}, operate)` for a brief
- *   retained read — `doc/upstream-contracts.md#session-summary-fields`.
+ *   retained read — `docs/upstream-contracts.md#session-summary-fields`.
  * - First user prompt: there is no first-prompt projection on the wire (the
  *   list schema only carries `title` and `sessionListMetadata`), so it is read
  *   from the session's event window: `binding.session.eventSource.getSnapshot()
  *   .entries`, `session.loadOlder()`, entries shaped `{event}`, `user/message`
  *   with `data.source.kind === "user"` and text blocks (same filter as dsh's
- *   session-title derivation) — `doc/upstream-contracts.md#session-summary-fields`.
+ *   session-title derivation) — `docs/upstream-contracts.md#session-summary-fields`.
  * - Opening a session: `uiWorkspace.openSession(sessionId)` →
  *   `replaceMain(…, "reveal")` —
- *   `doc/upstream-contracts.md#native-start-session-reveal`.
+ *   `docs/upstream-contracts.md#native-start-session-reveal`.
  * - New session in the current workspace: `uiWorkspace.startSession(workspaceId)`
  *   → `connectBlank` reuses an existing blank, otherwise creates one, then
- *   reveals it — `doc/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
+ *   reveals it — `docs/upstream-contracts.md#creating-a-session-without-leaving-the-panel`.
  * - A durable title is `title`; `displayTitle` falls back to the cwd basename
  *   and then the raw id, so a "missing title" decision must read `title`.
  */

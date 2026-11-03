@@ -6,7 +6,7 @@
  * holders that sit beside it (ADR-0017).
  *
  * Every dsh assumption this plugin makes about mounting a Session into the
- * central `main` area is recorded in `doc/upstream-contracts.md` (read against
+ * central `main` area is recorded in `docs/upstream-contracts.md` (read against
  * the 0.2.0-rc.2 bundles; the `conversation.content` occurrence contract was
  * re-checked on the pinned 0.2.1-rc.5 train). The parts relevant here:
  *
@@ -71,7 +71,7 @@ const MAIN_SOURCE = 'mainView'
  *
  * `ctx.slots.snapshot(root)` accepts `factory:<name>` and returns an array of
  * composition trees, or an empty array when the root is absent
- * (`doc/upstream-contracts.md#sessionprovider-and-conversationcontent`). An
+ * (`docs/upstream-contracts.md#sessionprovider-and-conversationcontent`). An
  * older or different shell may not expose `snapshot`; in that case the pane
  * still mounts optimistically and relies on the FactoryOutlet fallback.
  *
@@ -103,7 +103,7 @@ function probeConversationContent(slots) {
 /**
  * The native Conversation's phase derivation, kept pure so the pane can pass
  * the same props the official main panel passes to `conversation.content`
- * (`doc/upstream-contracts.md#sessionprovider-and-conversationcontent`).
+ * (`docs/upstream-contracts.md#sessionprovider-and-conversationcontent`).
  *
  * `conversation` is optional: it is ui-conversation's own standard hook and a
  * pane is not one of its children, so the pane only has the Session summary.
@@ -438,7 +438,7 @@ function createPaneController(ctx, options = {}) {
 
   function watchReference(reference) {
     // The reference starts opening asynchronously; surface a failed open the
-    // same way the right sidebar does (see `doc/upstream-contracts.md`
+    // same way the right sidebar does (see `docs/upstream-contracts.md`
     // `#retention-sources-and-the-single-mainview-derivation`).
     const ready = reference?.ready
     if (ready !== undefined && typeof ready.catch === 'function') {

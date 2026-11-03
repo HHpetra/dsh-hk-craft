@@ -5,7 +5,7 @@
  *
  * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
  * (`deps/VERSIONS.md`). Durable record:
- * `doc/upstream-contracts.md#conversation-view-switch`.
+ * `docs/upstream-contracts.md#conversation-view-switch`.
  *
  * - `uiConversation.binding(sessionId)` resolves the stable per-session binding
  *   and throws for an unknown or inactive session.
@@ -18,7 +18,7 @@
  * - The trajectory View is gated by
  *   `ctx.configForms.developerTools.enabled.getSnapshot()`; while it is false
  *   ui-conversation skips that View entirely
- *   (`doc/upstream-contracts.md#trajectory-gate-developertools-enabled`).
+ *   (`docs/upstream-contracts.md#trajectory-gate-developertools-enabled`).
  *   `DeveloperToolsPreference` reads `value?.enabled ?? false`, so the answer is
  *   false until the host value arrives.
  *

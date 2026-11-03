@@ -4,7 +4,7 @@
  * The read model over the shell's two list snapshots and its runtime status map.
  *
  * dsh publishes three raw shapes this plugin has to read (`GLOSSARY.md`:
- * 清单快照 / catalog; the durable record is `doc/upstream-contracts.md`):
+ * 清单快照 / catalog; the durable record is `docs/upstream-contracts.md`):
  *
  * - `sessions.list` → `{ ids, byId, phase }`, one row per session
  *   (`{ id, title, running, blank, updatedAt, retainedBy, projectionValues }`).
@@ -321,7 +321,7 @@ function buildCatalog(input) {
    * The session the shell shows in its main view: the first row retaining
    * `mainView`. dsh derives "current" from exactly this scan, so reading the
    * retention here is the contract, not an implementation detail
-   * (`doc/upstream-contracts.md#retention-sources-and-the-single-mainview-derivation`).
+   * (`docs/upstream-contracts.md#retention-sources-and-the-single-mainview-derivation`).
    *
    * @returns {string|undefined}
    */

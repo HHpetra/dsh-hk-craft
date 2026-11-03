@@ -11,7 +11,7 @@
  * dsh's `workspaces.insertBefore` is the writer; the component never keeps an
  * order of its own.
  *
- * The host order is `workspaces.list().items` (`doc/upstream-contracts.md#
+ * The host order is `workspaces.list().items` (`docs/upstream-contracts.md#
  * workspace-display-order`). A drop is described by the row under the pointer
  * and the half of it the pointer is in: the upper half inserts the source
  * before that row, the lower half before the row after it, which makes the

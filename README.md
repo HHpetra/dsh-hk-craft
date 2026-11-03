@@ -6,7 +6,7 @@ DeepSeek Harness（dsh）的**原生插件**。以一个可安装组合包（bun
 
 ## 状态
 
-**已交付能力**：多会话分屏 + 侧栏精简，并补齐侧栏工作区管理（五态灯、删除确认、拖动排序）、HK Craft 设置页、窗格头部工具栏与桌面通知。关键决策见 [ADR-0005 ~ 0015](ai-docs/ADR/decisions.md)，上游契约清单见 [`doc/upstream-contracts.md`](doc/upstream-contracts.md)。
+**已交付能力**：多会话分屏 + 侧栏精简，并补齐侧栏工作区管理（五态灯、删除确认、拖动排序）、HK Craft 设置页、窗格头部工具栏与桌面通知。关键决策见 [ADR-0005 ~ 0015](ai-docs/ADR/decisions.md)，上游契约清单见 [`docs/upstream-contracts.md`](docs/upstream-contracts.md)。
 
 - **多会话分屏**：插件加载后默认进入分屏。每个窗格承载一个会话；`+`、`Ctrl+Shift+E` 和 `/resume` 的 Ctrl+Enter 在焦点窗格右侧插入新窗格，并按当前窗格数均分这一排的宽度，不重排顺序。没有焦点窗格时 `Ctrl+Shift+E` 不产生分栏。每个工作区默认最多 4 格，可在 HK Craft 设置页改成任意格数，填 `0` 表示不限制；已经开始创建的分栏不会因为中途把上限调低而被取消。窗格数不等于会话数。每个窗格头部显示自己的标题、当前模式、子代理查看、视图切换与关闭，标签条只保留标签和紧贴的 `+`。
 - **TUI 命令切换对话**：`/resume`、`/new`、`/clear`、`/fork`、`/trace` 与 `Ctrl+N`；命令只在客户端执行，不发给模型、不写入会话日志。`/resume` 可搜索当前工作区的历史会话，`Enter` 替换焦点窗格，`Ctrl+Enter` 在右侧新格打开。完整用法见 [插件 README](packages/dsh-hk-craft/README.md)。
@@ -74,7 +74,7 @@ pnpm check               # 校验 manifest / patch / 入口与已构建 bundle �
 
 ## 延伸阅读
 
-- [`doc/README.md`](doc/README.md) — 架构说明
+- [`docs/README.md`](docs/README.md) — 架构说明
 - [`ai-docs/ADR/decisions.md`](ai-docs/ADR/decisions.md) — 架构决策记录
 - [`AGENTS.md`](AGENTS.md) — 协作者与编码 Agent 的约定
 - [`START.md`](START.md) — 新项目启动与分轮设计流程

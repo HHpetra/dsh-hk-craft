@@ -138,3 +138,11 @@ pnpm test      # 单元测试
 # 卸载：dsh → Plugins → Installed plugins → dsh-hk-craft
 # 通知：设置页 →「发送测试通知」，确认真机 Windows toast
 ```
+
+## 8. 同目录其他文档
+
+| 路径 | 用途 |
+| :--- | :--- |
+| `adr/` | 架构决策记录：一决策一文件，编号递增 |
+| `agents/` | Agent 消费的配置：`domain.md` / `issue-tracker.md` / `triage-labels.md` |
+| `upstream-contracts.md` | dsh 上游契约清单：每条记录形状、为什么依赖与复验方式 |

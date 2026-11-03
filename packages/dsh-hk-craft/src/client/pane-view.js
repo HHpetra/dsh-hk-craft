@@ -2,7 +2,7 @@
 
 /**
  * Thin React shell around the pane controller. All dsh assumptions live in
- * `dsh-pane-host.js` (and are recorded in `doc/upstream-contracts.md`); this
+ * `dsh-pane-host.js` (and are recorded in `docs/upstream-contracts.md`); this
  * file only turns controller state into elements.
  *
  * Layout rendering keeps every pane mounted: the pure geometry projection
@@ -1313,7 +1313,7 @@ function paneViewOfSession(state, sessionId) {
  * The pane's replacement for the conversation factory's `views` local slot.
  *
  * `conversation.content` lets an embedded occurrence replace `views` (see
- * `doc/upstream-contracts.md#embedded-views-local-slot-and-view-selection`). The
+ * `docs/upstream-contracts.md#embedded-views-local-slot-and-view-selection`). The
  * default renders `conversation.session`, whose View comes from ui-conversation's
  * per-session store; the pane cannot write that store, so it would stay on chat
  * forever. Rendering `conversation.session` with the layout's View passed as the

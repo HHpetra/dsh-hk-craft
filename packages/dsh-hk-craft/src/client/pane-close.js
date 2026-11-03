@@ -6,7 +6,7 @@
  * Extracted from `dsh-pane-host.js` (which keeps the composition) so the
  * "closing a pane stops the session" behaviour is one reviewable unit. dsh
  * assumptions and their verification live in
- * `doc/upstream-contracts.md#interrupting-a-running-turn`.
+ * `docs/upstream-contracts.md#interrupting-a-running-turn`.
  *
  * `interruptSession` uses the public route the shell's own stop button uses.
  * Releasing a Session reference is *not* a substitute: it only tears down the

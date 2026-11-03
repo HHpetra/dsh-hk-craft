@@ -291,7 +291,7 @@ macOS 上实际按键为 `Cmd`，界面提示统一显示 `Ctrl`。所有快捷�
 | 收不到桌面通知 | 检查总开关和五类开关、系统通知权限、Windows 通知设置；用设置页的“发送测试通知”验证。若勾选了“前台可见时不再通知”，正在看的对话不会弹。 |
 | 新终端默认还是 `cmd` | 系统里没有发现 PowerShell 7 / Windows PowerShell，或之前已在终端菜单里手动选过 shell。用终端卡片的 shell 菜单选择；插件只应用一次默认值。 |
 | 布局错乱或想重置分屏 | 在开发者工具的 Local Storage 中删除对应工作区的 `dsh.hkcraft.layout.v1.<workspaceId>`，然后重启。只丢布局，不删会话。 |
-| 升级 dsh 后功能异常 | 确认新版本仍在 `engines.dsh` 范围内；从源码重新执行 `pnpm build`、`pnpm check`、`pnpm test`，并按 `doc/upstream-contracts.md` 复验。 |
+| 升级 dsh 后功能异常 | 确认新版本仍在 `engines.dsh` 范围内；从源码重新执行 `pnpm build`、`pnpm check`、`pnpm test`，并按 `docs/upstream-contracts.md` 复验。 |
 
 ## 兼容性与降级
 
@@ -321,7 +321,7 @@ dsh 的可选能力缺失时，插件安静降级而不是让主区域崩溃：
 - 精简侧栏只列已注册工作区，不显示 dsh 的“未分组”会话；删除工作区后的历史需要回到原生侧栏查看。
 - 布局、设置和通知偏好只存在当前浏览器 origin，不跨设备同步；清掉浏览器数据会丢失布局（会话和历史不受影响）。
 - 桌面通知、Agent 预设名册、子代理目录、右栏等能力在对应 dsh 服务缺失时安静降级，不阻塞分屏。
-- 上游契约集中在仓库的 `doc/upstream-contracts.md`，升级 dsh 时按该清单复验。
+- 上游契约集中在仓库的 `docs/upstream-contracts.md`，升级 dsh 时按该清单复验。
 
 ## 开发
 
@@ -346,7 +346,7 @@ pnpm test      # 包内单元测试
 | `src/client/` | 浏览器侧：分屏、标签条、工作区、命令、设置页与通知 |
 | `scripts/build-client.mjs` | 客户端 bundle 构建脚本 |
 
-仓库级架构、ADR 与领域术语见 `doc/README.md`、`ai-docs/ADR/decisions.md` 和 `GLOSSARY.md`。
+仓库级架构、ADR 与领域术语见 `docs/README.md`、`ai-docs/ADR/decisions.md` 和 `GLOSSARY.md`。
 
 ## 许可
 

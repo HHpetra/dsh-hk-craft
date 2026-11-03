@@ -7,7 +7,7 @@
  * conversation's direct-child catalog through the read model (`catalog.js`:
  * `projectionsOf(id).subagents`, from
  * `projectionsBySession[sessionId].values.subagentCatalog` — see
- * `doc/upstream-contracts.md#subagent-catalog-direct-children`), and hands plain
+ * `docs/upstream-contracts.md#subagent-catalog-direct-children`), and hands plain
  * rows to the dumb React seat (`pane-subagents-view.js`) and its `openInNewPane`
  * pick.
  *

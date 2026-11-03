@@ -3,7 +3,7 @@
 /**
  * The adapter is where every dsh assumption lives, so its test doubles are the
  * shell's public client services — not internals. Each fake mirrors a contract
- * recorded in `doc/upstream-contracts.md`.
+ * recorded in `docs/upstream-contracts.md`.
  */
 
 const test = require('node:test')

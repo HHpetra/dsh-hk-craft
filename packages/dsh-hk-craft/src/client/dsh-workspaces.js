@@ -11,11 +11,11 @@
  *
  * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
  * (`deps/VERSIONS.md`). The durable contract record lives in
- * `doc/upstream-contracts.md`; this module is the one place that adapts it:
+ * `docs/upstream-contracts.md`; this module is the one place that adapts it:
  *
  * - The slot: `sidebar.workspaces` is a `single` root slot rendered by the
  *   sidebar shell as `renderSlot('sidebar.workspaces', { wide, expandSidebar })`
- *   (`doc/upstream-contracts.md#sidebarworkspaces-slot`). Its shipped occupant
+ *   (`docs/upstream-contracts.md#sidebarworkspaces-slot`). Its shipped occupant
  *   is ui-workspace's `WorkspaceBrowser`, registered with no `priority`, i.e.
  *   0; the slot core sorts entries ascending by `priority ?? 0` and renders the
  *   first, so a negative priority shadows it.
@@ -26,24 +26,24 @@
  *   (`startSession(workspaceId, { clearPreviousDraft: false })`) remains the
  *   fallback when the workspace has no revealable conversation, and the path
  *   the add flow uses for a workspace that was just created
- *   (`doc/upstream-contracts.md#native-start-session-reveal`).
+ *   (`docs/upstream-contracts.md#native-start-session-reveal`).
  * - Adding a workspace: dsh's own add flow picks a directory, calls
  *   `workspaces.create({ path })` and then selects the returned workspace. The
  *   picking half is either the Electron preload bridge
  *   `globalThis.__DSH_DIRECTORY_PICKER__.pick()` or the public service
  *   `uiWorkspace.pickDirectory()`; both resolve a path or `null` when the user
- *   cancels (`doc/upstream-contracts.md#directory-picker`).
+ *   cancels (`docs/upstream-contracts.md#directory-picker`).
  * - "Enabled" (ever opened in split) is the pane controller's answer, from its
  *   loaded layouts plus the workspace layout key's existence. Opening a
  *   workspace in the native view does not count, because it never writes a pane
- *   layout key (`doc/upstream-contracts.md#workspace-enablement-ever-opened-in-split`).
+ *   layout key (`docs/upstream-contracts.md#workspace-enablement-ever-opened-in-split`).
  * - The automatic first-use workspace title is the literal `default-workspace`,
  *   localized at display time (`workspace-status.js:displayWorkspaceName`).
  *
  * Red means "waiting for you" only: dsh exposes no cheap "this session's last
  * turn failed" bit, and reading one would mean opening per-session history,
  * which the sidebar must not do. See
- * `doc/upstream-contracts.md#session-summary-fields`.
+ * `docs/upstream-contracts.md#session-summary-fields`.
  */
 
 const { openCatalog, readCatalogs } = require('./catalog.js')
@@ -273,7 +273,7 @@ function createSectionActions(ctx, options = {}) {
      * The host is the order's only source of truth: the `workspaces` client
      * model installs the optimistic order itself, reconciles it with the
      * returned complete order, and on failure restores the committed order
-     * before rejecting (`doc/upstream-contracts.md#workspace-display-order`).
+     * before rejecting (`docs/upstream-contracts.md#workspace-display-order`).
      * This adapter therefore writes nothing locally and lets the rejection
      * reach the component, which only reports it.
      *
@@ -311,7 +311,7 @@ function createSectionActions(ctx, options = {}) {
      *
      * Deleting the registration never deletes the directory or the sessions and
      * never interrupts a running turn (see
-     * `doc/upstream-contracts.md#deleting-a-workspace`).
+     * `docs/upstream-contracts.md#deleting-a-workspace`).
      *
      * @param {string} workspaceId
      * @returns {Promise<void>} rejects with the shell's error when the host

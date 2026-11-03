@@ -4,14 +4,14 @@
  * The host's workspace display order and the neighbour rules built on it.
  *
  * `workspaces.list().items` is already in display order and is the only order the
- * plugin renders (`doc/upstream-contracts.md#workspace-display-order`); the
+ * plugin renders (`docs/upstream-contracts.md#workspace-display-order`); the
  * `catalog` read model preserves it. Three callers need the same reads:
  *
  * - the sidebar resolves a drop anchor, and the focus target after a delete,
  *   against this order;
  * - the adapter captures the pre-delete order, because a successful delete drops
  *   the row from `workspaces.list` immediately
- *   (`doc/upstream-contracts.md#deleting-a-workspace`);
+ *   (`docs/upstream-contracts.md#deleting-a-workspace`);
  * - the pane controller hands the visible view to the deleted workspace's
  *   next-or-previous neighbour.
  *

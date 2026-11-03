@@ -4,7 +4,7 @@
  * Host workspace order and the neighbour rules built on it.
  *
  * `workspaces.list().items` is already in display order and is the only order the
- * plugin renders (`doc/upstream-contracts.md#workspace-display-order`); the
+ * plugin renders (`docs/upstream-contracts.md#workspace-display-order`); the
  * catalog preserves it. The sidebar, the adapter and the pane controller all read
  * that order: the sidebar resolves a drop and the focus target after a delete,
  * the adapter captures the pre-delete order, and the controller hands the view to

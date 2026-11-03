@@ -120,7 +120,7 @@
 
 - 每次 `+` 都会丢弃用户手动拖出的比例；这是「按数量均分」的直接代价。关闭窗格仍沿用“兄弟子树提升”，不会重新均分，因此 `+` 与关闭后的宽度可以不同。
 - 窗格头部的按钮数量固定为两个；将来若要恢复纵向分割，需要新的手势/菜单和明确的迁移策略，而不是把 `⋯` 菜单原样加回来。
-- 视图渲染由**窗格布局记录**驱动：窗格的 embedded occurrence 覆盖 `conversation.content` 的 `views` 本地插槽，把布局里的视图作为 `conversation.session` 的 `view` 属性传入，不再写 dsh 的 per-session View store。`binding.activate` 仍用于预热数据目标；该接缝记录在 `doc/upstream-contracts.md`。
+- 视图渲染由**窗格布局记录**驱动：窗格的 embedded occurrence 覆盖 `conversation.content` 的 `views` 本地插槽，把布局里的视图作为 `conversation.session` 的 `view` 属性传入，不再写 dsh 的 per-session View store。`binding.activate` 仍用于预热数据目标；该接缝记录在 `docs/upstream-contracts.md`。
 - 布局仍是纯数据转换（`layout-tree.js` 的 `tile`），不涉及 dsh 上游的 host 契约。
 
 ---
@@ -143,7 +143,7 @@
    - 标签条分三层：外层条、可滚动视口（`tablist` + 紧贴最后标签的 `+`）、视口之外不参与滚动的右侧操作组。`+` 不再右对齐，标签先截断，右侧组不收缩。
    - 右侧原生组按原生头部的相对顺序提供**只读当前模式**与**子代理查看**；两者共用右侧组，为以后的原生工具预留位置。
    - **本版不提供“打开右侧边栏”**：上游 `rightbar` 只在 `activePanelId === null` 时可见，分屏面板激活时原生右侧栏被隐藏且公开服务拿不到“当前会话”，没有可靠的打开路径。以后若上游提供接缝，再单独立项。
-4. **上游契约与文档落点**：新增能力（`workspaces.delete`、`workspaces.insertBefore`、`settings.section`、Agent 预设名册、子代理目录）记录在 `doc/upstream-contracts.md`；插件内部的“启用”与四态灯定义记录在 `doc/README.md` 与本 ADR，不写进上游契约页。
+4. **上游契约与文档落点**：新增能力（`workspaces.delete`、`workspaces.insertBefore`、`settings.section`、Agent 预设名册、子代理目录）记录在 `docs/upstream-contracts.md`；插件内部的“启用”与四态灯定义记录在 `docs/README.md` 与本 ADR，不写进上游契约页。
 
 **后果 / 约束**：
 
@@ -152,7 +152,7 @@
 - 删除不中断与“关闭窗格会中断当前回合”刻意不同，确认弹窗必须写清边界。
 - 侧栏只渲染工作区行，不显示 dsh 的“未分组”，因此删除后会话在原生侧栏可见、在本插件侧栏不可见。
 - 本版排序只做指针拖动（无键盘替代）；子代理只列直接子会话，不做嵌套、悬停展开、失败重试或父级面包屑。
-- 右侧工具栏与设置页依赖上游槽位；升级 dsh 时按 `doc/upstream-contracts.md` 复验，缺少可选服务时安静降级。
+- 右侧工具栏与设置页依赖上游槽位；升级 dsh 时按 `docs/upstream-contracts.md` 复验，缺少可选服务时安静降级。
 
 ---
 
@@ -160,7 +160,7 @@
 
 **背景**：ADR-0007 的四态灯把“绿”定义为“至少一段对话结束且当前空闲”。重启 dsh 后，只要工作区里有过对话、当前没在跑，就全部变绿，无法区分“一直空闲”和“你离开时有对话刚跑完、还没看”。同时，ADR-0007 把“当前模式”和“子代理查看”放在标签条右侧组，但用户希望它们在每个对话窗格自己的顶部工具栏里，这样并排时每个窗格都能看到自己的模式与子代理。
 
-上游 `sessionStatus` 提供了区分“空闲”和“刚结束未读”的机制：`completionUnread` 在非当前会话由运行转为空闲时置位，在该会话成为当前会话（被聚焦）或再次开始运行时清除（`doc/upstream-contracts.md#completion-unread`）。
+上游 `sessionStatus` 提供了区分“空闲”和“刚结束未读”的机制：`completionUnread` 在非当前会话由运行转为空闲时置位，在该会话成为当前会话（被聚焦）或再次开始运行时清除（`docs/upstream-contracts.md#completion-unread`）。
 
 **取代关系**：本 ADR 取代 **ADR-0007 决策 1** 的四态灯定义（增加空闲态，绿灯改为未读完成）和 **ADR-0007 决策 3** 的标签条右侧组位置；同时取代 **ADR-0006 决策 1** 中“窗格头部只保留视图切换与关闭两个动作”的约束。ADR-0006 的其余决策（`+` 按会话数量均分、暂停纵向分割等）继续有效。
 
@@ -178,7 +178,7 @@
    - 每个窗格头部显示自己的标题、只读当前模式、子代理查看、视图切换与关闭；两个控件读该窗格的 `sessionId`，不是焦点窗格。
    - 控件各自按需隐藏（无预设、无直接子会话时不占位）；宽度上限 140 / 160 px，标题先截断。
    - 标签条只保留标签与紧贴最后标签的 `+`；删除标签条右侧组及其 seat 注册机制（`pane-toolbar.js` 不再存在）。
-4. **文档落点**：`completionUnread` 的置位/清除规则记录在 `doc/upstream-contracts.md`；五态灯与窗格头部工具栏的 UI 定义记录在 `doc/README.md` 与本 ADR；术语同步到 `GLOSSARY.md`。
+4. **文档落点**：`completionUnread` 的置位/清除规则记录在 `docs/upstream-contracts.md`；五态灯与窗格头部工具栏的 UI 定义记录在 `docs/README.md` 与本 ADR；术语同步到 `GLOSSARY.md`。
 
 **后果 / 约束**：
 
@@ -369,7 +369,7 @@
 **后果 / 约束**：
 
 - 两处可见行为变化：两次清单都未就绪时，删除工作区的二次确认里「N 个正在运行」显示 0（安全方向）；恢复布局时，只存在于别的 `sessionIds` 里的会话会被修剪（与 ADR-0005「树里只装本工作区的会话」一致）。
-- `workspace.createdAt` 被显式承认为契约字段，由 catalog 解析成数字后再参与冷启动兜底（见 `doc/upstream-contracts.md#workspace-catalog`）。
+- `workspace.createdAt` 被显式承认为契约字段，由 catalog 解析成数字后再参与冷启动兜底（见 `docs/upstream-contracts.md#workspace-catalog`）。
 - 接口按需增长：只有出现真实调用方才加查询（例如子代理会话的 `subagent` 位、终端默认 shell 用的 `sessionIds()`），不为对称预先造接口。
 - 新增读取路径时**先问 catalog**；需要**动作**或**订阅**时才另开 module。跨工作区同屏、纵向分割等 ADR-0005 / 0006 / 0009 的约束不因本决策改变。
 ---

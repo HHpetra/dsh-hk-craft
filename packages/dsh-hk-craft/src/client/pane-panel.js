@@ -9,7 +9,7 @@
  * ADR-0017, so the kernel no longer reads `rightbar*` while emitting: it merges
  * this module's `snapshotPatch()` into every published snapshot instead.
  *
- * Upstream shape (see `doc/upstream-contracts.md`):
+ * Upstream shape (see `docs/upstream-contracts.md`):
  * - `sidebarRight` needs `toggleExpanded()` and `isExpanded()`;
  * - `sidebarRightTabs` needs `guide()` and `subscribe()`;
  * - `sidebarRight.openTab(kind)` both expands the bar and focuses that page.

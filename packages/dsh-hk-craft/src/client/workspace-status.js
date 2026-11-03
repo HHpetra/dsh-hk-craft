@@ -29,7 +29,7 @@
  * There is no error light. dsh exposes no "this turn failed" bit in the client
  * status map or the session summary, and reading a failure would mean opening
  * every session's history — which the sidebar must not do. See
- * `doc/upstream-contracts.md#session-summary-fields`.
+ * `docs/upstream-contracts.md#session-summary-fields`.
  */
 
 /** @typedef {'gray' | 'idle' | 'green' | 'yellow' | 'red'} WorkspaceLight */
