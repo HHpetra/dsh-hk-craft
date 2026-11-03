@@ -220,9 +220,14 @@ function subscribeList(list, listener) {
  * Reference discipline (the part dsh observes):
  * - every loaded pane holds one `hkcraftPane` retention of its session;
  * - exactly one pane — the focused pane of the *active* workspace —
- *   additionally holds a `mainView` retention, because dsh derives "the current
- *   session" by scanning for it. A hidden workspace's panes keep their
- *   `hkcraftPane` retention only;
+ *   additionally holds a `mainView` retention. A hidden workspace's panes keep
+ *   their `hkcraftPane` retention only. `ui-workspace` also keeps a `mainView`
+ *   on the native selection, and `uiSession.current` sticks to whichever
+ *   session still has one, so the pane's retain alone does not move the right
+ *   bar. While split is active, `revealFocusedPane` calls
+ *   `uiWorkspace.openSession` for the focused pane so that native retain, and
+ *   therefore the right bar, names the pane. That follows the pane (ADR-0020);
+ *   it does not replace the pane with the previous current;
  * - a focus or workspace change releases the old `mainView` before acquiring
  *   the new one;
  * - closing a pane, replacing its session, hiding the panel or disposing all
@@ -349,6 +354,12 @@ function createPaneController(ctx, options = {}) {
    * again.
    */
   let routingDepth = 0
+  /**
+   * True while `revealFocusedPane` is inside `uiWorkspace.openSession`.
+   * That call notifies `uiSession` current, which would otherwise re-enter
+   * `syncCurrent` and try to move the pane we just revealed.
+   */
+  let revealing = false
   /** `uiSession.adapter.current`, once attached. */
   let sessionCurrent = null
   let unsubscribeCurrent = () => {}
@@ -402,6 +413,7 @@ function createPaneController(ctx, options = {}) {
     if (!changed) return
     snapshot = Object.freeze(next)
     for (const listener of [...listeners]) listener()
+    revealFocusedPane()
   }
 
   /** The snapshot fields that mirror the active layout tree. */
@@ -1254,6 +1266,44 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
+   * Point the shell's current session at the focused pane.
+   *
+   * The right bar reads that current, not the pane. `ui-workspace` keeps its
+   * own `mainView` on the native selection, so current stays there until
+   * `openSession` moves it. The changes-review tab then asks for the pane's
+   * event sequence under the native session and renders the missing copy.
+   * Calling this after the pane is already focused makes current follow the
+   * pane; `syncCurrent` still applies a later native current onto the pane.
+   *
+   * @returns {boolean} whether `openSession` was called
+   */
+  function revealFocusedPane() {
+    if (revealing || routingDepth > 0 || disposed || !snapshot.active) return false
+    if (sessionCurrent === null) return false
+    const focused = focusedPane()
+    const sessionId = focused?.sessionId
+    if (typeof sessionId !== 'string' || sessionId === '') return false
+    if (currentSessionId() === sessionId) return false
+    const open = uiWorkspaceFace()?.openSession
+    if (typeof open !== 'function') return false
+    revealing = true
+    try {
+      open(sessionId)
+    } catch (error) {
+      console.error('[dsh-hk-craft] failed to show the focused session in the right bar', error)
+      return false
+    } finally {
+      revealing = false
+    }
+    return true
+  }
+
+  function uiWorkspaceFace() {
+    if (typeof ctx?.get === 'function') return ctx.get('uiWorkspace')
+    return ctx?.uiWorkspace
+  }
+
+  /**
    * Land the shell's current session on the focused pane.
    *
    * A session that some pane already holds is focused, switching workspace
@@ -1265,10 +1315,11 @@ function createPaneController(ctx, options = {}) {
    * idle session. dsh keeps "current" on whichever session still has a
    * `mainView` retain, and the session restored at startup often still has
    * one. Following that id replaces the turn on screen with a conversation
-   * that already finished.
+   * that already finished. The right bar is pulled back onto that running
+   * pane instead.
    */
   function syncCurrent() {
-    if (routingDepth > 0 || disposed || !snapshot.active) return
+    if (revealing || routingDepth > 0 || disposed || !snapshot.active) return
     const sessionId = currentSessionId()
     if (sessionId === null) return
     const focused = focusedPane()
@@ -1278,6 +1329,9 @@ function createPaneController(ctx, options = {}) {
       isSessionRunning(focused.sessionId) &&
       !isSessionRunning(sessionId)
     ) {
+      // The running pane stays. Pull current back to it so the right bar does
+      // not stay on the idle session the shell still names.
+      revealFocusedPane()
       return
     }
     routingDepth += 1
@@ -1616,6 +1670,15 @@ function createPaneController(ctx, options = {}) {
         if (sessionCurrent === current) sessionCurrent = null
       }
       return unsubscribeCurrent
+    },
+    /**
+     * Make the shell current, and therefore the right bar, name the focused
+     * pane. A no-op when they already agree or no workspace service is attached.
+     *
+     * @returns {boolean}
+     */
+    revealFocusedSession() {
+      return revealFocusedPane()
     },
     /** Plugin unload: release everything. Unregistering the shadow hands `conversation` back. */
     dispose() {

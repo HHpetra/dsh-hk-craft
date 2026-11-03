@@ -275,6 +275,32 @@ test('keyboard focus inside a pane focuses that pane', () => {
   })
 })
 
+test('pressing an already focused pane reveals its session before the click', () => {
+  withFakeReact(fakeReact, () => {
+    const revealed = []
+    const focusedCalls = []
+    const controller = headerController()
+    controller.layout.focusPane = (paneId) => focusedCalls.push(paneId)
+    controller.revealFocusedSession = () => {
+      revealed.push('s1')
+      return true
+    }
+    const frame = PaneFrame({
+      controller,
+      pane: pane('p1', 's1'),
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      focused: true,
+      kit: { SessionProvider: () => null, renderSlot: () => null },
+      t: (key) => key,
+    })
+
+    frame.props.onPointerDownCapture()
+
+    assert.deepEqual(focusedCalls, [])
+    assert.deepEqual(revealed, ['s1'])
+  })
+})
+
 test('focusing a strip tab focuses that pane', () => {
   withFakeReact(fakeReact, () => {
     const calls = []

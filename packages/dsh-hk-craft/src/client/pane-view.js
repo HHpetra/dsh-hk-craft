@@ -465,6 +465,11 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
   const close = () => controller.close.request(pane.paneId)
   const focus = () => {
     if (!focused) controller.layout.focusPane(pane.paneId)
+    // Pointer and keyboard focus both land here before the card's click opens
+    // the review. Revealing now lets the right bar adopt this pane's session
+    // before that click reads it. Already-focused panes still reveal: the
+    // shell current can name another session without a layout change.
+    controller.revealFocusedSession?.()
   }
 
   const frameStyle = {

@@ -150,13 +150,41 @@ record of the view (ADR-0020). Releasing a reference tears down that client
 generation only; it never stops the host agent.
 
 **Why we rely on it:** every mounted pane holds one `hkcraftPane` reference;
-exactly one pane (the focused pane of the visible workspace) also holds the
-`mainView` reference, so dsh's single-value derivation keeps following the
-focused pane while the others keep streaming.
+the focused pane of the visible workspace also holds a `mainView` reference.
+That is not the only one. `ui-workspace`'s `replaceMain` keeps a `mainView`
+on the native selection for as long as that selection lasts, and
+`publishMain` sticks to the current id while `retainInfo(current).mainView > 0`.
+The focused pane's own retain therefore does not move `uiSession.current`
+off the native selection, and the right bar — `sidebarRight.show` of that
+current — stays on it. While split is active the kernel calls
+`uiWorkspace.openSession` with the focused pane's session whenever current
+names a different one, which moves the native retain. ADR-0020 still owns the
+view: the call follows the pane and does not replace the pane with the
+previous current. A running focused pane keeps the focus and the right bar
+when current names an idle session (ADR-0019).
+
+**Changes review:** the upstream review body
+(`@deepseek-ai/dsh-client-ui-deliverables` 0.2.1-rc.5, `ReviewTab`) loads
+`/api/changes.summary` with the right-bar slot's `sessionId` and only the
+`seq` from `dsh-resource://changes-review/session/<sessionId>/<seq>/<turn>`.
+The changed-files card writes the pane session into that address and has
+already loaded that summary, which is why the card can list files. When the
+bar is still on the native selection, the tab asks for the pane's `seq`
+under the other session. The host has no such record
+(`workspaceChanges.summary` is undefined), the summary store publishes
+`missing`, and the tab renders `diff.missing` — "这轮改动的内容已不可用".
+`openResource` does not rewrite the address; the body simply does not read
+the session segment. While split is active, opening a review address reveals
+that address's session first and waits until `sidebarRight.mounted` is that
+session, so the tab's read is the one the card displayed.
 
 **Verified:** retention API and the scan were read in the session controller and
-ui-workspace bundles. Runtime probe: focus different panes and check the
-sidebar's current row and rename/fork shortcuts follow the focused one.
+ui-workspace bundles; the review body's session argument was read in the
+deliverables bundle (0.2.1-rc.5). Runtime probe: focus different panes and
+check the sidebar's current row and rename/fork shortcuts follow the focused
+one. In split view, click a file row on a "本轮改动" card and confirm the right
+bar shows that turn's diffs; repeat from a second pane. A review opened while
+the bar already shows that session does not call `openSession`.
 
 ---
 
