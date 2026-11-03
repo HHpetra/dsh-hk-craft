@@ -10,16 +10,16 @@
   - 不建产品专属 `DSH_HOME`、独立 profile、独立端口。
   - 不 fork / 不改 `@deepseek-ai/dsh*` 源码。
   - 不复制一套聊天 UI；客户端能力只作为 dsh Web 壳的插件行接入。
-- **愿景**：待确认。插件要解决的问题由用户在后续设计对话中描述；在此之前不把任何具体功能写死。
-- **当前阶段**：**初始化 / 设计阶段**。仓库已有可安装、可卸载的骨架；业务能力与客户端 UI 尚未实现。
+- **愿景**：让重度 dsh 用户在一个窗口里并排处理多个会话，同时保留原生侧栏与右侧栏。
+- **当前阶段**：**开发阶段**。已交付首个能力（多会话分屏 + 侧栏精简），后续按 feature 迭代。
 
 ---
 
 ## 2. 当前阶段的核心目标
 
-1. 确定插件要解决的问题、目标用户与首个可验收的垂直切片。
-2. 保持“**装入现有 dsh**”这一交付形态：安装只增加 profile 的 bundle 依赖与插件行。
-3. 建立可重复的验证链：`pnpm check` → `pnpm test` → 本地安装 → 重启 dsh → 卸载，且不残留 profile 改动。
+1. 在“**装入现有 dsh**”这一交付形态下继续加能力：安装只增加 profile 的 bundle 依赖与插件行。
+2. 保持可重复的验证链：`pnpm check` → `pnpm test` → 本地安装 → 重启 dsh → 卸载，且不残留 profile 改动。
+3. 新能力先收敛到 `ai-docs/spec/` 与票据，再升 ADR 或 `docs/`。
 
 ---
 
@@ -27,13 +27,14 @@
 
 | 目录路径 | 用途说明 | 保留策略 |
 | :--- | :--- | :--- |
-| `packages/dsh-hk-craft/` | **唯一可安装 bundle**：manifest、patch、host 入口、后续 client UI 与构建脚本 | 长期 |
-| `doc/` | 面向用户与 Agent 的**架构与关键原理**介绍 | **长期保留**；只写架构与原理，不写实现细节与过程性 spec |
-| `ai-docs/ADR/` | **架构决策记录（ADR）**：长期真源，只记关键决定 | **长期保留**；前期可合并为单文件，条目变多后按主题拆分 |
-| `.scratch/` | 按 feature 组织的 **spec、issue 与开发记录**（本地 markdown issue 跟踪器） | **短期**；需**经常清理**，不做长期归档 |
-| `GLOSSARY.md` | 根目录：**领域语言**（术语与要避免的同义词） | 长期保留；术语收敛时更新 |
-| `docs/agents/` | 供工程类 skill 读取的消费规则：issue 跟踪器、triage 标签、域文档 | 长期保留 |
-| `ai-docs/invest/` | 可行性研究与技术调研文档 | 调研阶段产物；结论沉淀进 ADR / `doc/` 后可不再当日常真源 |
+| `GLOSSARY.md` | **领域语言**：本项目特有概念的唯一定义 | **长期保留**；只放词义，不放实现细节与决策 |
+| `docs/` | 面向用户与 Agent 的**架构与关键原理**介绍 | **长期保留**；只写架构与原理，不写实现细节与过程性 spec |
+| `docs/adr/` | **架构决策记录（ADR）**：一决策一文件 | **长期保留**；只记关键决定 |
+| `docs/agents/` | Agent 消费的配置：领域文档规则 / issue tracker / 分诊标签 | **长期保留** |
+| `ai-docs/spec/` | 当前开发用的 **spec 与开发记录** | **短期**；需**经常清理**，不做长期归档 |
+| `ai-docs/invest/` | 可行性研究与技术调研文档 | 调研阶段产物；结论沉淀进 ADR / `docs/` 后可不再当日常真源 |
+| `.scratch/` | 本地 issue 跟踪器（`<feature>/issues/NNN-slug.md`） | **短期**；完成即清理；**要入库** |
+| `packages/dsh-hk-craft/` | **唯一可安装 bundle**：manifest、patch、host 入口、client UI 与构建脚本 | 长期 |
 | `scripts/` | 结构校验、冒烟、开发工具；保持薄 | 长期 |
 | `tests/` | 跨包冒烟与集成测试；`tests/fixtures/` 放样例数据 | 长期 |
 | `deps/` | 钉死的第三方版本说明与（必要时的）拉取脚本 | 长期；二进制默认不入库 |
@@ -42,29 +43,29 @@
 
 ### 3.1 ADR（长期）
 
-- 路径：`ai-docs/ADR/`，前期写入 `decisions.md`。
-- 单条包含：背景、决策、后果/约束。
-- **何时写**：只在对后续开发路线有重大影响时记录；实现细节、局部重构不记。
-- **与旧记录冲突时只增不改**：追加新条目并写明取代关系；旧条目不重写。
+- 路径：`docs/adr/`；**一决策一文件**：`0001-slug.md`、`0002-slug.md`。
+- 编号扫现存最大值 +1；允许缺号，**不重新编号**。
+- **三条门槛同时满足才写**：难以回退 / 没有上下文会让后人困惑 / 真有过取舍。缺一条就跳过。
+- 正文 = 标题 + 1–3 句（背景、决定、为什么）；`后果`、`被否决的方案` 只在真有价值时展开。
+- 取代：新增一条并写 `**状态**：superseded by ADR-NNNN`；旧文件正文不改，也不另建 `deprecated.md`。
+- **不记录**：实现细节、局部重构、显然只有一个选项的事。
 
-### 3.2 Spec、Issue 与开发记录（短期，`.scratch/`）
+### 3.2 Spec 与开发记录（短期，`ai-docs/spec/`）
 
-- 路径：`.scratch/<feature-slug>/`，只服务当前开发，功能合入或阶段结束后清理。
-- spec 为 `.scratch/<feature-slug>/spec.md`。
-- 实现型 issue 一文件一票：`.scratch/<feature-slug>/issues/<NN>-<slug>.md`，从 `01` 编号；**不写**单个合并的 tickets 文件。
-- triage 状态写在该 issue 文件靠上的 `Status:` 行，取值见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
-- 评论与对话历史追加到文件末尾的 `## Comments` 小节下。
-- Agent 不应把过期 spec 当作现行规范；以 ADR、`doc/`、`GLOSSARY.md` 与代码为准。
+- 路径：`ai-docs/spec/`，只服务当前开发；功能合入或阶段结束后清理或压缩。
+- 建议命名：`00-scope.md`（边界与范围）、`01-roadmap.md`（里程碑与验收）、`0N-<topic>.md`（任务切片 / 接口草案 / 联调笔记）。
+- issue 不放这里：实现型票据在 `.scratch/<feature-slug>/issues/NNN-<slug>.md`，规则见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
+- Agent 不应把过期 spec 当作现行规范；以 `GLOSSARY.md`、ADR、`docs/` 与代码为准。
 
-### 3.3 `doc/`（架构导读）
+### 3.3 `docs/`（架构导读）
 
-- 介绍分层、安装路径、插件边界与关键数据流。
+- 介绍分层、安装路径、插件边界与关键数据流；上游契约集中在 [`docs/upstream-contracts.md`](docs/upstream-contracts.md)。
 - 只记录架构和关键原理；具体实现以阅读代码为准。
 
 ### 3.4 调研文档（`ai-docs/invest/`）
 
 - 建议包含：背景、核心诉求、方案对比、可行性、推荐结论、下一步。
-- 已拍板结论同步写入 ADR；面向读者的架构叙述写入 `doc/`。
+- 已拍板结论同步写入 `docs/adr/`；面向读者的架构叙述写入 `docs/`。
 
 ---
 
@@ -129,16 +130,40 @@ pnpm test             # 包内单元测试
 
 ## 7. Agent 协作指引
 
-1. **文档落点**：关键决定 → `ai-docs/ADR/`；当前开发 → `.scratch/`（并记得清理）；架构导读 → `doc/`；调研 → `ai-docs/invest/`；领域术语 → `GLOSSARY.md`。
-2. **真源优先级**：长期行为以 **ADR + `doc/` + `GLOSSARY.md` + 代码** 为准；过期 spec 不作数。
+1. **文档落点**：关键决定 → `docs/adr/`；当前开发 → `ai-docs/spec/`（并记得清理）；issue → `.scratch/`；架构导读 → `docs/`；调研 → `ai-docs/invest/`；领域术语 → `GLOSSARY.md`。
+2. **真源优先级**：长期行为以 **`GLOSSARY.md` + ADR + `docs/` + 代码** 为准；过期 spec 不作数。
 3. **不做长期 spec 库**：不要把完整产品 spec 堆进仓库长期保存。
-4. **能力未定不写死**：插件功能仍待用户描述；新增设计先在 `.scratch/<feature-slug>/spec.md` 收敛，再升 ADR 或 `doc/`。
-5. **代码检索**：优先使用当前环境可用的语义检索工具（Semble / Graft）；不可用时退回 `grep`，并在回复中说明原因。不要一上来全局关键词扫仓。
+4. **动手前先读**：进入某区域前先读 `GLOSSARY.md` 与相关 ADR；与既有 ADR 冲突时显式标注（“与 ADR-NNNN 冲突，但值得重开，因为…”），不静默覆盖。
+5. **代码检索**：优先使用当前环境可用的语义检索工具（Semble / Graft，见第 8 节）；不可用时退回 `grep`，并在回复中说明原因。
 6. **文档消费规则**：issue 跟踪器、triage 标签与域文档的读取方式见 `docs/agents/`，工程类 skill 以那三份文件为准。
 
 ---
 
-## 8. 远程与协作
+## 8. 代码检索（Semble + Graft）
+
+隐喻：**一根定位针，一张地图**。
+
+| 工具 | 职责 |
+| :--- | :--- |
+| **Semble** | 第一次落地：按行为或符号名搜到正确文件与行号 |
+| **Graft** | 地图与连带关系：上下文图、`ask` / `callers` / `skeleton` / `map` |
+
+推荐顺序：
+
+1. 「代码在哪」→ Semble（`search` / `find_related`）。
+2. 「怎么连、影响面」→ Graft（可先 `graft map`）。
+3. 工具覆盖不到时才退回 grep，并说明原因。
+
+**禁止默认路径**：一上来就全局关键词扫仓。
+
+<!-- graft:start -->
+新仓库首次使用请安装 Graft 并执行 `graft build` 生成图（缓存不入库）。
+之后任意任务优先 `graft ask "<question>" --source`；大改后 `graft build` 刷新。
+<!-- graft:end -->
+
+---
+
+## 9. 远程与协作
 
 | 项 | 值 |
 | :--- | :--- |
@@ -150,22 +175,22 @@ pnpm test             # 包内单元测试
 
 ---
 
-## 9. Agent skills
+## 10. Agent skills（Matt Pocock 流程）
 
 ### Issue tracker
 
-本仓库用本地 markdown 跟踪器：spec 与 issue 都在 `.scratch/<feature-slug>/` 下。见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
+本地 markdown：`.scratch/<feature>/issues/`，一票一文件、三位编号，按 `Blocked by` 拓扑顺序取票；`.scratch/` 要入库。见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
 
 ### Triage labels
 
-五个规范 triage 角色，标签字符串与角色名相同。见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
+`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`，只用于外部进来的 issue。见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
 
 ### Domain docs
 
-single-context：根目录 `GLOSSARY.md` + `ai-docs/ADR/`。见 [`docs/agents/domain.md`](docs/agents/domain.md)。
+单上下文：根 `GLOSSARY.md` + `docs/adr/`；动手前先读，冲突显式标注。见 [`docs/agents/domain.md`](docs/agents/domain.md)。
 
 ---
 
-## 10. 许可
+## 11. 许可
 
 MIT. Copyright (c) 2026 HHpetra.

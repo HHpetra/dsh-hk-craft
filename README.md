@@ -60,12 +60,13 @@ pnpm check               # 校验 manifest / patch / 入口与已构建 bundle �
 | 路径 | 用途 |
 | :--- | :--- |
 | `packages/dsh-hk-craft/` | 唯一可安装 bundle：manifest、`cordis.patch.yml`、host 入口、客户端 UI 与构建脚本 |
-| `doc/` | 架构与关键原理（长期） |
-| `ai-docs/ADR/` | 架构决策记录（长期） |
-| `.scratch/` | 当前开发记录：按 feature 组织的 spec 与 issue（短期） |
 | `GLOSSARY.md` | 领域语言（术语表，长期） |
+| `docs/` | 架构与关键原理（长期） |
+| `docs/adr/` | 架构决策记录：一决策一文件（长期） |
 | `docs/agents/` | 工程类 skill 的消费规则：issue 跟踪器、triage 标签、域文档 |
+| `ai-docs/spec/` | 当前开发的 spec 与开发记录（短期，阶段结束清理） |
 | `ai-docs/invest/` | 技术调研与可行性 |
+| `.scratch/` | 本地 issue 跟踪器（短期，随票据入库） |
 | `scripts/` | 结构校验与冒烟 |
 | `tests/` | 跨包冒烟与 fixtures |
 | `deps/` | 钉死的第三方版本 |
@@ -75,7 +76,9 @@ pnpm check               # 校验 manifest / patch / 入口与已构建 bundle �
 ## 延伸阅读
 
 - [`docs/README.md`](docs/README.md) — 架构说明
-- [`ai-docs/ADR/decisions.md`](ai-docs/ADR/decisions.md) — 架构决策记录
+- [`docs/upstream-contracts.md`](docs/upstream-contracts.md) — 依赖的 dsh 上游契约
+- [`docs/adr/`](docs/adr/) — 架构决策记录
+- [`docs/agents/domain.md`](docs/agents/domain.md) — 领域文档与 issue tracker 规则
 - [`AGENTS.md`](AGENTS.md) — 协作者与编码 Agent 的约定
 - [`START.md`](START.md) — 新项目启动与分轮设计流程
 - [`GLOSSARY.md`](GLOSSARY.md) — 领域语言

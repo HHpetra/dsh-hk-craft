@@ -1,42 +1,42 @@
-# Issue 跟踪器：本地 Markdown
+# Issue Tracker
 
-本仓库的 issue、spec 与开发记录都以 markdown 文件存放在 `.scratch/` 下。没有远程 issue 系统，不使用 `gh` / `glab`。
+本仓库的 issue 用**本地 markdown** 记录，没有远程 issue 系统；`.scratch/` 要入库，不要 gitignore。
 
-## 约定
+## 位置与格式
 
-- 一个 feature 一个目录：`.scratch/<feature-slug>/`
-- 该 feature 的 spec 是 `.scratch/<feature-slug>/spec.md`
-- 实现型 issue 一文件一票：`.scratch/<feature-slug>/issues/<NN>-<slug>.md`，从 `01` 编号；**不要**写成单个合并的 tickets 文件
-- triage 状态写在每个 issue 文件靠上的 `Status:` 行（取值见 `triage-labels.md`）
-- 评论与对话历史追加到文件末尾的 `## Comments` 小节下
+```text
+.scratch/<feature-slug>/
+├── brief.md            # 该 feature 的目标与背景（可选）
+└── issues/
+    ├── 001-<slug>.md
+    └── 002-<slug>.md
+```
 
-当前在用的 effort：
+- 一票一文件，三位编号递增；不重编、不复用。
+- 每票至少写：**要做什么 / 为什么 / 验收标准**，以及 `Blocked by:` 行（没有就写 `none`）。
+- 文件开头写 `Status:`：`open` / `in-progress` / `done` / `wontfix`。
+- spec 不放这里：当前开发的 spec 在 `ai-docs/spec/`（短期，阶段结束清理）。
 
-- `.scratch/inception/`（`spec.md` 范围与边界、`roadmap.md` 里程碑与验收）
+## 工作方式
 
-已清理：
+- 按 `Blocked by` 的拓扑顺序取票：**只有阻塞项已完成的票才能开工**。
+- 每票自包含；做完把结论收敛进代码与 `docs/adr/`，不要指望下一个人去读票据。
 
-- `.scratch/pane-split-limit/`（局部分栏与可配置分屏上限）。行为以 ADR-0009、ADR-0010、ADR-0011、`docs/README.md` 与 `GLOSSARY.md` 为准。
+## 切换到 GitHub / GitLab
 
-## 当 skill 说“发布到 issue 跟踪器”
+有 remote 之后再切换：把 `.scratch/<feature>/issues/*.md` 一次性建成 issue，并同步改掉 `AGENTS.md` 里的 Agent skills 块。
 
-在 `.scratch/<feature-slug>/` 下新建文件（目录不存在则创建）。
+| 平台 | 创建 | 关闭 |
+| :--- | :--- | :--- |
+| GitHub | `gh issue create --title "…" --body-file <file>` | `gh issue close <n>` |
+| GitLab | `glab issue create --title "…" --description "…"` | `glab issue close <n>` |
 
-## 当 skill 说“取出相关工单”
+## Wayfinding（`/wayfinder`）
 
-读取对应路径的文件。用户通常会直接给出路径或编号。
-
-## Wayfinding 操作
-
-供 `/wayfinder` 使用。**map** 是一个文件，每个工单是它的一个 **child** 文件。
+map 是一个文件，每个工单是它的一个 child 文件；这类工单记录调研/原型过程，与上面的实现型票分开。
 
 - **Map**：`.scratch/<effort>/map.md`（承载 Notes / Decisions-so-far / Fog 正文）。
-- **Child ticket**：`.scratch/<effort>/issues/NN-<slug>.md`，从 `01` 编号，正文写问题本身。`Type:` 行记录工单类型（`research`/`prototype`/`grilling`/`task`）；`Status:` 行记录 `claimed`/`resolved`。
-- **阻塞**：靠上的 `Blocked by: NN, NN` 行。当它列出的每个文件都是 `resolved` 时，该工单解除阻塞。
+- **Child ticket**：`.scratch/<effort>/issues/NNN-<slug>.md`，正文写问题本身。`Type:` 行记录工单类型（`research`/`prototype`/`grilling`/`task`）；`Status:` 行记录 `claimed`/`resolved`。
+- **阻塞**：靠上的 `Blocked by: NNN, NNN` 行；列出的每个文件都是 `resolved` 时解除阻塞。
 - **Frontier**：扫 `.scratch/<effort>/issues/`，取未关闭、未阻塞、未被认领的文件；编号最小者优先。
-- **认领（Claim）**：把 `Status:` 设为 `claimed` 并保存，然后才开始工作。
-- **解决（Resolve）**：在 `## Answer` 标题下追加答案，把 `Status:` 设为 `resolved`，再把上下文指针（要点 + 链接）追加到 `map.md` 的 Decisions-so-far。
-
-## 清理
-
-spec 与 issue 都是**短期**产物，阶段结束后清理；需要长期保留的结论升入 `ai-docs/ADR/`、`doc/` 或 `GLOSSARY.md`。
+- **认领**：把 `Status:` 设为 `claimed` 再开工；**解决**：在 `## Answer` 下追加答案、`Status: resolved`，并把要点 + 链接追加到 `map.md` 的 Decisions-so-far。
