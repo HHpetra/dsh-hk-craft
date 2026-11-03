@@ -13,8 +13,9 @@
  * - `sessionStatus` → `Map<sessionId, { running, pendingInteraction, completionUnread }>`.
  *
  * Before this module those shapes were parsed in ten files, with five answers to
- * "is this a workspace member", five to "has this conversation started", two
- * `mainView` scans, and six `phase` gates split over two incompatible policies
+ * "is this a workspace member", five to "has this conversation started", the
+ * `mainView` scans (`current`, `mainViewRetentions`), and six `phase` gates
+ * split over two incompatible policies
  * for a missing `phase`. Every one of them is a place an upstream rename breaks.
  * This is the one place they are parsed; everything else asks domain questions
  * and never sees `byId`, `sessionIds` or `retainedBy`.
@@ -342,6 +343,38 @@ function buildCatalog(input) {
     return currentId
   }
 
+  /** Sessions holding `mainView`, resolved once. */
+  let mainViewRetentionsValue
+
+  /**
+   * Every session that holds at least one `mainView` reference, in catalog
+   * order, with that reference count.
+   *
+   * dsh's 新会话 retains the new session this way. The sticky current stays on
+   * whichever session already had a `mainView`, so the count growing on a
+   * session no pane holds is the arrival the pane kernel watches. The raw
+   * `retainedBy` map stays here.
+   *
+   * @returns {ReadonlyArray<{id: string, count: number}>}
+   */
+  function mainViewRetentions() {
+    if (mainViewRetentionsValue !== undefined) return mainViewRetentionsValue
+    const byId = sessionsSnapshot?.byId
+    const rows = []
+    if (isRecord(byId)) {
+      for (const key of Object.keys(byId)) {
+        const raw = byId[key]
+        if (!isRecord(raw)) continue
+        const retained = raw.retainedBy?.mainView
+        if (typeof retained !== 'number' || !(retained > 0)) continue
+        const id = typeof raw.id === 'string' && raw.id !== '' ? raw.id : key
+        rows.push(Object.freeze({ id, count: retained }))
+      }
+    }
+    mainViewRetentionsValue = Object.freeze(rows)
+    return mainViewRetentionsValue
+  }
+
   /** @type {Map<string, object>} sessionId → frozen signal */
   const signalCache = new Map()
 
@@ -411,6 +444,7 @@ function buildCatalog(input) {
     sessionsOf,
     sessionIds,
     current,
+    mainViewRetentions,
     signal,
     projectionsOf,
     /** Whether `sessions.list` can be read as a complete catalog. */

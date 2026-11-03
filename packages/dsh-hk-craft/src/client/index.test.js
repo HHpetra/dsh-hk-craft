@@ -414,11 +414,31 @@ test('the workspace entry injects the callbacks, the reorder callback and the pa
   // The row light reads enablement and follows the controller snapshot; nothing
   // dsh-shaped leaks through this face.
   assert.equal(typeof injected.panes.isWorkspaceEnabled, 'function')
+  assert.equal(typeof injected.panes.returnToPanes, 'function')
   assert.equal(typeof injected.panes.getSnapshot, 'function')
   assert.equal(typeof injected.panes.subscribe, 'function')
   assert.equal(injected.panes.getSnapshot().active, true, 'split view is on after the plugin loads')
   assert.equal(injected.panes.isWorkspaceEnabled('w1'), true, 'entering split view loads the current workspace')
   assert.equal(typeof injected.panes.subscribe(() => {}), 'function')
+})
+
+test('opening a workspace from the sidebar closes a global panel before switching', () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+  ctx.panel.activePanelId = 'plugins'
+  const { options } = entryNamed(ctx, 'sidebar.workspaces')
+  let workspaceWhenClosed = null
+  const original = ctx.layout.selectPanel.bind(ctx.layout)
+  ctx.layout.selectPanel = (panelId) => {
+    workspaceWhenClosed = options.inject().panes.getSnapshot().workspaceId
+    original(panelId)
+  }
+
+  options.inject().openWorkspace('w1')
+
+  assert.deepEqual(ctx.calls.selectPanel, [null])
+  assert.equal(ctx.panel.activePanelId, null)
+  assert.equal(workspaceWhenClosed, options.inject().panes.getSnapshot().workspaceId)
 })
 
 test('the workspaces entry deletes through the public service and the pane controller', async () => {

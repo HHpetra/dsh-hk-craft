@@ -16,6 +16,7 @@ const {
   workspaceRunningCount,
 } = require('./dsh-workspaces.js')
 const { openCatalog } = require('./catalog.js')
+const { createPaneController } = require('./dsh-pane-host.js')
 
 /**
  * The read model for one set of raw snapshots.
@@ -504,6 +505,135 @@ test('a refused pane switch still reveals the workspace conversation', () => {
 
   assert.deepEqual(calls.openSession, ['s9'])
   assert.deepEqual(calls.startSession, [])
+})
+
+/**
+ * A real pane kernel on a ctx that records `layout.selectPanel`, so a workspace
+ * click can be seen to close a 全局面板 before it switches.
+ *
+ * @param {{ active?: boolean }} [options]
+ */
+function workspaceClickRig({ active = true } = {}) {
+  const calls = { selectPanel: [], startSession: [], openSession: [] }
+  const panel = { activePanelId: 'plugins' }
+  const rows = {
+    s1: { id: 's1', blank: false, updatedAt: 1, retainedBy: { mainView: 1 }, running: false },
+    s2: { id: 's2', blank: false, updatedAt: 2, retainedBy: {}, running: false },
+  }
+  const workspaces = [
+    { workspaceId: 'w1', sessionIds: ['s1'] },
+    { workspaceId: 'w2', sessionIds: ['s2'] },
+  ]
+  const ctx = {
+    calls,
+    panel,
+    sessions: {
+      list: { getSnapshot: () => ({ byId: rows }) },
+      retain() {
+        return { release() {} }
+      },
+    },
+    layout: {
+      panelInfo: { getSnapshot: () => ({ activePanelId: panel.activePanelId }) },
+      selectPanel(panelId) {
+        calls.selectPanel.push(panelId)
+        calls.workspaceWhenPanel = ctx.controller?.getSnapshot?.().workspaceId ?? null
+        panel.activePanelId = panelId
+      },
+    },
+    slots: { snapshot: () => [] },
+    workspaces: {
+      list: {
+        getSnapshot: () => ({ items: workspaces, archivedSessionIds: [], phase: 'ready' }),
+      },
+    },
+    get(name) {
+      if (name === 'uiWorkspace') {
+        return {
+          startSession(workspaceId, opts) {
+            calls.startSession.push([workspaceId, opts])
+            if (ctx.startSessionError !== undefined) throw ctx.startSessionError
+          },
+          openSession(sessionId) {
+            calls.openSession.push(sessionId)
+          },
+        }
+      }
+      if (name === 'workspaces') return ctx.workspaces
+      if (name === 'sessions') return ctx.sessions
+      return undefined
+    },
+  }
+  const controller = createPaneController(ctx)
+  ctx.controller = controller
+  if (active) {
+    controller.markRegistered()
+    controller.activate('s1')
+  }
+  return { ctx, calls, controller, panel }
+}
+
+/** The pane face a workspace click actually uses. */
+function rigPanes(controller, { active, switched } = {}) {
+  return {
+    active: () => (active === undefined ? controller.getSnapshot().active : active),
+    returnToPanes: () => controller.returnToPanes(),
+    switchWorkspace: (workspaceId) =>
+      switched === undefined ? controller.switchWorkspace(workspaceId) : switched,
+  }
+}
+
+test('a workspace click closes the global panel before switching the pane tree', () => {
+  const { ctx, calls, controller } = workspaceClickRig()
+  const actions = createSectionActions(ctx, { panes: rigPanes(controller) })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.selectPanel, [null])
+  assert.equal(calls.workspaceWhenPanel, 'w1')
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(ctx.panel.activePanelId, null)
+  assert.deepEqual(calls.openSession, [])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('a workspace click outside split mode does not touch the global panel', () => {
+  const { ctx, calls, controller } = workspaceClickRig({ active: false })
+  const actions = createSectionActions(ctx, { panes: rigPanes(controller) })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.selectPanel, [])
+  assert.equal(ctx.panel.activePanelId, 'plugins')
+  assert.deepEqual(calls.openSession, ['s2'])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('a workspace with nothing to show still surfaces the host failure and does not touch the panel', () => {
+  const failure = new Error('workspace/not-found: gone')
+  const { ctx, calls, controller } = workspaceClickRig({ active: false })
+  ctx.startSessionError = failure
+  const actions = createSectionActions(ctx, { panes: rigPanes(controller) })
+
+  assert.throws(() => actions.openWorkspace('gone'), failure)
+  assert.deepEqual(calls.selectPanel, [])
+  assert.equal(ctx.panel.activePanelId, 'plugins')
+  assert.deepEqual(calls.openSession, [])
+  assert.deepEqual(calls.startSession, [['gone', { clearPreviousDraft: false }]])
+})
+
+test('a refused workspace switch still closes the global panel and keeps the host failure', () => {
+  const failure = new Error('workspace/not-found: gone')
+  const { ctx, calls, controller } = workspaceClickRig()
+  ctx.startSessionError = failure
+  const actions = createSectionActions(ctx, {
+    panes: rigPanes(controller, { active: true, switched: false }),
+  })
+
+  assert.throws(() => actions.openWorkspace('gone'), failure)
+  assert.deepEqual(calls.selectPanel, [null])
+  assert.equal(ctx.panel.activePanelId, null)
+  assert.deepEqual(calls.startSession, [['gone', { clearPreviousDraft: false }]])
 })
 
 test('a workspace added in pane mode is selected without a native reveal', async () => {

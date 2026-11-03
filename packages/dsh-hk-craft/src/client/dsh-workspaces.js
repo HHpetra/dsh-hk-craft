@@ -247,7 +247,7 @@ function nativeConversationId(catalog, workspaceId) {
  *
  * @param {any} ctx client Cordis context (already injected with `uiWorkspace`
  *   and `workspaces` by the plugin entry)
- * @param {{panes?: {active?: () => boolean, switchWorkspace?: (workspaceId: string) => boolean, forgetWorkspace?: (workspaceId: string, options?: {order?: string[]}) => boolean}}} [options]
+ * @param {{panes?: {active?: () => boolean, returnToPanes?: () => boolean, switchWorkspace?: (workspaceId: string) => boolean, forgetWorkspace?: (workspaceId: string, options?: {order?: string[]}) => boolean}}} [options]
  */
 function createSectionActions(ctx, options = {}) {
   const panes = options?.panes
@@ -262,9 +262,13 @@ function createSectionActions(ctx, options = {}) {
    * reuses) its blank session —
    * the same call the add flow needs for a workspace that has no history yet.
    *
+   * A 全局面板 is closed first, and only when this plugin owns the conversation
+   * cell. Outside split the click is unchanged and does not touch the panel.
+   *
    * @param {string} workspaceId
    */
   function openWorkspace(workspaceId) {
+    panes?.returnToPanes?.()
     if (panes?.active?.() === true && panes?.switchWorkspace?.(workspaceId) === true) return
     const uiWorkspace = ctx.get('uiWorkspace')
     const sessionId = nativeConversationId(openCatalog(readCatalogs(ctx)), workspaceId)
