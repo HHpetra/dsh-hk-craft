@@ -236,6 +236,13 @@ test('shadows the conversation cell and never selects a panel', () => {
   assert.equal(typeof body.component, 'function')
 })
 
+test('file-drop overlay copy exists in both locales', () => {
+  assert.equal(zh['pane.drop.accept'], '松开以添加文件')
+  assert.equal(zh['pane.drop.reject'], '当前无法添加文件')
+  assert.match(en['pane.drop.accept'], /release/i)
+  assert.match(en['pane.drop.reject'], /cannot be added/i)
+})
+
 test('the strip rightbar labels exist in both locales', () => {
   assert.equal(zh['strip.rightbar'], '右栏')
   assert.equal(en['strip.rightbar'], 'Right')

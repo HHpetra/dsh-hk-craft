@@ -941,6 +941,127 @@ the resident View.
 
 ---
 
+## Document file drop and per-pane routing
+
+**Provider:** `@deepseek-ai/dsh-client-ui-attachment` (`installDocumentDropEvents`),
+`@deepseek-ai/dsh-client-ui-conversation` (the composer `addFiles` wrapper in
+`apply.ts`, `InputHub` / `SessionInputShell` for `canPickFiles`, `addFiles` and
+the hidden file input, `isImageMediaType`, `createDrafts`,
+`releaseDraftAttachments`), `@deepseek-ai/dsh-util-workspace-path`
+(`relativizeToCwd`, `workspaceTitleOf`) and `@deepseek-ai/dsh-file-reference`
+(`formatFileMention`). Desktop exposes the path bridge from the preload.
+
+**Verified:** read against the `dsh-v0.2.1-rc.5` tag and the published
+`@deepseek-ai/dsh-client-ui-attachment@0.2.1-rc.5` client bundle. Re-check this
+section when the dsh train moves; the injection face is package-internal.
+
+### Document listeners
+
+`ComposerAttachments` installs `installDocumentDropEvents` from a `useEffect`
+on **every mounted composer**. The four listeners (`dragenter`, `dragover`,
+`dragleave`, `drop`) are registered on `document` in the **bubble** phase.
+`dragend` resets that composer's depth counter from `window`.
+
+A listener ignores the event unless `dataTransfer.types` includes `Files`.
+It then `preventDefault`s. `dragover` sets `dropEffect` to `copy` when
+`canAcceptDrop` is true and `none` otherwise. `drop` calls
+`onAddFiles(files, droppedDirectories(...))` only when `canAcceptDrop` is true.
+Nothing in that path asks where the pointer is. `canAcceptDrop` means "this
+composer may receive files", not "the pointer is over this composer".
+
+This plugin mounts one composer per pane and keeps hidden workspaces mounted,
+so one drop is delivered to every live composer. The plugin therefore listens
+on `document` in the **capture** phase for those same four events. Capture runs
+before the bubble listeners. When more than one pane is loaded and the drag
+carries `Files`, the plugin calls `preventDefault` and `stopImmediatePropagation`
+on all four events, including a miss (separator, tab strip, sidebar, window
+gap). Upstream's N listeners then do not run, and a miss adds nothing.
+
+A single loaded pane does not intercept: the native listeners keep the event.
+Drags whose types do not include `Files` (session or tab drags, text) are left
+alone in every case.
+
+`dragend` (window) and `Escape` (document `keydown`) only clear the plugin's
+highlight. They do not stop the event. `Escape` also suppresses the rest of
+that drag so a following `dragover` cannot paint the highlight back on, and the
+matching `drop` adds nothing.
+
+### Hit test
+
+The pane element is `[data-hkcraft-pane="<paneId>"]`, the same attribute the
+pane frame already renders. The hit is `event.target.closest('[data-hkcraft-pane]')`.
+`dragleave` uses `relatedTarget`, because `target` is the element being left.
+The pane id is resolved to a session id from the controller snapshot: `layouts`
+for every loaded workspace, plus `panes` for the unscoped tree. Pane ids are
+unique across workspaces, so the visible tree is not counted twice. A pane
+whose `sessionId` is still empty (the session is being created) is a hit that
+cannot accept: the overlay says so, and the drop adds nothing.
+
+### Accept, chips and drafts
+
+The composer's own intake (`apply.ts`, `addFiles`) is the behaviour this plugin
+repeats for the hit session, through `sessions.scope(id)`:
+
+- `scope.get('input').canPickFiles()` is the preview. `false` refuses the drop
+  before any draft exists. The final gate is `input.addFiles(references, ids)`:
+  anything other than `true` releases the drafts with
+  `conversation.releaseDraftAttachments(drafts)` and adds nothing.
+- `globalThis.__DSH_HOST_PATHS__.pathFor(file)` is the Desktop absolute path.
+  A page without that bridge has no paths. A path-less file, and any non-directory
+  image (`isImageMediaType`: `image/png`, `image/jpeg`, `image/webp`, `image/gif`
+  only), goes to `conversation.createDrafts(sessionId, uploads)`. A pathful
+  non-image or a directory becomes one reference chip, in drop order.
+- The chip is
+  `{ source: 'reference', ref, label, appearance, clipboardText }`.
+  `ref` and `clipboardText` are `formatFileMention({ path, kind: 'file' }, false)`
+  where a directory's `path` already ends in `/` (a finished chip closes its
+  quotes; `kind: 'directory'` would leave them open). `label` is
+  `workspaceTitleOf(absolutePath) || file.name`, with a trailing `/` on a
+  directory. `appearance` is `folder` or `file`. The path stored in the mention
+  is `relativizeToCwd(absolutePath, sessions.list snapshot byId[sessionId].cwd)`.
+- A directory with no bridge, an empty `pathFor` result, or a mention the
+  grammar refuses (`undefined`) fails the **whole** batch. Nothing is inserted.
+  Upstream would toast `attachment.directoryDesktopOnly` /
+  `attachment.pathUnavailable` / `attachment.pathUnsupported`. This router does
+  not toast: a refused drop stays quiet. No new folder behaviour is added for a
+  browser shell that has no path bridge.
+- `canPickFiles` / `scope` / `createDrafts` / `addFiles` missing, or any of
+  those throwing, falls back to the composer's hidden `<input type="file" multiple>`
+  inside the hit pane: ordinary files are assigned and a bubbling `change` is
+  dispatched; directories are left out. A disabled or absent input discards the
+  drop. `addFiles` returning false does **not** take this fallback.
+
+`canPickFiles` is `filePicker.available()`, which the composer binds to
+`canAcceptDrop && file input mounted && file input enabled`. The shell
+`addFiles` returns false while the admission phase is `adjudicating` or
+`submitting`, and when the editor refuses the chip insertion.
+
+### Highlight
+
+While the pointer is over a pane and the drag is taken over, that pane gets
+`data-hkcraft-drop="copy"` or `"none"` and a `data-hkcraft-drop-overlay` child.
+Copy is `pane.drop.accept` ("松开以添加文件") or `pane.drop.reject`
+("当前无法添加文件"). The blocked state uses cursor `not-allowed`. Colours come
+from `--dsw-*` only. `dragleave` off the pane, `drop`, `dragend` and `Escape`
+remove the attribute and the overlay.
+
+### Re-verify
+
+1. Unpack `@deepseek-ai/dsh-client-ui-attachment` and confirm
+   `installDocumentDropEvents` is still a per-composer bubble listener with no
+   hit test.
+2. In `ui-conversation` `apply.ts`, confirm the `addFiles` split (path bridge,
+   image types, `relativizeToCwd` → `formatFileMention(..., false)` →
+   `workspaceTitleOf`, `createDrafts`, `addFiles === false` releases drafts).
+3. Confirm `InputBar` still owns `<input type="file" multiple hidden>` whose
+   `change` calls `intakeFiles`, and `canPickFiles` still reads
+   `bindFilePicker`.
+4. Smoke in Desktop with two panes plus a hidden workspace: one file lands only
+   on the pane under the pointer; a gap adds nothing; one pane behaves as dsh
+   does without this plugin.
+
+---
+
 ## Related
 
 - [`README.md`](README.md) — architecture overview.

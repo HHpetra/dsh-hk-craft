@@ -274,6 +274,40 @@ const PLUGIN_STYLESHEET = String.raw`
 }
 
 /* ------------------------------------------------------------------ */
+/* File drop on the pane under the pointer                            */
+/* ------------------------------------------------------------------ */
+
+[data-hkcraft-pane][data-hkcraft-drop] > [data-hkcraft-drop-overlay] {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 1.5px dashed var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 78%, transparent);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family, inherit);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  padding: 16px;
+}
+
+[data-hkcraft-pane][data-hkcraft-drop="none"] {
+  cursor: not-allowed;
+}
+
+[data-hkcraft-pane][data-hkcraft-drop="none"] > [data-hkcraft-drop-overlay] {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-label-secondary);
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------ */
 /* Separators                                                          */
 /* ------------------------------------------------------------------ */
 
