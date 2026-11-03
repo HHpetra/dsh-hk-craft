@@ -1,6 +1,13 @@
 # Issue tracker: GitHub
 
-本仓库的 issue 与开发记录走 **GitHub Issues**，统一用 `gh` CLI；仓库为 `HHpetra/dsh-hk-craft`。
+本仓库的 issue 与开发记录走 **GitHub Issues**，统一用 `gh` CLI；仓库为 `HHpetra/dsh-hk-craft`。仓库里**不设** `spec/` 目录：spec、票据、任务只存在于 issue 里。
+
+## spec 与票据
+
+- **spec**：由 `/to-spec` 从对话直接发布成 issue，用固定模板（Problem / Solution / User Stories / Implementation Decisions / Testing Decisions / Out of Scope），打 `ready-for-agent` 标签。不要落成仓库文件。
+- **tickets**：`/to-tickets` 把 spec 拆成 tracer-bullet 子 issue；阻塞关系写成原生依赖（sub-issue / blocked-by）。
+- **取票**：只取阻塞项都已关闭的票（frontier）；一票一个会话，只带那张 issue 进上下文。
+- **收口**：实现 + review 后关闭 issue；值得长期保留的结论进 `docs/adr/`，issue 不是决策的最终载体。
 
 ## 约定
 

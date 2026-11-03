@@ -22,7 +22,6 @@
 │   ├── agents/
 │   ├── research/
 │   └── upstream-contracts.md
-├── spec/
 └── packages/dsh-hk-craft/src/
 ```
 

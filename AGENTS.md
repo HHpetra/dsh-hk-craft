@@ -19,7 +19,7 @@
 
 1. 在“**装入现有 dsh**”这一交付形态下继续加能力：安装只增加 profile 的 bundle 依赖与插件行。
 2. 保持可重复的验证链：`pnpm check` → `pnpm test` → 本地安装 → 重启 dsh → 卸载，且不残留 profile 改动。
-3. 新能力先收敛到 `spec/` 与票据，再升 ADR 或 `docs/`。
+3. 新能力先收敛到 issue（`/to-spec`），再升 ADR 或 `docs/`。
 
 ---
 
@@ -31,9 +31,8 @@
 | `docs/` | 面向用户与 Agent 的**架构与关键原理**介绍 | **长期保留**；只写架构与原理，不写实现细节与过程性 spec |
 | `docs/adr/` | **架构决策记录（ADR）**：一决策一文件 | **长期保留**；只记关键决定 |
 | `docs/agents/` | Agent 消费的配置：领域文档规则 / issue tracker / 分诊标签 | **长期保留** |
-| `spec/` | 当前开发用的 **spec 与开发记录** | **短期**；需**经常清理**，不做长期归档 |
 | `docs/research/` | 可行性研究与技术调研文档 | 调研阶段产物；结论沉淀进 ADR / `docs/` 后可不再当日常真源 |
-| `.scratch/` | 本地临时草稿与原型脚本 | **短期**；不入库 |
+| `.scratch/` | 无 remote 时的临时容器 / 本地草稿 | **短期**；不入库 |
 | `packages/dsh-hk-craft/` | **唯一可安装 bundle**：manifest、patch、host 入口、client UI 与构建脚本 | 长期 |
 | `scripts/` | 结构校验、冒烟、开发工具；保持薄 | 长期 |
 | `tests/` | 跨包冒烟与集成测试；`tests/fixtures/` 放样例数据 | 长期 |
@@ -42,6 +41,8 @@
 **没有 `apps/`、`services/`**：本项目不设独立应用入口；只有确实需要对外 MCP 工具面时才新增 `services/mcp/`，且仍由 bundle patch 静态挂载。
 
 **.cursor/skills/**：22 个 Matt Pocock skill 的副本，**随仓库提交**（云端 agent 从仓库读取）；升级用 `scripts/sync-cursor-skills.ps1` 刷新，不要加进 `.gitignore`。
+
+**短期工作不进仓库**：spec、票据、任务全部走 GitHub Issues，见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
 
 ### 3.1 ADR（长期）
 
@@ -52,12 +53,11 @@
 - 取代：新增一条并写 `**状态**：superseded by ADR-NNNN`；旧文件正文不改，也不另建 `deprecated.md`。
 - **不记录**：实现细节、局部重构、显然只有一个选项的事。
 
-### 3.2 Spec 与开发记录（短期，`spec/`）
+### 3.2 Spec 与票据（短期）
 
-- 路径：`spec/`，只服务当前开发；功能合入或阶段结束后清理或压缩。
-- 建议命名：`00-scope.md`（边界与范围）、`01-roadmap.md`（里程碑与验收）、`0N-<topic>.md`（任务切片 / 接口草案 / 联调笔记）。
-- issue 不放这里：实现型票据放 GitHub Issues（`gh` CLI），规则见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
-- Agent 不应把过期 spec 当作现行规范；以 `GLOSSARY.md`、ADR、`docs/` 与代码为准。
+- **不发文件**：spec 由 `/to-spec` 发布成 GitHub Issue，票据由 `/to-tickets` 拆成带阻塞边的子 issue。
+- 仓库里不设 `spec/` 目录；`.scratch/` 只在没有 remote 时作临时容器。
+- Agent 不应把过期 issue / 旧文档当作现行规范；以 `GLOSSARY.md`、ADR、`docs/` 与代码为准。
 
 ### 3.3 `docs/`（架构导读）
 
@@ -132,7 +132,7 @@ pnpm test             # 包内单元测试
 
 ## 7. Agent 协作指引
 
-1. **文档落点**：关键决定 → `docs/adr/`；当前开发 → `spec/`（并记得清理）；issue → GitHub Issues；架构导读 → `docs/`；调研 → `docs/research/`；领域术语 → `GLOSSARY.md`。
+1. **文档落点**：关键决定 → `docs/adr/`；当前开发 → GitHub Issues（`docs/agents/issue-tracker.md`）；架构导读 → `docs/`；调研 → `docs/research/`；领域术语 → `GLOSSARY.md`。
 2. **真源优先级**：长期行为以 **`GLOSSARY.md` + ADR + `docs/` + 代码** 为准；过期 spec 不作数。
 3. **不做长期 spec 库**：不要把完整产品 spec 堆进仓库长期保存。
 4. **动手前先读**：进入某区域前先读 `GLOSSARY.md` 与相关 ADR；与既有 ADR 冲突时显式标注（“与 ADR-NNNN 冲突，但值得重开，因为…”），不静默覆盖。

@@ -148,4 +148,4 @@ pnpm test      # 单元测试
 | `research/` | 可行性研究与技术调研 |
 | `upstream-contracts.md` | dsh 上游契约清单：每条记录形状、为什么依赖与复验方式 |
 
-> 短期的开发 spec 不在本目录，在仓库根 `spec/`（阶段结束即清理）。
+> 短期工作（spec、票据）不落在仓库里，走 GitHub Issues；见 [`agents/issue-tracker.md`](agents/issue-tracker.md)。
