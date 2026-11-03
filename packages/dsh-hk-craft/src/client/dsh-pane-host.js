@@ -12,12 +12,13 @@
  *
  * - `main` is a keyed root slot. The frame renders `activePanelId ??
  *   "conversation"`. This plugin shadows the `conversation` cell at priority
- *   -1 and never calls `selectPanel`, so `activePanelId` stays null and the
- *   native right bar stays visible — `#shadowing-the-conversation-cell`.
- * - `selectPanel(null)` returns from a global panel (settings, plugins). It
- *   does not unmount this shadow, because the conversation cell was never
- *   selected away. `selectPanel('conversation')` is not null and would hide
- *   the right bar — `#main-keyed-slot-and-selectpanel`.
+ *   -1. The only `selectPanel` call is `returnToPanes`, and it passes `null`,
+ *   so a 全局面板 closes without setting `activePanelId` to `"conversation"`
+ *   (that would hide the right bar) — `#shadowing-the-conversation-cell`.
+ * - `selectPanel(null)` returns from a 全局面板 (plugin manager, scheduled
+ *   tasks). It does not unmount this shadow, because the conversation cell was
+ *   never selected away. `selectPanel('conversation')` is not null and would
+ *   hide the right bar — `#main-keyed-slot-and-selectpanel`.
  * - A `main` entry that declares a non-root child gets `SessionProvider` and
  *   `renderSlot` in its kit, plus `renderFactorySlot` for
  *   `conversation.content` — `#sessionprovider-and-conversationcontent`.
@@ -360,6 +361,26 @@ function createPaneController(ctx, options = {}) {
    * `syncCurrent` and try to move the pane we just revealed.
    */
   let revealing = false
+  /**
+   * Last `mainView` counts read from the session list. A 新会话 retains
+   * `mainView` on the new session without moving the sticky current, so a
+   * count that grows on a session no pane holds is that arrival. `null` until
+   * the list is first read.
+   *
+   * @type {Map<string, number>|null}
+   */
+  let mainViewBaseline = null
+  /** Whether that baseline was read from a ready session list. */
+  let mainViewBaselineReady = false
+  /** A list notification arrived inside our own retain and is waiting. */
+  let newSessionObserveScheduled = false
+  /**
+   * The 新会话 just placed, and the sticky current that must not swap it back
+   * while that session is still the focused pane.
+   *
+   * @type {{ sessionId: string, stickyId: string }|null}
+   */
+  let newSessionGuard = null
   /** `uiSession.adapter.current`, once attached. */
   let sessionCurrent = null
   let unsubscribeCurrent = () => {}
@@ -946,10 +967,15 @@ function createPaneController(ctx, options = {}) {
   function watchCatalogList(list) {
     if (list == null || typeof list.subscribe !== 'function') return
     if (subscribedLists.has(list)) return
+    const sessionsList = list === sessions?.list
+    // Seed before subscribe. A store that notifies immediately must not treat
+    // the sessions already retaining mainView as a fresh 新会话.
+    if (sessionsList) captureMainViewBaseline()
     try {
       const dispose = list.subscribe(() => {
         pruneLoadedWorkspaces()
         settleBootWorkspace()
+        if (sessionsList) noteNewSessionArrivals()
       })
       if (typeof dispose === 'function') {
         subscribedLists.add(list)
@@ -1266,6 +1292,163 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
+   * `mainView` counts plus whether the session list is ready to trust them.
+   *
+   * A catalog that is still loading is not an arrival: those references were
+   * already there. Only a count that grows after a ready baseline is a 新会话.
+   *
+   * @returns {{ map: Map<string, number>, ready: boolean }}
+   */
+  function readMainViewBaseline() {
+    const map = new Map()
+    let ready = false
+    try {
+      const catalog = catalogNow()
+      ready = catalog.sessionsReady() === true
+      for (const row of catalog.mainViewRetentions()) map.set(row.id, row.count)
+    } catch (_error) {
+      ready = false
+    }
+    return { map, ready }
+  }
+
+  function captureMainViewBaseline() {
+    const reading = readMainViewBaseline()
+    mainViewBaseline = reading.map
+    mainViewBaselineReady = reading.ready
+  }
+
+  /**
+   * Whether a 全局面板 is covering the conversation cell.
+   *
+   * `null` and a missing id are the pane view (`activePanelId ?? "conversation"`).
+   * Anything else is a 全局面板. A throw means "don't guess": leave the panel
+   * to dsh.
+   *
+   * @returns {boolean}
+   */
+  function globalPanelOpen() {
+    try {
+      const panelId = ctx?.layout?.panelInfo?.getSnapshot?.()?.activePanelId
+      return panelId !== null && panelId !== undefined
+    } catch (_error) {
+      return false
+    }
+  }
+
+  /**
+   * Close a 全局面板 so the pane view shows again.
+   *
+   * The only `selectPanel` call in this plugin. It runs only while the shadow
+   * is registered and split is active; otherwise dsh keeps the click. Already
+   * being in the pane view is a no-op — `selectPanel('conversation')` is never
+   * passed, because a non-null id hides the right bar.
+   *
+   * @returns {boolean} whether the pane view is showing (or was already)
+   */
+  function returnToPanesValue() {
+    if (disposed || !registered || !snapshot.active) return false
+    if (!globalPanelOpen()) return true
+    const select = ctx?.layout?.selectPanel
+    if (typeof select !== 'function') return false
+    try {
+      select(null)
+    } catch (error) {
+      emit({ error: messageOf(error) })
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Put a 新会话 into the visible workspace.
+   *
+   * An idle focused pane is replaced. A running one keeps its turn and the new
+   * session opens to its right, under the pane budget. An empty workspace gets
+   * its first pane. ADR-0019 does not apply: that rule is for current drifting
+   * onto an idle session, and this arrival is the click on 新会话.
+   *
+   * @param {string} sessionId
+   * @returns {boolean} whether the session is now in a pane
+   */
+  function placeNewSession(sessionId) {
+    if (disposed || !registered || !snapshot.active) return false
+    if (typeof sessionId !== 'string' || sessionId === '') return false
+    if (book.locatePaneIn(sessionId) !== null) return false
+    const stickyId = currentSessionId()
+    returnToPanesValue()
+    const layout = book.activeLayout()
+    const focused = focusedPane()
+    let placed = false
+    if (focused === null || layout.root === null || layout.activePaneId === null) {
+      placed = openSessionPane(layout, sessionId, book.getActiveWorkspaceId()) === true
+    } else if (isSessionRunning(focused.sessionId)) {
+      const pending = budget.split(focused.paneId, 'row', { sessionId })
+      if (pending !== undefined && typeof pending.catch === 'function') {
+        pending.catch((error) => {
+          console.error('[dsh-hk-craft] failed to open 新会话 beside the running pane', error)
+        })
+      }
+      placed = book.locatePaneIn(sessionId) !== null
+    } else {
+      placed = layoutRuntime.layout.replaceFocusedSession(sessionId) === true
+    }
+    if (placed && stickyId !== null && stickyId !== sessionId) {
+      newSessionGuard = { sessionId, stickyId }
+    }
+    return placed
+  }
+
+  /**
+   * Read `mainView` growth off the session list.
+   *
+   * While split is inactive the baseline still advances, so a later activation
+   * does not replay arrivals dsh already handled. Notifications from our own
+   * retain wait until the layout that caused them is stored.
+   */
+  function noteNewSessionArrivals() {
+    if (disposed || !registered || !snapshot.active) {
+      if (!disposed) captureMainViewBaseline()
+      return
+    }
+    if (routingDepth > 0 || revealing) {
+      scheduleNewSessionObserve()
+      return
+    }
+    observeNewSessionArrivals()
+  }
+
+  function scheduleNewSessionObserve() {
+    if (newSessionObserveScheduled) return
+    newSessionObserveScheduled = true
+    queueMicrotask(() => {
+      newSessionObserveScheduled = false
+      if (disposed) return
+      if (routingDepth > 0 || revealing) {
+        scheduleNewSessionObserve()
+        return
+      }
+      observeNewSessionArrivals()
+    })
+  }
+
+  function observeNewSessionArrivals() {
+    if (disposed || !registered || !snapshot.active) return
+    const reading = readMainViewBaseline()
+    const previous = mainViewBaseline
+    const previousReady = mainViewBaselineReady
+    mainViewBaseline = reading.map
+    mainViewBaselineReady = reading.ready
+    // The first ready snapshot is the baseline. Loading finishing is not a click
+    // on 新会话, and a list that is loading again cannot prove a count grew.
+    if (!reading.ready || !previousReady || previous === null) return
+    for (const [sessionId, count] of reading.map) {
+      const before = previous.get(sessionId) ?? 0
+      if (count > before) placeNewSession(sessionId)
+    }
+  }
+
+  /**
    * Point the shell's current session at the focused pane.
    *
    * The right bar reads that current, not the pane. `ui-workspace` keeps its
@@ -1323,6 +1506,19 @@ function createPaneController(ctx, options = {}) {
     const sessionId = currentSessionId()
     if (sessionId === null) return
     const focused = focusedPane()
+    // A 新会话 just took the focused pane. The sticky current still names the
+    // session that pane was showing; following it would swap the new one back
+    // out. A later current that names some other session is a real navigation.
+    if (newSessionGuard !== null) {
+      const showingNew = focused !== null && focused.sessionId === newSessionGuard.sessionId
+      if (!showingNew) {
+        newSessionGuard = null
+      } else if (sessionId === newSessionGuard.stickyId) {
+        return
+      } else if (sessionId !== newSessionGuard.sessionId) {
+        newSessionGuard = null
+      }
+    }
     if (focused !== null && focused.sessionId === sessionId) return
     if (
       focused !== null &&
@@ -1431,6 +1627,18 @@ function createPaneController(ctx, options = {}) {
     markRegistered() {
       registered = true
       refreshProbe()
+    },
+    /**
+     * Close a 全局面板 and show the pane view again.
+     *
+     * No-op unless this plugin owns the conversation cell (shadow registered
+     * and split active). Already showing the pane view does not call
+     * `selectPanel`. Never selects `'conversation'`.
+     *
+     * @returns {boolean}
+     */
+    returnToPanes() {
+      return returnToPanesValue()
     },
     refreshProbe,
     /**

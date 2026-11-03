@@ -228,6 +228,7 @@ function fakeControllerCtx({
   let createCount = 0
   const listeners = new Set()
   const entryErrorListeners = new Set()
+  const sessionListeners = new Set()
   const panel = { activePanelId: null }
   const panelInfo = {
     getSnapshot: () => ({ activePanelId: panel.activePanelId }),
@@ -246,7 +247,13 @@ function fakeControllerCtx({
     },
   }
   const sessions = {
-    list: { getSnapshot: () => ({ byId: rows }) },
+    list: {
+      getSnapshot: () => ({ byId: rows }),
+      subscribe(listener) {
+        sessionListeners.add(listener)
+        return () => sessionListeners.delete(listener)
+      },
+    },
     retain(sessionId, options) {
       if (retainFails) throw new Error('session cannot be retained')
       if (retainFailsFor[sessionId] === true) throw new Error(`session ${sessionId} cannot be retained`)
@@ -325,6 +332,10 @@ function fakeControllerCtx({
     },
     reportEntryError(key, entry, error) {
       for (const listener of [...entryErrorListeners]) listener(key, entry, error, { abdicated: false })
+    },
+    /** Notify `sessions.list` subscribers after `rows` has been mutated. */
+    publishSessions() {
+      for (const listener of [...sessionListeners]) listener()
     },
     setPanel(panelId) {
       panel.activePanelId = panelId
@@ -735,6 +746,231 @@ test('current changes are ignored until split mode is active', () => {
 
   assert.equal(controller.getSnapshot().active, false)
   assert.deepEqual(fake.calls.retain, [])
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// 新会话: dsh keeps current stuck on the focused pane's mainView, so a session
+// that newly gains a mainView and is not in any pane is the arrival signal.
+// These cases must fail if only the current-driven path is implemented.
+// ---------------------------------------------------------------------------
+
+/**
+ * What `selectPanel` saw, including which session was focused at the call.
+ * Proves a 全局面板 closes before the 新会话 is placed.
+ *
+ * @param {ReturnType<typeof fakeControllerCtx>} fake
+ * @param {ReturnType<typeof createPaneController>} controller
+ */
+function watchPanelClose(fake, controller) {
+  const original = fake.ctx.layout.selectPanel.bind(fake.ctx.layout)
+  const seen = []
+  fake.ctx.layout.selectPanel = (panelId) => {
+    seen.push({ panelId, sessionId: controller.getSnapshot().sessionId })
+    original(panelId)
+  }
+  return seen
+}
+
+test('returnToPanes closes a global panel only while split owns the conversation cell', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
+  const controller = createPaneController(fake.ctx)
+  fake.setPanel('plugins')
+
+  assert.equal(controller.returnToPanes(), false)
+  assert.deepEqual(fake.calls.selectPanel, [])
+
+  controller.markRegistered()
+  assert.equal(controller.returnToPanes(), false)
+  assert.deepEqual(fake.calls.selectPanel, [])
+
+  controller.activate('s1')
+  fake.setPanel('plugins')
+  assert.equal(controller.returnToPanes(), true)
+  assert.deepEqual(fake.calls.selectPanel, [null])
+  assert.equal(fake.panel.activePanelId, null)
+
+  assert.equal(controller.returnToPanes(), true)
+  assert.deepEqual(fake.calls.selectPanel, [null])
+  controller.dispose()
+})
+
+test('a session that gains mainView enters the focused pane while current stays put', async () => {
+  const current = sessionCurrent()
+  current.setKey('s1')
+  const { fake, controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: false, blank: false, retainedBy: { mainView: 1 } },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }],
+  })
+  controller.attachSessionSelection(current)
+  fake.setPanel('plugins')
+  const seen = watchPanelClose(fake, controller)
+
+  fake.rows.s2 = { id: 's2', running: false, blank: true, retainedBy: { mainView: 1 } }
+  fake.publishSessions()
+
+  const state = controller.getSnapshot()
+  assert.equal(current.getSnapshot().key, 's1')
+  assert.equal(state.sessionId, 's2')
+  assert.equal(state.panes.p1.sessionId, 's2')
+  assert.equal(Object.keys(state.panes).length, 1)
+  assert.deepEqual(
+    seen.map((entry) => entry.panelId),
+    [null],
+  )
+  assert.equal(seen[0].sessionId, 's1')
+  assert.equal(fake.panel.activePanelId, null)
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.equal(
+    liveMainView(fake).some((reference) => reference.sessionId === 's2' && reference.released !== true),
+    true,
+  )
+  controller.dispose()
+})
+
+test('a new session beside a running focused pane opens to its right', async () => {
+  const current = sessionCurrent()
+  current.setKey('s1')
+  const { fake, controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: true, blank: false, retainedBy: { mainView: 1 } },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }],
+  })
+  controller.attachSessionSelection(current)
+
+  fake.rows.s2 = { id: 's2', running: false, blank: true, retainedBy: { mainView: 1 } }
+  fake.publishSessions()
+
+  const state = controller.getSnapshot()
+  assert.equal(current.getSnapshot().key, 's1')
+  assert.equal(state.panes.p1.sessionId, 's1')
+  assert.equal(state.panes.p2.sessionId, 's2')
+  assert.equal(state.activePaneId, 'p2')
+  assert.equal(state.sessionId, 's2')
+  assert.equal(state.root.dir, 'row')
+  assert.equal(state.root.a.paneId, 'p1')
+  assert.equal(state.root.b.paneId, 'p2')
+  assert.deepEqual(fake.calls.interrupt, [])
+  assert.equal(
+    livePaneRefs(fake).some((reference) => reference.sessionId === 's1' && reference.released !== true),
+    true,
+  )
+  controller.dispose()
+})
+
+test('a new session at the pane limit reports the limit and leaves the other panes', async () => {
+  const current = sessionCurrent()
+  current.setKey('s1')
+  const { fake, controller } = await readyController({
+    created: ['s2'],
+    paneIds: ['p1', 'p2', 'p3'],
+    rows: {
+      s1: { id: 's1', running: true, blank: false, retainedBy: { mainView: 1 } },
+      s2: { id: 's2', running: false, blank: false, retainedBy: {} },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2', 's3'] }],
+  })
+  assert.equal(await controller.budget.split('p1', 'row'), true)
+  fake.rows.s2.running = true
+  fake.rows.s1.running = false
+  controller.attachSessionSelection(current)
+  current.setKey('s2')
+  controller.budget.setMaxPanes(2)
+  const before = controller.getSnapshot()
+
+  fake.rows.s3 = { id: 's3', running: false, blank: true, retainedBy: { mainView: 1 } }
+  fake.publishSessions()
+
+  const state = controller.getSnapshot()
+  assert.match(state.error, /pane limit/)
+  assert.equal(state.panes.p1.sessionId, 's1')
+  assert.equal(state.panes.p2.sessionId, 's2')
+  assert.equal(state.panes.p3, undefined)
+  assert.equal(Object.keys(state.panes).length, 2)
+  assert.equal(state.activePaneId, before.activePaneId)
+  assert.equal(state.sessionId, before.sessionId)
+  controller.dispose()
+})
+
+test('the same new session is placed once and a sticky current does not swap it', async () => {
+  const current = sessionCurrent()
+  current.setKey('s1')
+  const { fake, controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: false, blank: false, retainedBy: { mainView: 1 } },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }],
+  })
+  controller.attachSessionSelection(current)
+
+  fake.rows.s2 = { id: 's2', running: false, blank: true, retainedBy: { mainView: 1 } }
+  fake.publishSessions()
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's2')
+
+  current.setKey('s1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's2')
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
+
+  current.setKey('s2')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's2')
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
+
+  fake.rows.s2.retainedBy = { mainView: 2 }
+  fake.publishSessions()
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's2')
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
+  controller.dispose()
+})
+
+test('a new session in a workspace with no panes opens the first pane', () => {
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['fresh'] }],
+  })
+  const ids = ['p1']
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
+  controller.markRegistered()
+  const current = sessionCurrent()
+  current.setKey('old')
+  controller.attachSessionSelection(current)
+  controller.activate()
+  assert.equal(controller.getSnapshot().activePaneId, null)
+
+  fake.rows.fresh = { id: 'fresh', running: false, blank: true, retainedBy: { mainView: 1 } }
+  fake.publishSessions()
+
+  assert.equal(current.getSnapshot().key, 'old')
+  assert.equal(controller.getSnapshot().sessionId, 'fresh')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'fresh')
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
+  controller.dispose()
+})
+
+test('the first ready session list does not treat an existing mainView as a new session', () => {
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'kept'] }],
+  })
+  let phase = 'pending'
+  const rows = {}
+  fake.ctx.sessions.list.getSnapshot = () => ({ phase, byId: rows })
+  const ids = ['p1', 'p2']
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
+  controller.markRegistered()
+  controller.activate('s1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+
+  rows.s1 = { id: 's1', running: false, blank: false, retainedBy: { mainView: 1 } }
+  rows.kept = { id: 'kept', running: false, blank: false, retainedBy: { mainView: 1 } }
+  phase = 'ready'
+  fake.publishSessions()
+
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+  assert.equal(controller.getSnapshot().panes.p2, undefined)
+  assert.equal(Object.keys(controller.getSnapshot().panes).length, 1)
   controller.dispose()
 })
 

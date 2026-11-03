@@ -274,8 +274,9 @@ function apply(ctx) {
   ctx.effect(() => {
     // The `main` keyed root slot is declared by ui-layout. Shadow the
     // `conversation` cell (priority -1) and then the child slot that entry
-    // declares. Never select a panel: `activePanelId` must stay null so the
-    // native right bar keeps its gate open.
+    // declares. Do not select a panel key here: `activePanelId` must stay null
+    // so the native right bar keeps its gate open. Closing a 全局面板 is
+    // `returnToPanes` (`selectPanel(null)`), not a selection of `conversation`.
     //
     // The file-drop router is the same lifetime. Hidden workspaces keep their
     // composers mounted, so the listener has to outlive any one pane and come
@@ -325,6 +326,7 @@ function apply(ctx) {
   // layout after the public delete.
   const workspacePanes = {
     active: () => controller.getSnapshot().active,
+    returnToPanes: () => controller.returnToPanes(),
     switchWorkspace: (workspaceId) => controller.switchWorkspace(workspaceId),
     forgetWorkspace: (workspaceId, options) => controller.forgetWorkspace(workspaceId, options),
     isWorkspaceEnabled: (workspaceId) => controller.isWorkspaceEnabled(workspaceId),

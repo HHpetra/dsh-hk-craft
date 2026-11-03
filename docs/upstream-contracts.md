@@ -39,9 +39,10 @@ the plugin does not have to clean it up by hand.
 
 **Why we rely on it:** choosing any `main` key other than the fallback
 unmounts the native Conversation. This plugin does not. It shadows the
-`conversation` cell and never calls `selectPanel`, so `activePanelId` stays
-null — see [Shadowing the conversation cell](#shadowing-the-conversation-cell).
-`selectPanel(null)` is still how the shell returns from a global panel.
+`conversation` cell. The one `selectPanel` call is `selectPanel(null)`, from
+`returnToPanes`, and only while the shadow is registered and split is active
+— that closes a 全局面板 and leaves `activePanelId` null. See
+[Shadowing the conversation cell](#shadowing-the-conversation-cell).
 `selectPanel('conversation')` is not that return: it sets `activePanelId` to
 `"conversation"` and the right bar hides.
 
@@ -65,11 +66,12 @@ Unregistering the shadow lets the official `ConversationPanel` win the cell
 again. Shadowing does not write `activePanelId`. While that id is null, the
 frame's `activePanelId ?? "conversation"` still resolves to this cell.
 
-**Why we rely on it:** the pane host is that shadow. Because nothing selects a
-panel, the right bar's `activePanelId === null` gate stays open and the focused
-pane's `mainView` is the on-screen session. A global panel such as settings
-still calls `selectPanel('settings')`, which hides the right bar by the native
-rule; `selectPanel(null)` returns to this shadow.
+**Why we rely on it:** the pane host is that shadow. It does not select a
+panel key, so the right bar's `activePanelId === null` gate stays open and
+the focused pane's `mainView` is the on-screen session. A 全局面板 such as
+the plugin manager still calls `selectPanel` with its own key, which hides
+the right bar by the native rule; `returnToPanes` calls `selectPanel(null)`
+to come back to this shadow. It never calls `selectPanel('conversation')`.
 
 **Verified:** keyed-cell priority, the same-priority throw and the single child
 declarer were read against Desktop `0.2.1-rc.5`, with a source cross-check on

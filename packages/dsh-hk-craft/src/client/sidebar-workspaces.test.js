@@ -174,9 +174,11 @@ function renderSection({
   openWorkspace = () => {},
   deleteWorkspace = () => {},
   reorderWorkspace = () => {},
+  extra = {},
 } = {}) {
   const { workspaces, sessions, statuses } = snapshots({ current, started })
   return WorkspaceSection({
+    ...extra,
     t: (key) => zh[key] ?? key,
     wide,
     useWorkspaces: (selector) => selector(workspaces),
@@ -273,6 +275,30 @@ test('the select control keeps the workspace name, light and click target', () =
 
     select.props.onClick()
     assert.deepEqual(opened, ['w1'], 'clicking still opens or switches that workspace')
+  })
+})
+
+test('a workspace click only calls openWorkspace and the section does not touch the panel', () => {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
+    const opened = []
+    const panel = []
+    const tree = renderSection({
+      openWorkspace: (workspaceId) => opened.push(workspaceId),
+      extra: {
+        layout: { selectPanel: (panelId) => panel.push(panelId) },
+        selectPanel: (panelId) => panel.push(panelId),
+        returnToPanes: () => panel.push('return'),
+      },
+    })
+    const select = descendants(tree).find(
+      (element) => element.type === 'button' && element.props['aria-label']?.startsWith('Project A'),
+    )
+
+    select.props.onClick()
+
+    assert.deepEqual(opened, ['w1'])
+    assert.deepEqual(panel, [])
   })
 })
 
