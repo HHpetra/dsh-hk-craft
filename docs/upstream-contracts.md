@@ -741,8 +741,8 @@ and `completionUnread` (see [`#completion-unread`](#completion-unread)) supply t
 other facts. How those become a sidebar light — including what gray and idle mean
 — is a plugin UI decision, recorded in
 [`README.md`](README.md#5-工作区状态与五态灯) and
-[ADR-0007](../ai-docs/ADR/decisions.md#adr-0007--侧栏工作区管理窗格条工具栏与设置页搬迁) /
-[ADR-0008](../ai-docs/ADR/decisions.md#adr-0008--五态工作区灯与窗格头部原生控件),
+[ADR-0007](adr/0007-workspace-management-and-settings.md) /
+[ADR-0008](adr/0008-five-state-workspace-lights.md),
 not an upstream contract.
 
 **Degradation:** an absent storage backend or a throwing store means "no key" for

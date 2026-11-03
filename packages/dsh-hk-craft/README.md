@@ -346,7 +346,7 @@ pnpm test      # 包内单元测试
 | `src/client/` | 浏览器侧：分屏、标签条、工作区、命令、设置页与通知 |
 | `scripts/build-client.mjs` | 客户端 bundle 构建脚本 |
 
-仓库级架构、ADR 与领域术语见 `docs/README.md`、`ai-docs/ADR/decisions.md` 和 `GLOSSARY.md`。
+仓库级架构、ADR 与领域术语见 `docs/README.md`、`docs/adr/` 和 `GLOSSARY.md`。
 
 ## 许可
 
