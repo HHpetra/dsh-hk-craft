@@ -146,7 +146,14 @@ and a focused split pane holds another, that scan (and the sticky
 `uiSession.current`) can name a conversation that was **not** the one on
 screen — notably after a plugin remount, when the pane's reference has just
 been released. The plugin's own persisted layout, not this value, is the
-record of the view (ADR-0020). Releasing a reference tears down that client
+record of the view (ADR-0020). While split is active the sidebar's 当前行
+reads the 可见工作区 on the pane-controller snapshot — the workspace whose
+pane tree is on screen — and not this scan. Switching workspaces replaces
+that tree without moving dsh's current session, so the two can name different
+workspaces. The current row uses this scan only when split is inactive or
+there is no controller snapshot. When the snapshot's workspace id has no
+loaded layout, the screen shows the first loaded layout and the current row
+names that workspace. Releasing a reference tears down that client
 generation only; it never stops the host agent.
 
 **Why we rely on it:** every mounted pane holds one `hkcraftPane` reference;
@@ -181,8 +188,9 @@ session, so the tab's read is the one the card displayed.
 **Verified:** retention API and the scan were read in the session controller and
 ui-workspace bundles; the review body's session argument was read in the
 deliverables bundle (0.2.1-rc.5). Runtime probe: focus different panes and
-check the sidebar's current row and rename/fork shortcuts follow the focused
-one. In split view, click a file row on a "本轮改动" card and confirm the right
+check rename/fork shortcuts follow the focused one. The sidebar 当前行 follows
+the 可见工作区, which can differ from the session this scan names. In split
+view, click a file row on a "本轮改动" card and confirm the right
 bar shows that turn's diffs; repeat from a second pane. A review opened while
 the bar already shows that session does not call `openSession`.
 

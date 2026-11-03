@@ -4,10 +4,16 @@
  * Sidebar workspace rows: which light a workspace carries, and which row is the
  * current one.
  *
- * Pure on purpose. It reads one argument — the `catalog` read model from
- * `catalog.js` — so no dsh record shape reaches this file: an upstream rename is
- * a one-file fix there, and every rule here stays unit-testable in Node with
- * plain fixtures.
+ * Pure on purpose. It reads the `catalog` read model from `catalog.js`, the
+ * enabled-workspace set, and — while split is active — the 可见工作区 id. No
+ * pane controller and no dsh record shape reaches this file: an upstream rename
+ * is a one-file fix in `catalog.js`, and every rule here stays unit-testable
+ * in Node with plain fixtures.
+ *
+ * The 当前行 and the five-state light are separate answers. The light never
+ * looks at the 可见工作区. The 当前行 does, because switching workspaces
+ * replaces the pane tree and does not move dsh's current session, so the two
+ * can name different workspaces (`GLOSSARY.md`, ADR-0020).
  *
  * Light precedence: red > yellow > green > idle > gray.
  *   red    a session in this workspace is waiting for the user (approval,
@@ -95,6 +101,45 @@ function enabledLookup(enabledWorkspaces) {
 }
 
 /**
+ * The workspace id whose pane tree is on screen.
+ *
+ * Same rule as `pane-view.js`'s `workspaceGroups`: the snapshot's workspace id
+ * when that layout is loaded, otherwise the first loaded layout (the tree the
+ * main area actually paints). An id with no loaded layouts falls through to
+ * the snapshot's own workspace id, which may be null.
+ *
+ * @param {{ workspaceId?: string|null, layouts?: object|null }} state snapshot fields, not the controller
+ * @returns {string|null|undefined}
+ */
+function shownWorkspaceId(state) {
+  const entries = Object.entries(state.layouts ?? {})
+  return state.workspaceId !== null && state.layouts?.[state.workspaceId] !== undefined
+    ? state.workspaceId
+    : (entries[0]?.[0] ?? state.workspaceId)
+}
+
+/**
+ * The 可见工作区 the 当前行 should name.
+ *
+ * - `undefined` — no controller snapshot, or the snapshot says split is off.
+ *   The row falls back to dsh's current session.
+ * - `null` — split is on, but the screen is not showing a workspace pane tree.
+ *   No row is current.
+ * - a string — that workspace's tree is the one on screen, including the
+ *   first-loaded-layout fallback above.
+ *
+ * @param {unknown} snapshot pane-controller snapshot; a plain object, never the controller
+ * @returns {string|null|undefined}
+ */
+function visibleWorkspaceIdOf(snapshot) {
+  if (snapshot === null || snapshot === undefined || typeof snapshot !== 'object') return undefined
+  if (snapshot.active !== true) return undefined
+  const shown = shownWorkspaceId(snapshot)
+  if (typeof shown === 'string' && shown !== '') return shown
+  return null
+}
+
+/**
  * Project the catalog into the rows the section renders.
  *
  * Archived sessions are excluded: they are not reachable from this sidebar any
@@ -108,14 +153,25 @@ function enabledLookup(enabledWorkspaces) {
  * Omitting it (or passing null) degrades to "all enabled", which only loses the
  * never-opened gray.
  *
+ * `visibleWorkspaceId` is the 可见工作区 (`visibleWorkspaceIdOf`). Omit it,
+ * or pass `undefined`, and the 当前行 stays on the workspace that holds dsh's
+ * current session — the degrade path for "split is off" and "no controller".
+ * A string names the row whose pane tree is on screen, even when that
+ * disagrees with the current session, and even when the id is not in the
+ * inventory (then no row is current: the sidebar must not point at a different
+ * workspace than the one on screen). `null` is an active split with no
+ * workspace tree showing, and likewise marks no row.
+ *
  * @param {{workspaces: () => ReadonlyArray<{id: string, title: string}>, workspacesReady: () => boolean, sessionsReady: () => boolean, sessionsOf: (workspaceId: string) => ReadonlyArray<object>, signal: (sessionId: string) => object, current: () => string|undefined} | null | undefined} catalog the read model
  * @param {Set<string> | ReadonlyArray<string> | null | undefined} [enabledWorkspaces]
+ * @param {string|null|undefined} [visibleWorkspaceId]
  * @returns {Array<{ workspaceId: string, title: string, light: WorkspaceLight, current: boolean }>}
  */
-function projectWorkspaceSection(catalog, enabledWorkspaces) {
+function projectWorkspaceSection(catalog, enabledWorkspaces, visibleWorkspaceId) {
   if (catalog === null || catalog === undefined) return []
   if (catalog.workspacesReady() !== true) return []
   const sessionsReady = catalog.sessionsReady() === true
+  const followVisible = visibleWorkspaceId !== undefined
   const current = catalog.current()
   const isEnabled = enabledLookup(enabledWorkspaces)
   return catalog.workspaces().map((workspace) => {
@@ -131,7 +187,9 @@ function projectWorkspaceSection(catalog, enabledWorkspaces) {
       workspaceId: workspace.id,
       title: workspace.title,
       light: isEnabled(workspace.id) ? workspaceLight(signals) : LIGHT_GRAY,
-      current: current !== undefined && rows.some((row) => row.id === current),
+      current: followVisible
+        ? workspace.id === visibleWorkspaceId
+        : current !== undefined && rows.some((row) => row.id === current),
     }
   })
 }
@@ -156,6 +214,8 @@ module.exports = {
   LIGHT_YELLOW,
   LIGHT_RED,
   workspaceLight,
+  shownWorkspaceId,
+  visibleWorkspaceIdOf,
   projectWorkspaceSection,
   displayWorkspaceName,
 }

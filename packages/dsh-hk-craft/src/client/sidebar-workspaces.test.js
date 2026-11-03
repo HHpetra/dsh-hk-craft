@@ -119,8 +119,8 @@ function snapshots({ current = false, started = true } = {}) {
   }
 }
 
-/** The pane controller face the section reads enablement from. */
-function paneFace(enabledIds) {
+/** The pane controller face the section reads enablement and the 可见工作区 from. */
+function paneFace(enabledIds, snapshot = { active: true, workspaceId: 'w1', layouts: { w1: { panes: {} } } }) {
   const enabled = new Set(enabledIds)
   const calls = { subscribe: 0, getSnapshot: 0 }
   return {
@@ -133,9 +133,35 @@ function paneFace(enabledIds) {
       },
       getSnapshot() {
         calls.getSnapshot += 1
-        return { active: true, workspaceId: 'w1' }
+        return snapshot
       },
     },
+  }
+}
+
+/**
+ * The three 当前行 signals on every workspace row, in list order.
+ * One shape per row: the data marker, `aria-current`, and whether the name is bold.
+ */
+function currentRowShapes(tree) {
+  return findAllByAttribute(tree, 'data-hkcraft-workspace-row').map((row) => {
+    const select = childrenOf(row).find((child) => child.type === 'button')
+    return {
+      workspaceId: row.props['data-hkcraft-workspace-row'],
+      current: row.props['data-hkcraft-workspace-current'],
+      ariaCurrent: select?.props['aria-current'],
+      fontWeight: select?.props.style?.fontWeight,
+    }
+  })
+}
+
+/** A controller snapshot whose visible workspace is `workspaceId`, layout included. */
+function visibleSnapshot(workspaceId, { active = true, layouts } = {}) {
+  const panes = workspaceId === 'w2' ? { a: {}, b: {}, c: {} } : { p1: { paneId: 'p1' } }
+  return {
+    active,
+    workspaceId,
+    layouts: layouts ?? { [workspaceId]: { panes } },
   }
 }
 
@@ -143,6 +169,7 @@ function paneFace(enabledIds) {
 function renderSection({
   current = false,
   started = true,
+  wide = true,
   panes,
   openWorkspace = () => {},
   deleteWorkspace = () => {},
@@ -151,6 +178,7 @@ function renderSection({
   const { workspaces, sessions, statuses } = snapshots({ current, started })
   return WorkspaceSection({
     t: (key) => zh[key] ?? key,
+    wide,
     useWorkspaces: (selector) => selector(workspaces),
     useSessions: (selector) => selector(sessions),
     useSessionStatus: (selector) => selector(statuses),
@@ -298,10 +326,103 @@ test('the current workspace still marks its select control', () => {
   const fakeReact = createFakeReact()
   withFakeReact(fakeReact, () => {
     const tree = renderSection({ current: true })
-    const buttons = descendants(tree).filter((element) => element.type === 'button')
-    const current = buttons.find((button) => button.props['aria-label']?.startsWith('Project A'))
+    assert.deepEqual(currentRowShapes(tree), [
+      { workspaceId: 'w1', current: 'true', ariaCurrent: 'true', fontWeight: 600 },
+      { workspaceId: 'w2', current: 'false', ariaCurrent: undefined, fontWeight: 400 },
+    ])
+  })
+})
 
-    assert.equal(current.props['aria-current'], 'true')
+test('the current-row signals follow the visible workspace together', () => {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
+    // s1 retains mainView, so dsh's current session lives in w1. The screen is w2.
+    const { panes } = paneFace(['w1', 'w2'], visibleSnapshot('w2'))
+    const tree = renderSection({ panes, current: true })
+    assert.deepEqual(currentRowShapes(tree), [
+      { workspaceId: 'w1', current: 'false', ariaCurrent: undefined, fontWeight: 400 },
+      { workspaceId: 'w2', current: 'true', ariaCurrent: 'true', fontWeight: 600 },
+    ])
+  })
+})
+
+test('a controller snapshot change redraws the current row onto the visible workspace', () => {
+  let snapshot = visibleSnapshot('w1')
+  const listeners = []
+  const panes = {
+    isWorkspaceEnabled: () => true,
+    subscribe(listener) {
+      listeners.push(listener)
+      return () => {}
+    },
+    getSnapshot() {
+      return snapshot
+    },
+  }
+  let notify = () => {}
+  const fakeReact = {
+    Fragment: Symbol('Fragment'),
+    createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
+    useEffect: () => {},
+    useRef: (value) => ({ current: value }),
+    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+    useSyncExternalStore: (subscribe, getSnapshot) => {
+      subscribe(() => notify())
+      return getSnapshot()
+    },
+  }
+  withFakeReact(fakeReact, () => {
+    let tree
+    const draw = () => {
+      tree = renderSection({ panes, current: true })
+    }
+    notify = draw
+    draw()
+    assert.deepEqual(currentRowShapes(tree), [
+      { workspaceId: 'w1', current: 'true', ariaCurrent: 'true', fontWeight: 600 },
+      { workspaceId: 'w2', current: 'false', ariaCurrent: undefined, fontWeight: 400 },
+    ])
+
+    snapshot = visibleSnapshot('w2')
+    assert.equal(listeners.length, 1, 'the section keeps its one pane subscription')
+    listeners[0]()
+    assert.deepEqual(currentRowShapes(tree), [
+      { workspaceId: 'w1', current: 'false', ariaCurrent: undefined, fontWeight: 400 },
+      { workspaceId: 'w2', current: 'true', ariaCurrent: 'true', fontWeight: 600 },
+    ])
+  })
+})
+
+test('a visible workspace id with no loaded layout marks the row the screen shows', () => {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
+    const { panes } = paneFace(['w1', 'w2'], {
+      active: true,
+      workspaceId: 'gone',
+      layouts: {
+        w2: { panes: { a: {}, b: {} } },
+        w1: { panes: { p1: {} } },
+      },
+    })
+    const tree = renderSection({ panes, current: true })
+    assert.deepEqual(currentRowShapes(tree), [
+      { workspaceId: 'w1', current: 'false', ariaCurrent: undefined, fontWeight: 400 },
+      { workspaceId: 'w2', current: 'true', ariaCurrent: 'true', fontWeight: 600 },
+    ])
+  })
+})
+
+test('the narrow sidebar has no current marker', () => {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
+    const { panes } = paneFace(['w1'], visibleSnapshot('w1'))
+    const tree = renderSection({ panes, current: true, wide: false })
+    assert.deepEqual(currentRowShapes(tree), [])
+    assert.equal(
+      descendants(tree).some((element) => element.props?.['aria-current'] !== undefined),
+      false,
+    )
+    assert.notEqual(findByAttribute(tree, 'data-hkcraft-workspace-add'), null)
   })
 })
 
