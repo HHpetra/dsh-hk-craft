@@ -22,6 +22,7 @@ const {
   LIGHT_RED,
   workspaceLight,
   projectWorkspaceSection: sectionFromCatalog,
+  visibleWorkspaceIdOf,
   displayWorkspaceName,
 } = require('./workspace-status.js')
 const { openCatalog } = require('./catalog.js')
@@ -33,10 +34,15 @@ const { openCatalog } = require('./catalog.js')
  * @param {any} sessions `sessions.list` snapshot
  * @param {any} statuses `sessionStatus` map or record
  * @param {any} [enabled] "opened in split" set
+ * @param {string|null|undefined} [visibleWorkspaceId] 可见工作区; omit to use dsh's current session
  * @returns {Array<object>}
  */
-function sectionRows(workspaces, sessions, statuses, enabled) {
-  return sectionFromCatalog(openCatalog({ sessions, workspaces, statuses }), enabled)
+function sectionRows(workspaces, sessions, statuses, enabled, visibleWorkspaceId) {
+  return sectionFromCatalog(
+    openCatalog({ sessions, workspaces, statuses }),
+    enabled,
+    visibleWorkspaceId,
+  )
 }
 
 /** An idle session that has started at least one turn, with nothing unread. */
@@ -283,8 +289,138 @@ test('an enabled set may be any collection of ids, not only a Set', () => {
 test('the workspace holding the main-view session is the current one', () => {
   const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED)
   assert.deepEqual(
-    rows.map((row) => row.current),
+    rows.map((row) => [row.workspaceId, row.current]),
+    [
+      ['w1', true],
+      ['w2', false],
+      ['w3', false],
+    ],
+  )
+})
+
+/** Whole-row shape: which workspace is the 当前行, and that the lights did not move. */
+function rowMarks(rows) {
+  return rows.map((row) => [row.workspaceId, row.current, row.light])
+}
+
+test('the current row follows the visible workspace when it switches', () => {
+  const onFirst = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, 'w1')
+  const onThird = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, 'w3')
+  // s2 retains mainView inside w1, so a row that still followed the current
+  // session would stay on w1. Lights stay on the session signals.
+  assert.deepEqual(rowMarks(onFirst), [
+    ['w1', true, LIGHT_RED],
+    ['w2', false, LIGHT_GRAY],
+    ['w3', false, LIGHT_IDLE],
+  ])
+  assert.deepEqual(rowMarks(onThird), [
+    ['w1', false, LIGHT_RED],
+    ['w2', false, LIGHT_GRAY],
+    ['w3', true, LIGHT_IDLE],
+  ])
+})
+
+test('the visible workspace wins when it disagrees with the current session', () => {
+  // s2 is the main-view session and a member of w1. The screen is showing w2.
+  const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, 'w2')
+  assert.deepEqual(rowMarks(rows), [
+    ['w1', false, LIGHT_RED],
+    ['w2', true, LIGHT_GRAY],
+    ['w3', false, LIGHT_IDLE],
+  ])
+})
+
+test('a visible workspace id with no loaded layout marks the workspace the screen shows', () => {
+  // Same rule as the pane host: no layout for `gone`, so the first loaded
+  // layout (w3, then w1) is the tree on screen. w1 still holds the current session.
+  const visible = visibleWorkspaceIdOf({
+    active: true,
+    workspaceId: 'gone',
+    layouts: {
+      w3: { root: null, panes: {}, activePaneId: null },
+      w1: { root: null, panes: { p1: { paneId: 'p1' } }, activePaneId: 'p1' },
+    },
+  })
+  assert.equal(visible, 'w3')
+  assert.deepEqual(rowMarks(sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, visible)), [
+    ['w1', false, LIGHT_RED],
+    ['w2', false, LIGHT_GRAY],
+    ['w3', true, LIGHT_IDLE],
+  ])
+})
+
+test('the visible workspace does not depend on how many panes its tree holds', () => {
+  const onePane = visibleWorkspaceIdOf({
+    active: true,
+    workspaceId: 'w3',
+    layouts: {
+      w1: { panes: { p1: { paneId: 'p1' } } },
+      w3: { panes: { p9: { paneId: 'p9' } } },
+    },
+  })
+  const manyPanes = visibleWorkspaceIdOf({
+    active: true,
+    workspaceId: 'w3',
+    layouts: {
+      w1: { panes: { p1: { paneId: 'p1' } } },
+      w3: { panes: { a: {}, b: {}, c: {}, d: {} } },
+    },
+  })
+  assert.equal(onePane, 'w3')
+  assert.equal(manyPanes, 'w3')
+  assert.deepEqual(rowMarks(sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, manyPanes)), [
+    ['w1', false, LIGHT_RED],
+    ['w2', false, LIGHT_GRAY],
+    ['w3', true, LIGHT_IDLE],
+  ])
+})
+
+test('without a controller snapshot the current row follows dsh\'s current session', () => {
+  for (const snapshot of [undefined, null]) {
+    assert.equal(visibleWorkspaceIdOf(snapshot), undefined)
+    assert.deepEqual(
+      sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, visibleWorkspaceIdOf(snapshot)).map(
+        (row) => row.current,
+      ),
+      [true, false, false],
+    )
+  }
+  assert.deepEqual(
+    sectionRows(workspaces, sessionList, statuses, ALL_ENABLED).map((row) => row.current),
     [true, false, false],
+  )
+})
+
+test('while split is inactive the current row follows dsh\'s current session', () => {
+  const visible = visibleWorkspaceIdOf({
+    active: false,
+    workspaceId: 'w3',
+    layouts: {
+      w3: { panes: { p1: {}, p2: {} } },
+    },
+  })
+  assert.equal(visible, undefined)
+  assert.deepEqual(
+    sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, visible).map((row) => row.current),
+    [true, false, false],
+  )
+})
+
+test('a visible workspace id that is not in the inventory marks no row', () => {
+  const rows = sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, 'missing')
+  assert.deepEqual(rowMarks(rows), [
+    ['w1', false, LIGHT_RED],
+    ['w2', false, LIGHT_GRAY],
+    ['w3', false, LIGHT_IDLE],
+  ])
+})
+
+test('an active split showing no workspace tree marks no row', () => {
+  const visible = visibleWorkspaceIdOf({ active: true, workspaceId: null, layouts: {} })
+  assert.equal(visible, null)
+  assert.deepEqual(
+    sectionRows(workspaces, sessionList, statuses, ALL_ENABLED, visible).map((row) => row.current),
+    [false, false, false],
   )
 })
 

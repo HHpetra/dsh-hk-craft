@@ -44,6 +44,7 @@ const { T } = require('./visual-tokens.js')
 const { absentHook } = require('./shared.js')
 const { STRIP_STATUS_COLORS } = require('./status-colors.js')
 const { STRIP_STATUS_IDLE, projectStrip } = require('./pane-strip.js')
+const { shownWorkspaceId } = require('./workspace-status.js')
 const { DEFAULT_MAX_PANES, paneBudgetBlocked } = require('./pane-budget.js')
 const {
   buttonStyle,
@@ -1197,10 +1198,7 @@ function PaneWorkspace({
  */
 function workspaceGroups(state) {
   const entries = Object.entries(state.layouts ?? {})
-  const visibleWorkspaceId =
-    state.workspaceId !== null && state.layouts?.[state.workspaceId] !== undefined
-      ? state.workspaceId
-      : (entries[0]?.[0] ?? state.workspaceId)
+  const visibleWorkspaceId = shownWorkspaceId(state)
   const groups = entries.map(([workspaceId, layout]) => ({
     workspaceId,
     layout,

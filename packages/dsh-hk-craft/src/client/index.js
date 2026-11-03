@@ -319,9 +319,10 @@ function apply(ctx) {
   // In split mode the click switches the visible workspace tree instead of
   // letting a native reveal move the current session. Outside that mode the
   // same click reveals the workspace's existing conversation. The same face
-  // answers "was this workspace ever opened in split" and lets the row light
-  // follow the controller snapshot, and it lets a deleted workspace
-  // drop its local layout after the public delete.
+  // answers "was this workspace ever opened in split", lets the row light
+  // follow the controller snapshot, and is the one subscription the 当前行
+  // reads the 可见工作区 from. It also lets a deleted workspace drop its local
+  // layout after the public delete.
   const workspacePanes = {
     active: () => controller.getSnapshot().active,
     switchWorkspace: (workspaceId) => controller.switchWorkspace(workspaceId),

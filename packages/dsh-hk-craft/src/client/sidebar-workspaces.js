@@ -8,8 +8,8 @@
  * `dsh-workspaces.js` and renders them; nothing here knows what a dsh workspace
  * record looks like, so an upstream shape change never reaches this file. The one
  * extra input is the pane controller's narrow face (`panes`), needed to ask
- * "was this workspace ever opened in split" and to re-render as soon as that
- * changes.
+ * "was this workspace ever opened in split", to read which 可见工作区 is on
+ * screen, and to re-render when that snapshot changes.
  *
  * A row is a container holding the primary select button (light + name) and a
  * sibling inline action slot, which holds the delete entry. The slot is a
@@ -64,25 +64,25 @@ const noSubscribe = () => () => {}
 const noSnapshot = () => undefined
 
 /**
- * Follow the pane controller's snapshot so a workspace opened in split changes
- * its row from gray immediately. The snapshot value itself is not read here —
- * the light projection asks the controller through `isWorkspaceEnabled` — it only
- * drives the re-render. This is deliberately separate from the pane view's
- * `usePaneSnapshot`: the workspace section needs only the wake-up, not the state.
+ * Follow the pane controller's one snapshot.
  *
- * A stand-in React without `useSyncExternalStore` (the Node tests, an older
- * shell) renders the current state once instead of subscribing.
+ * The returned value is what the 当前行 reads for the 可见工作区. The same
+ * subscription wakes the light projection, which still asks `isWorkspaceEnabled`
+ * rather than parsing layouts itself. There is no second subscription and no
+ * timer. A stand-in React without `useSyncExternalStore` (an older shell) reads
+ * that snapshot once instead of subscribing.
  *
  * @param {any} React the lazily resolved platform module
  * @param {{ subscribe?: () => (() => void), getSnapshot?: () => unknown } | undefined} panes
- * @returns {unknown}
+ * @returns {unknown} the controller snapshot, or `undefined` when none is wired
  */
 function useWorkspacePaneRevision(React, panes) {
+  const read = typeof panes?.getSnapshot === 'function' ? panes.getSnapshot : noSnapshot
   const useSyncExternalStore = React?.useSyncExternalStore
-  if (typeof useSyncExternalStore !== 'function') return undefined
+  if (typeof useSyncExternalStore !== 'function') return read()
   return useSyncExternalStore(
     typeof panes?.subscribe === 'function' ? panes.subscribe : noSubscribe,
-    typeof panes?.getSnapshot === 'function' ? panes.getSnapshot : noSnapshot,
+    read,
     noSnapshot,
   )
 }
@@ -337,7 +337,7 @@ function WorkspaceSection(props) {
   const sessions = useSessions((state) => state)
   const statuses = useSessionStatus((state) => state)
   const workspaces = useWorkspaces((state) => state)
-  useWorkspacePaneRevision(React, props?.panes)
+  const paneSnapshot = useWorkspacePaneRevision(React, props?.panes)
 
   // One read model for the three snapshots: the rows, the order and the running
   // count below all ask it instead of walking dsh's shapes. `openCatalog`
@@ -354,7 +354,7 @@ function WorkspaceSection(props) {
   const [focusTarget, setFocusTarget] = React.useState(null)
   const focusTargets = React.useRef({})
 
-  const rows = sectionModel(catalog, props?.panes)
+  const rows = sectionModel(catalog, props?.panes, paneSnapshot)
   const order = workspaceOrderOf(catalog)
   const defaultName = t('workspace.defaultName')
 

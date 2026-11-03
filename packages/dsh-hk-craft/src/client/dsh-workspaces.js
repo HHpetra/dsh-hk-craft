@@ -47,7 +47,7 @@
  */
 
 const { openCatalog, readCatalogs } = require('./catalog.js')
-const { projectWorkspaceSection } = require('./workspace-status.js')
+const { projectWorkspaceSection, visibleWorkspaceIdOf } = require('./workspace-status.js')
 const { workspaceOrderOf } = require('./workspace-order.js')
 
 /**
@@ -83,13 +83,24 @@ function enabledWorkspacesOf(catalog, panes) {
 /**
  * Project the catalog into the rows `WorkspaceSection` renders.
  *
+ * `paneSnapshot` is the object the section's one `getSnapshot` already
+ * returned. This reads the 可见工作区 off that plain object; it does not
+ * subscribe and it does not hand the controller to the projection. Omit the
+ * snapshot (or pass one whose split is off) and the 当前行 stays on dsh's
+ * current session.
+ *
  * @param {any} catalog the read model (`catalog.js`)
  * @param {{ isWorkspaceEnabled?: (workspaceId: string) => boolean } | null} [panes]
  *   the pane controller face; omit it to treat every workspace as enabled
+ * @param {unknown} [paneSnapshot] pane-controller snapshot, already read
  * @returns {Array<{ workspaceId: string, title: string, light: 'gray' | 'idle' | 'green' | 'yellow' | 'red', current: boolean }>}
  */
-function sectionModel(catalog, panes) {
-  return projectWorkspaceSection(catalog, enabledWorkspacesOf(catalog, panes))
+function sectionModel(catalog, panes, paneSnapshot) {
+  return projectWorkspaceSection(
+    catalog,
+    enabledWorkspacesOf(catalog, panes),
+    visibleWorkspaceIdOf(paneSnapshot),
+  )
 }
 
 /**
