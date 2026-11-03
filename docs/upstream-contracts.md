@@ -3,7 +3,7 @@
 This page is the durable record of the DeepSeek Harness (dsh) behaviour the
 client half of `dsh-hk-craft` builds on. Code comments point here instead of at
 a checkout or a temporary extraction directory, because specs live in
-`ai-docs/spec/` (`AGENTS.md` §3.2) and upstream line numbers drift
+`spec/` (`AGENTS.md` §3.2) and upstream line numbers drift
 between releases.
 
 **Verified version:** `@deepseek-ai/dsh` **0.2.1-rc.5** — the train pinned in

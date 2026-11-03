@@ -7,7 +7,7 @@
 ```text
 这是一个 dsh 插件项目。插件完全在现有 dsh 内使用，不另做启动器或独立界面。
 请继续和我一起把设计逐步收口。每次只完成一小部分，不要一次生成大量内容。
-把已经确定的内容及时写入仓库文件；未定的用 TBD 标在 ai-docs/spec/ 下。
+把已经确定的内容及时写入仓库文件；未定的用 TBD 标在 spec/ 下。
 ```
 
 ## 已确定的约束
@@ -23,7 +23,7 @@
 | :--- | :--- | :--- | :--- |
 | 1. 访谈 | 定位、边界、能力切分与取舍 | `grilling` + `domain-modeling` | `GLOSSARY.md`、`docs/adr/` |
 | 2. 要可运行答案 | 启动链路 / 插件加载说不清时，先做一次性原型 | `prototype` | `.scratch/` 下的临时脚本 |
-| 3. 收成 spec 并拆票 | 多会话的活先写 spec，再拆成带阻塞边的小票 | `to-spec` → `to-tickets` | `ai-docs/spec/`、GitHub Issues |
+| 3. 收成 spec 并拆票 | 多会话的活先写 spec，再拆成带阻塞边的小票 | `to-spec` → `to-tickets` | `spec/`、GitHub Issues |
 | 4. 实现 | 一票一实现，先红后绿 | `implement`、`tdd` | `packages/dsh-hk-craft/` |
 | 5. 复查 | 标准 + spec 两轴 | `code-review` | 提交前 |
 | 6. 提 PR | 最小可视化 + 前后证据 + 是否单向门 | `pr` | PR 正文 |
@@ -40,21 +40,21 @@
 | 轮次 | 目标 | 落盘位置 |
 | :--- | :--- | :--- |
 | 1 | 插件能力：解决什么问题、目标用户、成功标准 | `README.md`、`GLOSSARY.md` |
-| 2 | 用户场景与边界（做什么 / 不做什么） | `ai-docs/spec/00-scope.md` |
+| 2 | 用户场景与边界（做什么 / 不做什么） | `spec/00-scope.md` |
 | 3 | host / client 分工、首个垂直切片与取舍 | `docs/adr/`（一决策一文件） |
 | 4 | 目录结构与模块划分 | `AGENTS.md` 第 3–4 节 + `docs/README.md` |
-| 5 | 数据真源、上游契约与通道约定 | `docs/upstream-contracts.md`、`ai-docs/spec/` |
-| 6 | 里程碑、验收与测试策略 | `ai-docs/spec/01-roadmap.md` |
+| 5 | 数据真源、上游契约与通道约定 | `docs/upstream-contracts.md`、`spec/` |
+| 6 | 里程碑、验收与测试策略 | `spec/01-roadmap.md` |
 
 原则：
 
 - **已确定的内容立刻写入文件**，不要只留在对话里。
-- **未定的不写死**；用「待定 / TBD」占位并列在 `ai-docs/spec/`。
+- **未定的不写死**；用「待定 / TBD」占位并列在 `spec/`。
 - 与既有决策冲突时新增一条 ADR，旧文件只改状态行（`superseded by ADR-NNNN`），不改写正文。
 
 ## 设计阶段结束后
 
-1. 清理 `ai-docs/spec/` 中已过期的草稿，结论升入 `docs/adr/` 或 `docs/`。
+1. 清理 `spec/` 中已过期的草稿，结论升入 `docs/adr/` 或 `docs/`。
 2. 核对 `docs/agents/issue-tracker.md`：本仓已切到 GitHub Issues，用 `gh` 管理票据。
 3. 确认 `AGENTS.md` 与真实技术栈、安装方式一致。
 4. `git init` 并首次提交（含文档骨架）。

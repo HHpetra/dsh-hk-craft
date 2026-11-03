@@ -145,4 +145,7 @@ pnpm test      # 单元测试
 | :--- | :--- |
 | `adr/` | 架构决策记录：一决策一文件，编号递增 |
 | `agents/` | Agent 消费的配置：`domain.md` / `issue-tracker.md` / `triage-labels.md` |
+| `research/` | 可行性研究与技术调研 |
 | `upstream-contracts.md` | dsh 上游契约清单：每条记录形状、为什么依赖与复验方式 |
+
+> 短期的开发 spec 不在本目录，在仓库根 `spec/`（阶段结束即清理）。

@@ -602,7 +602,7 @@ ctx.slots.inject('main', function* () {
 - `packages/client/ui-conversation/src/client/apply.ts`：`main` `key: 'conversation'` 注册。
 - `packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx`：`data-conversation-scroll`、composer 位置。
 - `packages/client/ui-slots/src/index.ts`：priority / cell shadowing / 一个 declarer 规则。
-- 本仓库 [`docs/upstream-contracts.md`](../../docs/upstream-contracts.md)：`main` keyed slot、`selectPanel`、`conversation.content`、`mainView`、右栏隐藏的既有记录。
+- 本仓库 [`docs/upstream-contracts.md`](../upstream-contracts.md)：`main` keyed slot、`selectPanel`、`conversation.content`、`mainView`、右栏隐藏的既有记录。
 
 **其他插件**
 

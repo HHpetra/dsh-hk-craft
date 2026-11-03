@@ -19,7 +19,10 @@
 ├── GLOSSARY.md
 ├── docs/
 │   ├── adr/0001-….md
-│   └── agents/
+│   ├── agents/
+│   ├── research/
+│   └── upstream-contracts.md
+├── spec/
 └── packages/dsh-hk-craft/src/
 ```
 

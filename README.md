@@ -64,8 +64,8 @@ pnpm check               # 校验 manifest / patch / 入口与已构建 bundle �
 | `docs/` | 架构与关键原理（长期） |
 | `docs/adr/` | 架构决策记录：一决策一文件（长期） |
 | `docs/agents/` | 工程类 skill 的消费规则：issue 跟踪器、triage 标签、域文档 |
-| `ai-docs/spec/` | 当前开发的 spec 与开发记录（短期，阶段结束清理） |
-| `ai-docs/invest/` | 技术调研与可行性 |
+| `spec/` | 当前开发的 spec 与开发记录（短期，阶段结束清理） |
+| `docs/research/` | 技术调研与可行性 |
 | `.scratch/` | 本地临时草稿与原型脚本（不入库） |
 | `scripts/` | 结构校验与冒烟 |
 | `tests/` | 跨包冒烟与 fixtures |
