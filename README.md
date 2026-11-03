@@ -66,7 +66,7 @@ pnpm check               # 校验 manifest / patch / 入口与已构建 bundle �
 | `docs/agents/` | 工程类 skill 的消费规则：issue 跟踪器、triage 标签、域文档 |
 | `ai-docs/spec/` | 当前开发的 spec 与开发记录（短期，阶段结束清理） |
 | `ai-docs/invest/` | 技术调研与可行性 |
-| `.scratch/` | 本地 issue 跟踪器（短期，随票据入库） |
+| `.scratch/` | 本地临时草稿与原型脚本（不入库） |
 | `scripts/` | 结构校验与冒烟 |
 | `tests/` | 跨包冒烟与 fixtures |
 | `deps/` | 钉死的第三方版本 |

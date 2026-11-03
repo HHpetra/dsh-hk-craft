@@ -23,7 +23,7 @@
 | :--- | :--- | :--- | :--- |
 | 1. 访谈 | 定位、边界、能力切分与取舍 | `grilling` + `domain-modeling` | `GLOSSARY.md`、`docs/adr/` |
 | 2. 要可运行答案 | 启动链路 / 插件加载说不清时，先做一次性原型 | `prototype` | `.scratch/` 下的临时脚本 |
-| 3. 收成 spec 并拆票 | 多会话的活先写 spec，再拆成带阻塞边的小票 | `to-spec` → `to-tickets` | `ai-docs/spec/`、`.scratch/<feature>/issues/` |
+| 3. 收成 spec 并拆票 | 多会话的活先写 spec，再拆成带阻塞边的小票 | `to-spec` → `to-tickets` | `ai-docs/spec/`、GitHub Issues |
 | 4. 实现 | 一票一实现，先红后绿 | `implement`、`tdd` | `packages/dsh-hk-craft/` |
 | 5. 复查 | 标准 + spec 两轴 | `code-review` | 提交前 |
 | 6. 提 PR | 最小可视化 + 前后证据 + 是否单向门 | `pr` | PR 正文 |
@@ -55,7 +55,7 @@
 ## 设计阶段结束后
 
 1. 清理 `ai-docs/spec/` 中已过期的草稿，结论升入 `docs/adr/` 或 `docs/`。
-2. 核对 `docs/agents/issue-tracker.md`：仍用本地 markdown 就保持默认；已有 remote 则改成 GitHub / GitLab。
+2. 核对 `docs/agents/issue-tracker.md`：本仓已切到 GitHub Issues，用 `gh` 管理票据。
 3. 确认 `AGENTS.md` 与真实技术栈、安装方式一致。
-4. `git init` 并首次提交（含文档骨架）；`.scratch/` 随票据一起入库。
+4. `git init` 并首次提交（含文档骨架）。
 5. 从 `AGENTS.md` 的「构建、安装与卸载」开始编码。

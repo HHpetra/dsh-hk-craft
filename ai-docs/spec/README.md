@@ -10,4 +10,4 @@
 - `01-roadmap.md` — 里程碑与验收
 - `0N-<topic>.md` — 某次开发的任务切片 / 接口草案 / 联调笔记
 
-实现型 issue 不放这里，放 `.scratch/<feature-slug>/issues/`（见 [`docs/agents/issue-tracker.md`](../../docs/agents/issue-tracker.md)）。
+实现型 issue 不放这里，放 GitHub Issues（见 [`docs/agents/issue-tracker.md`](../../docs/agents/issue-tracker.md)）。

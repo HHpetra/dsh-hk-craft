@@ -33,7 +33,7 @@
 | `docs/agents/` | Agent 消费的配置：领域文档规则 / issue tracker / 分诊标签 | **长期保留** |
 | `ai-docs/spec/` | 当前开发用的 **spec 与开发记录** | **短期**；需**经常清理**，不做长期归档 |
 | `ai-docs/invest/` | 可行性研究与技术调研文档 | 调研阶段产物；结论沉淀进 ADR / `docs/` 后可不再当日常真源 |
-| `.scratch/` | 本地 issue 跟踪器（`<feature>/issues/NNN-slug.md`） | **短期**；完成即清理；**要入库** |
+| `.scratch/` | 本地临时草稿与原型脚本 | **短期**；不入库 |
 | `packages/dsh-hk-craft/` | **唯一可安装 bundle**：manifest、patch、host 入口、client UI 与构建脚本 | 长期 |
 | `scripts/` | 结构校验、冒烟、开发工具；保持薄 | 长期 |
 | `tests/` | 跨包冒烟与集成测试；`tests/fixtures/` 放样例数据 | 长期 |
@@ -54,7 +54,7 @@
 
 - 路径：`ai-docs/spec/`，只服务当前开发；功能合入或阶段结束后清理或压缩。
 - 建议命名：`00-scope.md`（边界与范围）、`01-roadmap.md`（里程碑与验收）、`0N-<topic>.md`（任务切片 / 接口草案 / 联调笔记）。
-- issue 不放这里：实现型票据在 `.scratch/<feature-slug>/issues/NNN-<slug>.md`，规则见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
+- issue 不放这里：实现型票据放 GitHub Issues（`gh` CLI），规则见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
 - Agent 不应把过期 spec 当作现行规范；以 `GLOSSARY.md`、ADR、`docs/` 与代码为准。
 
 ### 3.3 `docs/`（架构导读）
@@ -130,7 +130,7 @@ pnpm test             # 包内单元测试
 
 ## 7. Agent 协作指引
 
-1. **文档落点**：关键决定 → `docs/adr/`；当前开发 → `ai-docs/spec/`（并记得清理）；issue → `.scratch/`；架构导读 → `docs/`；调研 → `ai-docs/invest/`；领域术语 → `GLOSSARY.md`。
+1. **文档落点**：关键决定 → `docs/adr/`；当前开发 → `ai-docs/spec/`（并记得清理）；issue → GitHub Issues；架构导读 → `docs/`；调研 → `ai-docs/invest/`；领域术语 → `GLOSSARY.md`。
 2. **真源优先级**：长期行为以 **`GLOSSARY.md` + ADR + `docs/` + 代码** 为准；过期 spec 不作数。
 3. **不做长期 spec 库**：不要把完整产品 spec 堆进仓库长期保存。
 4. **动手前先读**：进入某区域前先读 `GLOSSARY.md` 与相关 ADR；与既有 ADR 冲突时显式标注（“与 ADR-NNNN 冲突，但值得重开，因为…”），不静默覆盖。
@@ -169,7 +169,7 @@ pnpm test             # 包内单元测试
 | :--- | :--- |
 | 默认分支 | `master` |
 | 探索分支 | `invest`（调研草稿，不作为现行真源） |
-| 远程 | 待填写（`origin`） |
+| 远程 | `origin` → https://github.com/HHpetra/dsh-hk-craft |
 
 提交前建议先同步，避免多机冲突。
 
@@ -179,11 +179,11 @@ pnpm test             # 包内单元测试
 
 ### Issue tracker
 
-本地 markdown：`.scratch/<feature>/issues/`，一票一文件、三位编号，按 `Blocked by` 拓扑顺序取票；`.scratch/` 要入库。见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
+GitHub Issues（`gh` CLI，仓库 `HHpetra/dsh-hk-craft`）；PR 不作为请求入口。见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
 
 ### Triage labels
 
-`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`，只用于外部进来的 issue。见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
+默认五个角色：`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`。见 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
 
 ### Domain docs
 
