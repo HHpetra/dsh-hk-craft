@@ -16,7 +16,9 @@
  * plugin keeps working even when a service is absent.
  *
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
- * and thin React views (`pane-view.js`); the HK Craft settings page
+ * and thin React views (`pane-view.js`). File drags are routed by
+ * `pane-file-drop-events.js` for the life of that mount: one document listener,
+ * the pane under the pointer. The HK Craft settings page
  * (`settings-view.js`) is the transitional home of the diagnostics, the pane
  * limit (`pane-budget.js`) and the split-view switch. Each pane header carries
  * two native controls: the read-only
@@ -44,6 +46,7 @@ const { registerCommands } = require('./commands.js')
 const { createNotifier } = require('./notifications.js')
 const { installPowerShellDefault } = require('./terminal-shell.js')
 const { installPluginStyles } = require('./visuals.js')
+const { installPaneFileDrop } = require('./pane-file-drop-events.js')
 
 const NS = 'dsh-hk-craft'
 
@@ -262,6 +265,17 @@ function apply(ctx) {
     // `conversation` cell (priority -1) and then the child slot that entry
     // declares. Never select a panel: `activePanelId` must stay null so the
     // native right bar keeps its gate open.
+    //
+    // The file-drop router is the same lifetime. Hidden workspaces keep their
+    // composers mounted, so the listener has to outlive any one pane and come
+    // off with the host. One loaded pane does not intercept.
+    const disposeDrop = installPaneFileDrop({
+      document: globalThis.document,
+      view: globalThis.window,
+      getSnapshot: () => controller.getSnapshot(),
+      getSessions: () => ctx.sessions,
+      label: (key) => t(key),
+    })
     const disposeMain = ctx.slots.inject(MAIN_SLOT, function* () {
       yield ctx.slots.register(
         {
@@ -283,6 +297,7 @@ function apply(ctx) {
     })
 
     return () => {
+      disposeDrop()
       disposeMain()
       controller.dispose()
     }

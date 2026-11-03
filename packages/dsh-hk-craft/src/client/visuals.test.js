@@ -59,6 +59,8 @@ test('the stylesheet is scoped to this plugin and keeps a reduced-motion path', 
   assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft-workspace-row]'))
   assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft-strip-item]'))
   assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft-pane]'))
+  assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft-drop-overlay]'))
+  assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft-drop="none"]'))
   assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft="settings"]'))
   assert.ok(PLUGIN_STYLESHEET.includes('[data-hkcraft-subagent-menu]'))
   assert.ok(PLUGIN_STYLESHEET.includes('@media (prefers-reduced-motion: reduce)'))
