@@ -79,7 +79,6 @@ pnpm check               # 校验 manifest / patch / 入口与已构建 bundle �
 - [`docs/adr/`](docs/adr/) — 架构决策记录
 - [`docs/agents/domain.md`](docs/agents/domain.md) — 领域文档与 issue tracker 规则
 - [`AGENTS.md`](AGENTS.md) — 协作者与编码 Agent 的约定
-- [`START.md`](START.md) — 新项目启动与分轮设计流程
 - [`GLOSSARY.md`](GLOSSARY.md) — 领域语言
 
 ## 许可
