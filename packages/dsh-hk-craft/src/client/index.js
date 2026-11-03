@@ -47,6 +47,7 @@ const { createNotifier } = require('./notifications.js')
 const { installPowerShellDefault } = require('./terminal-shell.js')
 const { installPluginStyles } = require('./visuals.js')
 const { installPaneFileDrop } = require('./pane-file-drop-events.js')
+const { installChangesReviewRoute } = require('./changes-review.js')
 
 const NS = 'dsh-hk-craft'
 
@@ -184,8 +185,18 @@ function apply(ctx) {
   // Optional. A shell without a right bar must still mount the panes, so this
   // is not part of the top-level inject list.
   ctx.inject(['sidebarRight'], (scope) => {
-    controller.panel.attach(scope.get('sidebarRight'))
-    return () => controller.panel.attach(null)
+    const sidebarRight = scope.get('sidebarRight')
+    controller.panel.attach(sidebarRight)
+    // The review tab reads its summary with the on-screen session. While split
+    // is showing, open that session before the resource lands.
+    const disposeReview = installChangesReviewRoute(sidebarRight, {
+      openSession: (sessionId) => ctx.get('uiWorkspace')?.openSession?.(sessionId),
+      enabled: () => controller.getSnapshot().active === true,
+    })
+    return () => {
+      disposeReview()
+      controller.panel.attach(null)
+    }
   })
 
   // The native tool icons (files, browser, terminal, …). Optional, and kept

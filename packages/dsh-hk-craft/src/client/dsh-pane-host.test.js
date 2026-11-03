@@ -618,6 +618,38 @@ test('shell current does not replace a running conversation with an idle one', a
   controller.dispose()
 })
 
+test('an idle shell current leaves the running pane and the right bar on it', async () => {
+  const { fake, controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: true, blank: false, updatedAt: 100 },
+      s9: { id: 's9', running: false, blank: false, updatedAt: 1 },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's9'] }],
+  })
+  const current = sessionCurrent()
+  const opened = []
+  fake.ctx.get = (name) => {
+    if (name === 'uiWorkspace') {
+      return {
+        openSession(sessionId) {
+          opened.push(sessionId)
+          current.setKey(sessionId)
+        },
+      }
+    }
+    return fake.ctx[name]
+  }
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+  assert.deepEqual(opened, ['s1'])
+  assert.equal(current.getSnapshot().key, 's1')
+  controller.dispose()
+})
+
 test('shell current still follows another running conversation', async () => {
   const { controller } = await readyController({
     rows: {
@@ -2184,5 +2216,94 @@ test('recentConversations projects the current workspace through the /resume dat
   // first-catalog-workspace fallback the new-conversation button uses applies.
   assert.deepEqual(await controller.recentConversations(), rows)
   assert.deepEqual(await controller.recentConversations('missing'), [])
+  controller.dispose()
+})
+
+/**
+ * A shell current the controller can move, plus `uiWorkspace.openSession`.
+ * `openSession` is what the right bar follows: it updates the current key.
+ *
+ * @param {object} fake
+ * @param {string} initialKey
+ */
+function shellCurrent(fake, initialKey) {
+  let key = initialKey
+  const listeners = new Set()
+  const opened = []
+  const current = {
+    opened,
+    getSnapshot: () => ({ key }),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+  fake.ctx.get = (name) => {
+    if (name === 'uiWorkspace') {
+      return {
+        openSession(sessionId) {
+          opened.push(sessionId)
+          key = sessionId
+          for (const listener of [...listeners]) listener()
+        },
+      }
+    }
+    return fake.ctx[name]
+  }
+  return current
+}
+
+test('activating a pane the shell does not call current reveals that pane session', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, workspaces: WORKSPACE })
+  const current = shellCurrent(fake, 'native-old')
+  const controller = createPaneController(fake.ctx)
+  controller.markRegistered()
+  controller.attachSessionSelection(current)
+
+  assert.equal(controller.activate('s1'), true)
+
+  assert.deepEqual(current.opened, ['s1'])
+  assert.equal(current.getSnapshot().key, 's1')
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.deepEqual(fake.calls.selectPanel, [])
+
+  controller.activate('s1')
+  assert.deepEqual(current.opened, ['s1'])
+  controller.dispose()
+})
+
+test('a pane that is already the shell current is not revealed again', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, workspaces: WORKSPACE })
+  const current = shellCurrent(fake, 's1')
+  const controller = createPaneController(fake.ctx)
+  controller.markRegistered()
+  controller.attachSessionSelection(current)
+
+  assert.equal(controller.activate('s1'), true)
+
+  assert.deepEqual(current.opened, [])
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(controller.revealFocusedSession(), false)
+  controller.dispose()
+})
+
+test('focusing another pane reveals that pane session to the right bar', async () => {
+  const ids = ['p1', 'p2']
+  const fake = fakeControllerCtx({
+    factorySnapshot: FACTORY_PRESENT,
+    workspaces: WORKSPACE,
+    created: ['s2'],
+  })
+  const current = shellCurrent(fake, 'native-old')
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => ids.shift() })
+  controller.markRegistered()
+  controller.attachSessionSelection(current)
+  controller.activate('s1')
+
+  assert.equal(await controller.budget.split('p1', 'row'), true)
+
+  assert.equal(controller.getSnapshot().sessionId, 's2')
+  assert.deepEqual(current.opened, ['s1', 's2'])
+  assert.equal(current.getSnapshot().key, 's2')
   controller.dispose()
 })
