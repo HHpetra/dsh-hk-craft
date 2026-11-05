@@ -6,14 +6,30 @@ a checkout or a temporary extraction directory, because specs and tickets live
 in GitHub Issues (`AGENTS.md` §3.2) and upstream line numbers drift
 between releases.
 
-**Verified version:** `@deepseek-ai/dsh` **0.2.1-rc.5** — the train pinned in
-`deps/VERSIONS.md` and `packages/dsh-hk-craft/package.json` (`engines.dsh`), and
-the runtime shipped with the installed Desktop application
-(`resources/app.asar` → `dsh/node_modules/@deepseek-ai/dsh*`).
+**Verified version:** `@deepseek-ai/dsh` **0.2.2-rc.1** — the train pinned in
+`deps/VERSIONS.md` and `packages/dsh-hk-craft/package.json` (`engines.dsh`
+`>=0.2.2-rc.1 <0.3.0`), and the runtime shipped with the installed Desktop
+application (`resources/app.asar` → `dsh/node_modules/@deepseek-ai/dsh*`).
 The items below were originally read in the 0.2.0-rc.2 bundles. The
 conversation-occurrence and phase rules were re-read in 0.2.1-rc.5 (that is the
-delta the composer regression came from); the remaining items still carry their
-0.2.0-rc.2 reading and need the manual smoke pass on this train.
+delta the composer regression came from). The 0.2.2-rc.1 pass re-read six
+deltas and wrote them into the sections they belong to:
+`createDrafts(sessionId, files, uploadImages)`; `installDocumentDropEvents`'
+`readFileDrag` and internal `application/x-dsh-file` drags; `InputState.phase`
+`sending`; the summary/view projection split (`imageLimits` is the only unit
+marked `summary: false`); the narrow sidebar drawer (`SidebarOwnerProps.drawer`,
+and `selectPanel` closing it below 768px); and workspace session menus moving
+to `ctx.contextMenus`, where `sidebar.workspaces.session.menu.item` can only
+append. The same pass left these faces unchanged: `sidebar.workspaces`'
+`{ wide, expandSidebar }`, the right bar's `activePanelId === null` gate,
+`sessionStatus`, `api-session/error`, `forkSession` / `openSession` /
+`startSession`, `workspaces.*`, `commandUi.register`,
+`configForms.developerTools.enabled`, `webTerminals` / `terminalController`,
+and the Electron preload bridges. `dsh-client-ui-slots` and
+`dsh-client-ui-renderer` match 0.2.1-rc.5 apart from `package.json`, so the
+`main` keyed slot, `renderFactorySlot`, `SessionProvider`, and
+`conversation.content`'s `embedded` / `phase` / `hero` contract still hold.
+Every item still needs the manual smoke pass on this train.
 
 **Verification method:** read-only inspection of the unpacked client plugin
 bundles shipped with that version (`@deepseek-ai/dsh-client-ui-*` and
@@ -36,6 +52,18 @@ unmounts the native Conversation instead of stacking a second one on top.
 `main` entry; `selectPanel(null)` returns to the native Conversation. When a
 panel unregisters, the layout controller resets `activePanelId`, which is why
 the plugin does not have to clean it up by hand.
+
+**Narrow drawer (0.2.2-rc.1):** below 768px, and when the frame is not using
+the Windows title bar, the sidebar is an overlay drawer.
+`SidebarOwnerProps` is `{ collapsed, width, drawer }`: `drawer` is that
+presentation, `collapsed` is true while the drawer is hidden, and `width`
+keeps the expanded width even then. `layout.selectPanel` still sets
+`activePanelId`, and when `layoutInfo.viewportWidth < 768` it also sets
+`narrowExpanded` to false. That hides the drawer. With the Windows title bar
+there is no drawer, and the same write still collapses the sidebar while the
+viewport is under 768px. `selectPanel(null)` does this too. The plugin's
+`sidebar.workspaces` shadow still receives only `{ wide, expandSidebar }`;
+a drawer counts as wide. This plugin does not read `drawer`.
 
 **Why we rely on it:** choosing any `main` key other than the fallback
 unmounts the native Conversation. This plugin does not. It shadows the
@@ -337,6 +365,16 @@ failure bit** in either projection: a failed turn is a conversation node, not a
 summary field. `blank` is true while the conversation has never sent a message;
 the sidebar inverts it into the light's `started` signal, so an enabled workspace
 holding only fresh blank sessions stays gray.
+
+**Summary and view values (0.2.2-rc.1):** a projection unit now publishes two
+shapes. The summary block (`SessionProjectionSummaryValues`, the list row's
+`projectionValues`) omits every key whose unit declares `summary: false`.
+The view block (`SessionProjectionValues`, and
+`projectionsBySession[sessionId].values` for an attached Session) is the full
+cut. On this train the only unit marked `summary: false` is `imageLimits`:
+it is a host-wide boot constant, so a list row does not repeat it. It is read
+from the view, not from `projectionValues`. `agentPreset` stays a summary
+value. This plugin does not read `imageLimits`.
 
 **Why we rely on it:** the sidebar lights and the strip dots are derived from
 these fields only; reading an error would require opening every session's
@@ -905,6 +943,19 @@ root slot; the slot core sorts entries by `priority ?? 0` ascending and renders
 the first, and the shipped occupant registers without a priority (0). A negative
 priority therefore shadows it without changing upstream code.
 
+The shell still passes `{ wide, expandSidebar }`. `wide` is the wide-content
+flag (a narrow drawer counts as wide) and `expandSidebar` asks the frame to
+open the column. Those two props are unchanged on 0.2.2-rc.1.
+
+**Session menus (0.2.2-rc.1):** built-in workspace and session actions
+register on `ctx.contextMenus` (`target: "workspace"` or `"session"`). The
+legacy `sidebar.workspaces.session.menu.item` list still renders external
+rows, in ascending `order`, before the built-in Archive action. Slot priority
+cannot replace those built-in items; a contribution can only append. This
+plugin shadows the whole `sidebar.workspaces` slot, so the native context
+menu and the row-trailing icons do not appear in the slim section. That gap
+is known; wiring `ctx.contextMenus` is separate work.
+
 **Why we rely on it:** the slim workspace section (name + light + add) replaces
 only that slot and keeps the rest of the sidebar, so the change stays a plugin,
 not a fork.
@@ -989,8 +1040,8 @@ the hidden file input, `isImageMediaType`, `createDrafts`,
 (`relativizeToCwd`, `workspaceTitleOf`) and `@deepseek-ai/dsh-file-reference`
 (`formatFileMention`). Desktop exposes the path bridge from the preload.
 
-**Verified:** read against the `dsh-v0.2.1-rc.5` tag and the published
-`@deepseek-ai/dsh-client-ui-attachment@0.2.1-rc.5` client bundle. Re-check this
+**Verified:** read against `@deepseek-ai/dsh-client-ui-attachment@0.2.2-rc.1`
+and `@deepseek-ai/dsh-client-ui-conversation@0.2.2-rc.1`. Re-check this
 section when the dsh train moves; the injection face is package-internal.
 
 ### Document listeners
@@ -1000,12 +1051,24 @@ on **every mounted composer**. The four listeners (`dragenter`, `dragover`,
 `dragleave`, `drop`) are registered on `document` in the **bubble** phase.
 `dragend` resets that composer's depth counter from `window`.
 
-A listener ignores the event unless `dataTransfer.types` includes `Files`.
-It then `preventDefault`s. `dragover` sets `dropEffect` to `copy` when
-`canAcceptDrop` is true and `none` otherwise. `drop` calls
-`onAddFiles(files, droppedDirectories(...))` only when `canAcceptDrop` is true.
-Nothing in that path asks where the pointer is. `canAcceptDrop` means "this
-composer may receive files", not "the pointer is over this composer".
+A listener ignores the event unless `dataTransfer.types` includes `Files` or
+`application/x-dsh-file`. It then `preventDefault`s. `dragover` sets
+`dropEffect` to `copy` when `canAcceptDrop` is true and `none` otherwise.
+`drop` calls `onAddFiles(files, droppedDirectories(...))` only when
+`canAcceptDrop` is true. Nothing in the OS-file path asks where the pointer
+is. `canAcceptDrop` means "this composer may receive files", not "the pointer
+is over this composer".
+
+**Internal drag (0.2.2-rc.1):** `installDocumentDropEvents` takes a fifth
+argument, `readFileDrag(dataTransfer) => File | undefined`, which resolves an
+image this application already retains. A drag whose types include
+`application/x-dsh-file` is handled only when `event.target` is inside
+`[data-composer-card]`; anywhere else the listener returns without
+`preventDefault`. On drop, that type is turned into one file by
+`readFileDrag` instead of reading `dataTransfer.files`. A drag that is only
+`application/x-dsh-file` does not turn on the composer's drag-active
+highlight. This plugin's capture still requires `Files`, so an internal drag
+that does not also carry `Files` is left to the native listener.
 
 This plugin mounts one composer per pane and keeps hidden workspaces mounted,
 so one drop is delivered to every live composer. The plugin therefore listens
@@ -1047,7 +1110,15 @@ repeats for the hit session, through `sessions.scope(id)`:
 - `globalThis.__DSH_HOST_PATHS__.pathFor(file)` is the Desktop absolute path.
   A page without that bridge has no paths. A path-less file, and any non-directory
   image (`isImageMediaType`: `image/png`, `image/jpeg`, `image/webp`, `image/gif`
-  only), goes to `conversation.createDrafts(sessionId, uploads)`. A pathful
+  only), goes to `conversation.createDrafts(sessionId, uploads, uploadImages)`.
+  `uploadImages` is whether this Session accepts image uploads. Upstream passes
+  `sessions.binding(sessionId)?.session.getSnapshot().subagent === null`: an
+  ordinary Session (`subagent === null`) starts the image upload as the draft
+  is created; a subagent continuation passes `false`, and that image stays
+  inline with the prompt (base64) instead of taking the upload path. A file
+  draft uploads either way. This plugin uses the same expression and treats a
+  missing binding, a throw, or a snapshot that is not ready as `false`, so the
+  drop still completes and the image is sent inline. A pathful
   non-image or a directory becomes one reference chip, in drop order.
 - The chip is
   `{ source: 'reference', ref, label, appearance, clipboardText }`.
@@ -1071,8 +1142,16 @@ repeats for the hit session, through `sessions.scope(id)`:
 
 `canPickFiles` is `filePicker.available()`, which the composer binds to
 `canAcceptDrop && file input mounted && file input enabled`. The shell
-`addFiles` returns false while the admission phase is `adjudicating` or
-`submitting`, and when the editor refuses the chip insertion.
+`addFiles` returns false while the admission phase is `adjudicating`,
+`submitting`, or `sending`, and when the editor refuses the chip insertion.
+
+**`sending` (0.2.2-rc.1):** `InputState.phase` is `'plain' | 'adjudicating' |
+'claimed' | 'submitting' | 'sending'`. `sending` means an ordinary message is
+waiting for the Host to accept it. The editor and the attachments are
+read-only in `adjudicating`, `submitting`, and `sending`. Upstream's own drop
+handler refuses the batch in those three phases (`attachment.dropBlocked`).
+This plugin still asks `canPickFiles()` and `addFiles`; it does not read
+`phase` itself.
 
 ### Highlight
 
@@ -1090,7 +1169,9 @@ remove the attribute and the overlay.
    hit test.
 2. In `ui-conversation` `apply.ts`, confirm the `addFiles` split (path bridge,
    image types, `relativizeToCwd` → `formatFileMention(..., false)` →
-   `workspaceTitleOf`, `createDrafts`, `addFiles === false` releases drafts).
+   `workspaceTitleOf`, `createDrafts(sessionId, uploads, uploadImages)` with
+   `uploadImages` taken from `subagent === null`, `addFiles === false` releases
+   drafts) and that `adjudicating` / `submitting` / `sending` still block the drop.
 3. Confirm `InputBar` still owns `<input type="file" multiple hidden>` whose
    `change` calls `intakeFiles`, and `canPickFiles` still reads
    `bindFilePicker`.

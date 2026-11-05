@@ -8,7 +8,7 @@
  * Every dsh assumption this plugin makes about mounting a Session into the
  * central `main` area is recorded in `docs/upstream-contracts.md` (read against
  * the 0.2.0-rc.2 bundles; the `conversation.content` occurrence contract was
- * re-checked on the pinned 0.2.1-rc.5 train). The parts relevant here:
+ * re-checked on the pinned 0.2.2-rc.1 train). The parts relevant here:
  *
  * - `main` is a keyed root slot. The frame renders `activePanelId ??
  *   "conversation"`. This plugin shadows the `conversation` cell at priority

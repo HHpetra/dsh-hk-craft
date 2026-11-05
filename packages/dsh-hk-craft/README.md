@@ -28,7 +28,7 @@ DeepSeek Harness（dsh）的**原生插件（bundle）**。装进你已有的 ds
 
 安装目标为 dsh 的 `desktop` profile。该 profile 由 Electron 应用独占管理，**不能**用 CLI `dsh plugin --profile desktop ...` 安装。
 
-开发环境要求 Node.js `^22.19.0 || >=24.0.0`、pnpm `12.5.1`；`engines.dsh` 为 `>=0.2.1-rc.5 <0.3.0`，升级 dsh 时需要同列车升级。
+开发环境要求 Node.js `^22.19.0 || >=24.0.0`、pnpm `12.5.1`；`engines.dsh` 为 `>=0.2.2-rc.1 <0.3.0`，升级 dsh 时需要同列车升级。
 
 1. 在仓库根构建并验证：
 
@@ -295,7 +295,7 @@ macOS 上实际按键为 `Cmd`，界面提示统一显示 `Ctrl`。所有快捷�
 
 ## 兼容性与降级
 
-客户端运行在 dsh 的 Web 壳（Desktop 内置 Web UI）中。`engines.dsh` 为 `>=0.2.1-rc.5 <0.3.0`，安装器会校验；插件不 fork 上游，只通过公开服务扩展。
+客户端运行在 dsh 的 Web 壳（Desktop 内置 Web UI）中。`engines.dsh` 为 `>=0.2.2-rc.1 <0.3.0`，安装器会校验；插件不 fork 上游，只通过公开服务扩展。
 
 dsh 的可选能力缺失时，插件安静降级而不是让主区域崩溃：
 

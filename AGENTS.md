@@ -78,7 +78,7 @@
 | 运行时 | Node.js `^22.19.0 \|\| >=24.0.0` | 与当前 dsh 列车一致；根 `package.json` `engines.node` |
 | 包管理 | pnpm `12.5.1` | **只允许 pnpm**；`preinstall` 拒绝 npm/yarn |
 | 语言 | Host：JavaScript / ESM；Client：TypeScript / TSX（后续） | host 入口直接以 ESM 运行 |
-| Harness | `@deepseek-ai/dsh` `0.2.1-rc.5` | `desktop` 实际加载的 Desktop 内置运行时；全局 CLI 可能是另一列车（本机 `0.2.0-rc.2`），见 `deps/VERSIONS.md` |
+| Harness | `@deepseek-ai/dsh` `0.2.2-rc.1` | `desktop` 实际加载的 Desktop 内置运行时；全局 CLI 可能是另一列车（本机 `0.2.0-rc.2`），见 `deps/VERSIONS.md` |
 | 插件形态 | dsh bundle（`dsh.bundle`）+ 可选 `dsh.client` | 安装进现有 profile，不建产品 profile |
 | 客户端构建 | esbuild | 产出 dsh Web 壳可加载的 `lib/client.js` |
 | 测试 | `node --test --test-isolation=none` | 与实现同目录 `*.test.js`；Windows 沙箱内避免子进程隔离导致的 `spawn EPERM` |

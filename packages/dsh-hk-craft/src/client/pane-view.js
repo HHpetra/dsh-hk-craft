@@ -101,7 +101,7 @@ let reactModule = null
  * transcript own the scrollport. The `embedded` one is the supported non-root
  * occurrence: the same rules hang off its own `[data-content-phase]` body
  * (`ConversationRoot.module.css` in `@deepseek-ai/dsh-client-ui-conversation`
- * 0.2.1-rc.5). A pane has no `.root`, so `main` left the composer seat in normal
+ * 0.2.2-rc.1). A pane has no `.root`, so `main` left the composer seat in normal
  * flow at the end of the transcript — the split view showed the messages and no
  * input box.
  */

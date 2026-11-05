@@ -123,14 +123,17 @@ function sessionsFor(specs) {
   return {
     calls,
     list: { getSnapshot: () => ({ byId: { s1: { cwd: '/work' }, s2: { cwd: '/work' } } }) },
+    binding() {
+      return { session: { getSnapshot: () => ({ subagent: null }) } }
+    },
     scope(sessionId) {
       const spec = specs[sessionId] ?? {}
       return {
         get(name) {
           if (name === 'conversation') {
             return {
-              createDrafts(id, uploads) {
-                calls.push({ sessionId: id, uploads })
+              createDrafts(id, uploads, uploadImages) {
+                calls.push({ sessionId: id, uploads, uploadImages })
                 return uploads.map((file, index) => ({ id: `d${index}`, file }))
               },
               releaseDraftAttachments() {},
@@ -244,7 +247,8 @@ test('the drop is injected into the pane under the pointer and nowhere else', ()
   const dropped = drag('drop', second.child, { files: [notes] })
   handler(host.records, 'drop').fn(dropped)
   assert.equal(dropped.stopped, true)
-  assert.deepEqual(sessions.calls, [{ sessionId: 's2', uploads: [notes] }])
+  assert.equal(sessions.calls.length, 1)
+  assert.deepEqual(sessions.calls, [{ sessionId: 's2', uploads: [notes], uploadImages: true }])
   assert.equal(second.element.attrs['data-hkcraft-drop'], undefined)
   assert.equal(second.element.overlay, null)
 })
