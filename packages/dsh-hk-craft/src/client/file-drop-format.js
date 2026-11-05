@@ -3,7 +3,7 @@
 /**
  * The three pure path helpers a pane drop uses to build a reference chip.
  *
- * Copied from the 0.2.1-rc.5 train so a drop formats the same text dsh's own
+ * Copied from the 0.2.2-rc.1 train so a drop formats the same text dsh's own
  * composer would (`docs/upstream-contracts.md#document-file-drop-and-per-pane-routing`):
  *
  * - `relativizeToCwd` and `workspaceTitleOf` from `@deepseek-ai/dsh-util-workspace-path`

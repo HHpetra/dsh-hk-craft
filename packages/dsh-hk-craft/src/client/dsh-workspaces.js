@@ -9,7 +9,7 @@
  * the read model and never parses `byId`, `sessionIds` or `phase`; what is left
  * here is what no read model can answer: the calls and their order.
  *
- * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
+ * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.2-rc.1
  * (`deps/VERSIONS.md`). The durable contract record lives in
  * `docs/upstream-contracts.md`; this module is the one place that adapts it:
  *

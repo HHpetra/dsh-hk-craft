@@ -8,7 +8,7 @@
  * read model as an argument and never parses `byId`, `sessionIds` or `phase`.
  * The shapes documented below are the *actions* and the history window, which no
  * read model can answer. Verified against the 0.2.0-rc.2 bundles; the pinned
- * train is 0.2.1-rc.5 (`deps/VERSIONS.md`), and the durable record is
+ * train is 0.2.2-rc.1 (`deps/VERSIONS.md`), and the durable record is
  * `docs/upstream-contracts.md`:
  *
  * - `ClientSessions.using(target, {source, signal}, operate)` for a brief

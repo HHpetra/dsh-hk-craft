@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * Fixed samples for the three formatting helpers, aligned to dsh 0.2.1-rc.5.
+ * Fixed samples for the three formatting helpers, aligned to dsh 0.2.2-rc.1.
  *
  * The relative-path rows are the upstream `relativizeToCwd` table
  * (`@deepseek-ai/dsh-util-workspace-path` tests), plus spaces, Chinese and a

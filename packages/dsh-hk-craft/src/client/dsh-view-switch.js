@@ -3,7 +3,7 @@
 /**
  * The one place this plugin touches dsh's conversation View API.
  *
- * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.1-rc.5
+ * Verified against the 0.2.0-rc.2 bundles; the pinned train is 0.2.2-rc.1
  * (`deps/VERSIONS.md`). Durable record:
  * `docs/upstream-contracts.md#conversation-view-switch`.
  *

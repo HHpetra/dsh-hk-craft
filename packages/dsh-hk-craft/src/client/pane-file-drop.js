@@ -20,7 +20,7 @@ const { relativizeToCwd, workspaceTitleOf, formatFileMention } = require('./file
  * Whether a browser-declared MIME selects the image draft path.
  *
  * The four types match `isImageMediaType` in `@deepseek-ai/dsh-client-ui-conversation`
- * 0.2.1-rc.5. Every other type, including `image/jpg` and `image/svg+xml`,
+ * 0.2.2-rc.1. Every other type, including `image/jpg` and `image/svg+xml`,
  * uploads as a file or becomes a reference chip.
  *
  * @param {string} value the browser's declared MIME type
@@ -184,7 +184,7 @@ function routeFileDrag(event, snapshot) {
  * The `File` a directory drop yields is indistinguishable from an empty file,
  * so the entry API is the only source of that fact. Browsers without it
  * report no directories. Same walk as `droppedDirectories` in
- * `@deepseek-ai/dsh-client-ui-attachment` 0.2.1-rc.5.
+ * `@deepseek-ai/dsh-client-ui-attachment` 0.2.2-rc.1.
  *
  * @param {{items?: ArrayLike<any>}|null|undefined} dataTransfer
  * @param {readonly unknown[]} files files in `dataTransfer.files` order
@@ -480,10 +480,32 @@ function fallbackFileInput(paneRoot, files, directories, placeFiles) {
 }
 
 /**
+ * Whether this Session accepts image uploads.
+ *
+ * Same expression the native drop handler passes as `createDrafts`' third
+ * argument. An ordinary Session (`subagent === null`) uploads an image as the
+ * draft is created. A subagent continuation does not: the image stays inline
+ * with the prompt. A missing binding, a throw, or a snapshot that is not ready
+ * returns false, so the image still goes inline and the drop does not fail.
+ *
+ * @param {any} sessions
+ * @param {string|null|undefined} sessionId
+ * @returns {boolean}
+ */
+function acceptsImageUploads(sessions, sessionId) {
+  try {
+    return sessions?.binding?.(sessionId)?.session?.getSnapshot?.()?.subagent === null
+  } catch (_error) {
+    return false
+  }
+}
+
+/**
  * Give one drop to one session.
  *
  * Pathful non-images and folders become reference chips. Images and path-less
- * files become draft uploads. `addFiles` returning anything other than `true`
+ * files become draft uploads. `createDrafts` is told whether this Session
+ * accepts image uploads. `addFiles` returning anything other than `true`
  * releases those drafts and adds nothing. A missing scope, a missing method
  * or a throw falls back to the pane's hidden file input (files only); if that
  * cannot run, the drop is discarded.
@@ -525,7 +547,11 @@ function deliverPaneFiles(input) {
 
   let drafts
   try {
-    drafts = conversation.createDrafts(input.sessionId, plan.uploads)
+    drafts = conversation.createDrafts(
+      input.sessionId,
+      plan.uploads,
+      acceptsImageUploads(input.sessions, input.sessionId),
+    )
     if (!Array.isArray(drafts)) throw new Error('createDrafts')
   } catch (_error) {
     return fallbackFileInput(input.paneRoot, files, directories, input.placeFiles)

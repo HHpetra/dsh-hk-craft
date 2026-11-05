@@ -62,7 +62,7 @@ const onePane = {
   panes: { p1: { paneId: 'p1', sessionId: 's1' } },
 }
 
-test('isImageMediaType accepts only the four raster types from 0.2.1-rc.5', () => {
+test('isImageMediaType accepts only the four raster types from 0.2.2-rc.1', () => {
   const rows = [
     ['image/png', true],
     ['image/jpeg', true],
@@ -181,14 +181,28 @@ function fakeSessions(shells) {
         },
       }),
     },
+    binding(sessionId) {
+      const spec = shells[sessionId] ?? {}
+      if (spec.binding === 'missing') return undefined
+      if (spec.binding === 'throw') throw new Error('binding blew up')
+      return {
+        session: {
+          getSnapshot() {
+            if (spec.snapshot === 'throw') throw new Error('snapshot blew up')
+            if (spec.snapshot === 'unready') return undefined
+            return { subagent: Object.hasOwn(spec, 'subagent') ? spec.subagent : null }
+          },
+        },
+      }
+    },
     scope(sessionId) {
       calls.scope.push(sessionId)
       const spec = shells[sessionId]
       if (spec == null) return undefined
       if (spec.throwScope === true) throw new Error('scope blew up')
       const conversation = {
-        createDrafts(id, uploads) {
-          calls.createDrafts.push({ id, uploads })
+        createDrafts(id, uploads, uploadImages) {
+          calls.createDrafts.push({ id, uploads, uploadImages })
           if (spec.throwDrafts === true) throw new Error('drafts blew up')
           return uploads.map((file, index) => ({ id: `draft-${index}`, file }))
         },
@@ -237,7 +251,7 @@ test('a path-less file becomes a draft upload on the hit session', () => {
   })
   assert.equal(result.outcome, 'added')
   assert.deepEqual(sessions.calls.scope, ['s1'])
-  assert.deepEqual(sessions.calls.createDrafts, [{ id: 's1', uploads: [notes] }])
+  assert.deepEqual(sessions.calls.createDrafts, [{ id: 's1', uploads: [notes], uploadImages: true }])
   assert.deepEqual(sessions.calls.addFiles, [{ references: [], ids: ['draft-0'] }])
   assert.deepEqual(result.references, [])
 })
@@ -335,6 +349,45 @@ test('the host path bridge on globalThis is used when the caller does not pass o
     if (previous === undefined) delete globalThis.__DSH_HOST_PATHS__
     else globalThis.__DSH_HOST_PATHS__ = previous
   }
+})
+
+test('createDrafts receives uploadImages from the session binding', () => {
+  const image = file('pic.png', 'image/png')
+  const rows = [
+    [{ s1: { subagent: null } }, true],
+    [{ s1: { subagent: { id: 'child' } } }, false],
+    [{ s1: { binding: 'missing' } }, false],
+    [{ s1: { binding: 'throw' } }, false],
+    [{ s1: { snapshot: 'unready' } }, false],
+    [{ s1: { snapshot: 'throw' } }, false],
+  ]
+  for (const [shells, uploadImages] of rows) {
+    const sessions = fakeSessions(shells)
+    const result = deliverPaneFiles({
+      sessions,
+      sessionId: 's1',
+      files: [image],
+      directories: new Set(),
+      hostPaths: null,
+    })
+    assert.equal(result.outcome, 'added')
+    assert.equal(sessions.calls.createDrafts.length, 1)
+    assert.equal(sessions.calls.createDrafts[0].id, 's1')
+    assert.equal(sessions.calls.createDrafts[0].uploadImages, uploadImages)
+    assert.deepEqual(sessions.calls.createDrafts[0].uploads, [image])
+  }
+
+  const sessions = fakeSessions({ s1: {} })
+  delete sessions.binding
+  const result = deliverPaneFiles({
+    sessions,
+    sessionId: 's1',
+    files: [image],
+    directories: new Set(),
+    hostPaths: null,
+  })
+  assert.equal(result.outcome, 'added')
+  assert.equal(sessions.calls.createDrafts[0].uploadImages, false)
 })
 
 test('addFiles returning false releases the drafts and adds nothing else', () => {

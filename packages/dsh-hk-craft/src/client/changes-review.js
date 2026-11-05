@@ -3,7 +3,7 @@
 /**
  * Open a turn's changes review on the pane that showed the card.
  *
- * Upstream (`@deepseek-ai/dsh-client-ui-deliverables` 0.2.1-rc.5) renders
+ * Upstream (`@deepseek-ai/dsh-client-ui-deliverables` 0.2.2-rc.1) renders
  * "这轮改动的内容已不可用" only when the summary read is `missing`. The card
  * loads `/api/changes.summary` for its own session and lists files only when
  * that read succeeds. The review tab then loads the same route with the
