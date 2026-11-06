@@ -208,6 +208,22 @@ test('a pane derives the live phase without ui-conversation own hook', () => {
   )
 })
 
+test('a started conversation stays on the transcript while the live session is still conservatively blank', () => {
+  // Restart opens the history stream before the Session object drops its
+  // conservative blank bit. `openState: "open"` must not select the
+  // new-conversation hero once the catalog already knows a message was sent:
+  // that hero collapses the transcript and disables the composer until a
+  // workspace title arrives.
+  assert.deepEqual(
+    derivePanePhase({
+      sessionId: 's1',
+      session: { blank: true, awaitingFirstTurn: false, running: false, promptAttempted: false, openState: 'open' },
+      summaryBlank: false,
+    }),
+    { phase: 'active', hero: false },
+  )
+})
+
 /** Minimal `ctx` for the controller: sessions, layout, slots and workspaces. */
 function fakeControllerCtx({
   rows = {},
@@ -658,6 +674,41 @@ test('an idle shell current leaves the running pane and the right bar on it', as
   assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
   assert.deepEqual(opened, ['s1'])
   assert.equal(current.getSnapshot().key, 's1')
+  controller.dispose()
+})
+
+test('an idle shell current that never moves is pulled back once', async () => {
+  const { fake, controller } = await readyController({
+    rows: {
+      s1: { id: 's1', running: true, blank: false, updatedAt: 100 },
+      s9: { id: 's9', running: false, blank: false, updatedAt: 1 },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's9'] }],
+  })
+  const current = sessionCurrent()
+  const opened = []
+  fake.ctx.get = (name) => {
+    if (name === 'uiWorkspace') {
+      return {
+        openSession(sessionId) {
+          opened.push(sessionId)
+          // The shell keeps the idle current. The notification arrives after
+          // revealFocusedPane has cleared its synchronous re-entry guard.
+          if (opened.length > 8) throw new Error('LOOP')
+          queueMicrotask(() => current.setKey('s9'))
+        },
+      }
+    }
+    return fake.ctx[name]
+  }
+  controller.attachSessionSelection(current)
+
+  current.setKey('s9')
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  assert.deepEqual(opened, ['s1'])
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
   controller.dispose()
 })
 

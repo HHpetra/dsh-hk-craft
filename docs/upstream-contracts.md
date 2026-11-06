@@ -147,7 +147,11 @@ by the caller, not derived by the Factory. The native derivation ORs
 the Session standard props — `conversation` is ui-conversation's own hook and
 is absent — so its absence must mean "no active targets", not "no Session".
 Reading it as blank selects the Factory's `hero` (or `settling`) state, whose
-composer stack is not the pinned conversation seat.
+composer stack is not the pinned conversation seat. The same hero is selected
+when `openState` is `"open"` and the live Session is still conservatively
+blank. A pane has no `conversation.activeTargets` to override that, so a
+catalog row that has already started (`summary` blank false, or
+`sessionListMetadata.blank === false`) must stay on the transcript instead.
 
 **Verified:** factory name, props and the ownership rule were read in the
 renderer and ui-conversation bundles; `slots.snapshot("factory:<name>")` was
@@ -364,7 +368,12 @@ is a `Map<sessionId, { running, pendingInteraction, completionUnread }>`, where
 failure bit** in either projection: a failed turn is a conversation node, not a
 summary field. `blank` is true while the conversation has never sent a message;
 the sidebar inverts it into the light's `started` signal, so an enabled workspace
-holding only fresh blank sessions stays gray.
+holding only fresh blank sessions stays gray. After a host reconnect the summary
+`blank` can stay true until persisted `projectionValues.sessionListMetadata.blank`
+arrives. Metadata `blank: false` is the correction dsh itself applies
+(`effectiveBlank(summary) && metadata?.blank !== false`): the conversation has
+started. A live Session object also begins conservatively `blank` until that
+reconciliation, even after `openState` is `"open"`.
 
 **Summary and view values (0.2.2-rc.1):** a projection unit now publishes two
 shapes. The summary block (`SessionProjectionSummaryValues`, the list row's

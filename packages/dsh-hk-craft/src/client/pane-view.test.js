@@ -117,6 +117,41 @@ test('a blank pane still asks for the hero state', () => {
   })
 })
 
+test('a restarted conversation whose list blank is stale still mounts the transcript', () => {
+  withFakeReact(fakeReact, () => {
+    const renders = []
+    const PaneBody = createPaneBody(fakeController())
+    PaneBody({
+      sessionId: 's1',
+      useSession: (selector) =>
+        selector({
+          blank: true,
+          awaitingFirstTurn: false,
+          running: false,
+          promptAttempted: false,
+          openState: 'open',
+        }),
+      useSessions: (selector) =>
+        selector({
+          byId: {
+            s1: {
+              id: 's1',
+              blank: true,
+              projectionValues: { sessionListMetadata: { blank: false, lastPromptAt: 10 } },
+            },
+          },
+        }),
+      renderFactorySlot: (_name, input) => {
+        renders.push(input)
+        return null
+      },
+    })
+
+    assert.equal(renders[0].phase, 'active')
+    assert.equal(renders[0].hero, false)
+  })
+})
+
 
 test('paneViewOfSession reads the pane layout record across loaded workspaces', () => {
   const state = {

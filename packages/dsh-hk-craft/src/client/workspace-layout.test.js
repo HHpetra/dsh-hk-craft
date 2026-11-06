@@ -852,6 +852,68 @@ test('the workspace shown at startup waits for the session catalog before saying
   controller.dispose()
 })
 
+test('startup opens history once a ready catalog corrects stale blanks', () => {
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['s1'] }]
+  const { controller, fake } = readyController({
+    sessionsPhase: 'pending',
+    workspaces,
+    rows: {},
+    paneIds: ['p-boot'],
+  })
+
+  assert.equal(controller.activate(), true)
+  assert.equal(controller.getSnapshot().sessionId, null)
+
+  // The first ready snapshot can still mark every conversation blank. That is
+  // not "this workspace has no history"; the metadata correction arrives next.
+  fake.setSessions({
+    s1: { id: 's1', title: 'History', blank: true, updatedAt: 10 },
+  })
+  assert.equal(controller.getSnapshot().sessionId, null)
+
+  fake.setSessions({
+    s1: {
+      id: 's1',
+      title: 'History',
+      blank: true,
+      updatedAt: 10,
+      projectionValues: { sessionListMetadata: { blank: false, lastPromptAt: 10 } },
+    },
+  })
+
+  assert.equal(controller.getSnapshot().sessionId, 's1')
+  controller.dispose()
+})
+
+test('a new conversation opened while blanks are still stale stays put when history arrives', async () => {
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['s1'] }]
+  const { controller, fake } = readyController({
+    sessionsPhase: 'pending',
+    workspaces,
+    rows: {},
+    paneIds: ['p-new'],
+  })
+  controller.activate()
+  fake.setSessions({
+    s1: { id: 's1', title: 'History', blank: true, updatedAt: 10 },
+  })
+  assert.equal(controller.getSnapshot().sessionId, null)
+
+  assert.equal(await controller.budget.newInFocused('w1'), true)
+  assert.equal(controller.getSnapshot().sessionId, 'created-1')
+
+  // The new row is published before the workspace list links it. That tick
+  // must not close the pane, and it must not swap in the older conversation.
+  fake.setSessions({
+    s1: { id: 's1', title: 'History', blank: false, updatedAt: 10 },
+    'created-1': { id: 'created-1', blank: true, updatedAt: 11 },
+  })
+
+  assert.equal(controller.getSnapshot().sessionId, 'created-1')
+  assert.equal(controller.getSnapshot().panes['p-new'].sessionId, 'created-1')
+  controller.dispose()
+})
+
 test('a workspace switch made before the session catalog is ready is the one that receives history', async () => {
   const workspaces = [
     { workspaceId: 'w1', sessionIds: ['s1'] },

@@ -113,6 +113,14 @@ function probeConversationContent(slots) {
  * Factory's `hero`/`settling` state instead of the live conversation (the
  * composer moved into the hero stack and lost its pinned seat).
  *
+ * The live Session also starts conservatively blank, and stays that way until
+ * the manager reconciles it. Once the history stream is open, `openState`
+ * `"open"` would select the new-conversation hero even when the catalog
+ * already knows a message was sent. That hero collapses the transcript and,
+ * until a workspace title resolves, disables the composer. A catalog that
+ * says the conversation has started keeps the transcript after open, and
+ * stays on `settling` only while that stream is still loading.
+ *
  * @param {{ sessionId?: string, session?: any, conversation?: any, summaryBlank?: boolean }} input
  * @returns {{ phase: 'blank'|'engaging'|'active'|'settling'|'hero', hero: boolean }}
  */
@@ -128,7 +136,10 @@ function derivePanePhase({ sessionId, session, conversation, summaryBlank }) {
           ? 'engaging'
           : 'blank'
   const openState = session?.openState
-  const hero = sessionId === undefined || (shellPhase === 'blank' && (openState === 'open' || summaryBlank === true))
+  const knownHistory = summaryBlank === false
+  const hero =
+    sessionId === undefined ||
+    (shellPhase === 'blank' && !knownHistory && (openState === 'open' || summaryBlank === true))
   const settling =
     sessionId !== undefined && shellPhase === 'blank' && openState === 'loading' && summaryBlank !== true
   return { phase: settling ? 'settling' : hero ? 'hero' : 'active', hero }
@@ -335,6 +346,15 @@ function createPaneController(ctx, options = {}) {
    */
   let bootRestored = false
   /**
+   * Sessions this controller created or placed before `workspaces.list` links
+   * them. A ready catalog that does not list them yet is not a delete: pruning
+   * on that gap closes the new-conversation pane on the same tick the row
+   * appears.
+   *
+   * @type {Set<string>}
+   */
+  const pendingMembership = new Set()
+  /**
    * The native right bar, which owns its own state and snapshot fields
    * (`pane-panel.js`). Created below, once `emit` exists, because the panel
    * reports through the same publish path as everything else.
@@ -361,6 +381,15 @@ function createPaneController(ctx, options = {}) {
    * `syncCurrent` and try to move the pane we just revealed.
    */
   let revealing = false
+  /**
+   * The focused/current pair `revealFocusedPane` already asked `openSession`
+   * to fix. `revealing` only covers the synchronous call. A shell that reports
+   * the same idle current on a later turn (the open did not move it) must not
+   * be asked again, or the pull-back and the notification form a loop.
+   *
+   * @type {string|null}
+   */
+  let revealMiss = null
   /**
    * Last `mainView` counts read from the session list. A 新会话 retains
    * `mainView` on the new session without moving the sticky current, so a
@@ -683,7 +712,31 @@ function createPaneController(ctx, options = {}) {
     // its session, even if the session row has not been projected yet. A
     // workspace the host no longer lists answers with an empty set, which prunes
     // its restored tree — its stored key is about to be cleared anyway.
-    return new Set(catalog.memberIds(workspaceId))
+    const ids = new Set(catalog.memberIds(workspaceId))
+    const layout = book.layoutOf(workspaceId)
+    for (const pane of Object.values(layout.panes ?? {})) {
+      const sessionId = pane?.sessionId
+      if (typeof sessionId !== 'string' || ids.has(sessionId) || !pendingMembership.has(sessionId)) continue
+      if (catalog.session(sessionId) === undefined) {
+        pendingMembership.delete(sessionId)
+        continue
+      }
+      const owner = catalog.workspaceOf(sessionId)
+      if (owner !== undefined && owner.id !== workspaceId) {
+        pendingMembership.delete(sessionId)
+        continue
+      }
+      ids.add(sessionId)
+    }
+    for (const sessionId of [...pendingMembership]) {
+      if (catalog.workspaceOf(sessionId) !== undefined) pendingMembership.delete(sessionId)
+    }
+    return ids
+  }
+
+  /** @param {string} sessionId */
+  function notePendingMembership(sessionId) {
+    if (typeof sessionId === 'string' && sessionId !== '') pendingMembership.add(sessionId)
   }
 
   /**
@@ -770,6 +823,7 @@ function createPaneController(ctx, options = {}) {
     if (typeof sessionId !== 'string' || sessionId === '') {
       throw new Error('sessions.create returned no session id')
     }
+    notePendingMembership(sessionId)
     return sessionId
   }
 
@@ -1032,10 +1086,17 @@ function createPaneController(ctx, options = {}) {
     const target = bootOwned ? bootWorkspaceId(catalog, active) : active
     if (typeof target !== 'string' || target === '') return
     // Set before opening. Retaining the conversation notifies the session
-    // list, which would otherwise re-enter this function.
+    // list, which would otherwise re-enter this function. A ready snapshot
+    // whose rows are still stale blanks has not named any history; clearing
+    // the flag lets the metadata correction open one. A pane already on
+    // screen stays: a new conversation opened in that gap is not replaced.
     bootSettled = true
-    if (active !== target && !switchWorkspaceValue(target)) return
-    focusOrOpenWorkspaceConversation(target)
+    if (active !== target && !switchWorkspaceValue(target)) {
+      bootSettled = false
+      return
+    }
+    if (focusedPane() === null) focusOrOpenWorkspaceConversation(target)
+    if (focusedPane() === null) bootSettled = false
   }
 
   /** The catalog row of one session, or undefined when the shell no longer lists it. */
@@ -1375,6 +1436,7 @@ function createPaneController(ctx, options = {}) {
     if (disposed || !registered || !snapshot.active) return false
     if (typeof sessionId !== 'string' || sessionId === '') return false
     if (book.locatePaneIn(sessionId) !== null) return false
+    notePendingMembership(sessionId)
     const stickyId = currentSessionId()
     returnToPanesValue()
     const layout = book.activeLayout()
@@ -1466,9 +1528,16 @@ function createPaneController(ctx, options = {}) {
     const focused = focusedPane()
     const sessionId = focused?.sessionId
     if (typeof sessionId !== 'string' || sessionId === '') return false
-    if (currentSessionId() === sessionId) return false
+    const currentId = currentSessionId()
+    if (currentId === sessionId) {
+      revealMiss = null
+      return false
+    }
+    const miss = `${sessionId}\0${currentId ?? ''}`
+    if (revealMiss === miss) return false
     const open = uiWorkspaceFace()?.openSession
     if (typeof open !== 'function') return false
+    revealMiss = miss
     revealing = true
     try {
       open(sessionId)
@@ -1478,6 +1547,7 @@ function createPaneController(ctx, options = {}) {
     } finally {
       revealing = false
     }
+    if (currentSessionId() === sessionId) revealMiss = null
     return true
   }
 

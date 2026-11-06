@@ -174,6 +174,26 @@ test('a session row keeps the durable title only and the catalog id as its ident
   assert.equal(catalog.session(''), undefined)
 })
 
+test('sessionListMetadata corrects a stale blank hint', () => {
+  // After a host reconnect the summary can still say blank while the persisted
+  // metadata already knows a turn was sent. The catalog has to follow that
+  // correction, or startup treats the history as a conversation that never started.
+  const catalog = openCatalog({
+    sessions: sessionsSnapshot([
+      sessionRow('old', {
+        blank: true,
+        projectionValues: { sessionListMetadata: { blank: false, lastPromptAt: 5 } },
+      }),
+      sessionRow('fresh', {
+        blank: true,
+        projectionValues: { sessionListMetadata: { blank: true, lastPromptAt: null } },
+      }),
+    ]),
+  })
+  assert.equal(catalog.session('old').started, true)
+  assert.equal(catalog.session('fresh').started, false)
+})
+
 test('sessionsOf returns one stable array per workspace', () => {
   const catalog = openCatalog(twoSessions())
   assert.equal(catalog.sessionsOf('w1'), catalog.sessionsOf('w1'))

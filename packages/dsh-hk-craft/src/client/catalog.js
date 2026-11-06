@@ -169,6 +169,11 @@ function buildCatalog(input) {
    * the call sites this replaced; the strict `blank === false` reading made an
    * unstubbed row look never-started.
    *
+   * A host reconnect can publish that summary blank before the persisted
+   * `sessionListMetadata` arrives. Metadata `blank: false` is the same
+   * correction dsh applies to the list row: the conversation has started,
+   * and a stale summary hint must not hide it.
+   *
    * @param {string} sessionId
    * @returns {object|undefined}
    */
@@ -178,10 +183,13 @@ function buildCatalog(input) {
     if (cached !== undefined) return cached
     const raw = sessionsSnapshot?.byId?.[sessionId]
     if (!isRecord(raw)) return undefined
+    const metadataBlank = isRecord(raw.projectionValues)
+      ? raw.projectionValues.sessionListMetadata?.blank
+      : undefined
     const row = Object.freeze({
       id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : sessionId,
       title: textOf(raw.title),
-      started: raw.blank !== true,
+      started: metadataBlank === false || raw.blank !== true,
       archived: archived.has(sessionId),
       updatedAt: typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
       // A subagent session is a child conversation: it notifies through its
