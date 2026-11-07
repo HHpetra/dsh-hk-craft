@@ -52,7 +52,7 @@ const { createSplitBudget } = require('./pane-budget.js')
 const { createCloseFlow } = require('./pane-close.js')
 const { createPaneLayout } = require('./pane-layout.js')
 const { createRightbar } = require('./pane-panel.js')
-const { messageOf } = require('./shared.js')
+const { browserStorage, messageOf } = require('./shared.js')
 const { neighbourWorkspaceId, workspaceOrderOf } = require('./workspace-order.js')
 const { openConversationItems, paneIdForStripIndex } = require('./pane-strip.js')
 
@@ -96,7 +96,7 @@ function probeConversationContent(slots) {
     return {
       ok: false,
       status: 'error',
-      message: error instanceof Error ? error.message : String(error),
+      message: messageOf(error),
     }
   }
 }
@@ -144,20 +144,6 @@ function derivePanePhase({ sessionId, session, conversation, summaryBlank }) {
     sessionId !== undefined && shellPhase === 'blank' && openState === 'loading' && summaryBlank !== true
   return { phase: settling ? 'settling' : hero ? 'hero' : 'active', hero }
 }
-/**
- * The browser's origin-wide storage, or null. Reading the global itself can
- * throw in locked-down profiles, and Node (the unit tests) has none.
- *
- * @returns {{getItem?: Function, setItem?: Function}|null}
- */
-function defaultStorage() {
-  try {
-    return globalThis.localStorage ?? null
-  } catch (_error) {
-    return null
-  }
-}
-
 /**
  * The workspace a cold start should show once both catalogs are ready.
  *
@@ -257,14 +243,14 @@ function subscribeList(list, listener) {
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
  * @param {{ nextPaneId?: () => string, storage?: any, viewSwitch?: any }} [options]
  *   `nextPaneId` is a deterministic id factory and `storage` a storage seam for
- *   tests (defaults to `localStorage`); `viewSwitch` is the conversation View
+ *   tests (defaults to `browserStorage()`); `viewSwitch` is the conversation View
  *   adapter (ticket 07 — `dsh-view-switch.js`, tests inject a fake)
  * @returns {any}
  */
 function createPaneController(ctx, options = {}) {
   const sessions = ctx?.sessions
   const slots = ctx?.slots
-  const storage = options.storage === undefined ? defaultStorage() : options.storage
+  const storage = options.storage === undefined ? browserStorage() : options.storage
   const viewSwitch = options?.viewSwitch
 
   /**
@@ -991,7 +977,7 @@ function createPaneController(ctx, options = {}) {
         probe: {
           ok: false,
           status: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: messageOf(error),
         },
       })
     }) ?? (() => {})
@@ -1611,7 +1597,7 @@ function createPaneController(ctx, options = {}) {
         layoutRuntime.layout.replaceFocusedSession(sessionId)
         return
       }
-      face.activate(sessionId)
+      activateValue(sessionId)
     } finally {
       routingDepth -= 1
     }
@@ -1649,6 +1635,126 @@ function createPaneController(ctx, options = {}) {
     if (layout.activePaneId === null) return undefined
     const pane = layout.panes[layout.activePaneId]
     return pane === undefined ? undefined : pane.sessionId
+  }
+
+  /**
+   * Enter or restore split mode. The face method is the contract; this is the
+   * body, so `syncCurrent` can call it without going back out through `face`.
+   *
+   * @param {string} [sessionId]
+   * @returns {boolean}
+   */
+  function activateValue(sessionId) {
+    if (disposed) return false
+    if (!registered) {
+      emit({ error: 'pane main entry is not registered yet' })
+      return false
+    }
+    const explicit = typeof sessionId === 'string' && sessionId !== ''
+    if (explicit) bootOwned = false
+    ensureCatalogSubscription()
+    refreshProbe()
+    pruneLoadedWorkspaces()
+
+    let target
+    let targetWorkspace
+    let fallbackTarget
+    const previousWorkspaceId = book.getActiveWorkspaceId()
+    if (explicit) {
+      target = sessionId
+      targetWorkspace = workspaceOf(target) ?? focusedWorkspaceId()
+    } else {
+      // Restore the workspace this plugin itself persisted before following
+      // the shell's current. A plugin reload builds a new controller while
+      // dsh still points current at the native selection from before the
+      // split view; that older conversation is not what the panes were
+      // showing.
+      const remembered = rememberedWorkspaceId()
+      if (remembered !== null) {
+        targetWorkspace = remembered
+      } else {
+        fallbackTarget = catalogNow().current()
+        targetWorkspace =
+          fallbackTarget === undefined
+            ? focusedWorkspaceId()
+            : (workspaceOf(fallbackTarget) ?? focusedWorkspaceId())
+      }
+    }
+
+    if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
+      if (!ensureWorkspace(targetWorkspace)) {
+        emit({
+          ...statePatch(true),
+          active: true,
+          error: `cannot show workspace ${targetWorkspace}`,
+        })
+        return false
+      }
+      book.setActiveWorkspace(targetWorkspace)
+      if (!explicit) {
+        // The restored focused pane is the view the user was looking at, even
+        // when the workspace was picked from the shell's current. An empty
+        // tree leaves the target open for the boot settlement (a remembered
+        // empty workspace must not get another workspace's session).
+        const restored = focusedSessionOf(targetWorkspace)
+        if (restored !== undefined) {
+          target = restored
+          bootOwned = false
+          bootRestored = true
+        } else if (fallbackTarget !== undefined) {
+          target = fallbackTarget
+        }
+      }
+    }
+    if (target === undefined && (typeof targetWorkspace !== 'string' || targetWorkspace === '')) {
+      target = catalogNow().current()
+    }
+
+    const current = book.activeLayout()
+    // Already showing this session in the workspace that is on screen: nothing
+    // to retain. A workspace change still has to reconcile, even when the
+    // stored focus is already the requested session — otherwise that tree is
+    // published with no pane references and mainView stays on the old one.
+    const workspaceUnchanged = book.getActiveWorkspaceId() === previousWorkspaceId
+    if (snapshot.active && workspaceUnchanged) {
+      if (target === undefined) {
+        emit({ ...statePatch(true), active: true, error: null })
+        settleBootWorkspace()
+        return true
+      }
+      const holder = layoutTree.paneOfSession(current, target)
+      if (holder !== undefined && holder === current.activePaneId) {
+        emit({ ...statePatch(true), active: true, error: null })
+        settleBootWorkspace()
+        return true
+      }
+    }
+
+    let next = current
+    if (next.root === null) {
+      if (target !== undefined) {
+        next = layoutTree.openPane(next, freshPane(target))
+      }
+    } else if (target !== undefined) {
+      const holder = layoutTree.paneOfSession(next, target)
+      next =
+        holder !== undefined
+          ? layoutTree.focus(next, holder)
+          : layoutTree.replaceSession(next, next.activePaneId, target)
+    }
+
+    const previous = book.allLayouts()
+    const proposed = { ...previous, [book.activeKey()]: next }
+    const { failure } = reconcileAll(proposed)
+    if (failure !== null) {
+      reconcileAll(previous)
+      emit({ ...statePatch(true), active: true, error: failure })
+      return false
+    }
+    book.store(book.getActiveWorkspaceId(), next)
+    emit({ ...statePatch(true), active: true, error: null })
+    settleBootWorkspace()
+    return true
   }
 
   const face = {
@@ -1730,116 +1836,7 @@ function createPaneController(ctx, options = {}) {
      * @returns {boolean} whether the requested session is now the focused pane
      */
     activate(sessionId) {
-      if (disposed) return false
-      if (!registered) {
-        emit({ error: 'pane main entry is not registered yet' })
-        return false
-      }
-      const explicit = typeof sessionId === 'string' && sessionId !== ''
-      if (explicit) bootOwned = false
-      ensureCatalogSubscription()
-      refreshProbe()
-      pruneLoadedWorkspaces()
-
-      let target
-      let targetWorkspace
-      let fallbackTarget
-      const previousWorkspaceId = book.getActiveWorkspaceId()
-      if (explicit) {
-        target = sessionId
-        targetWorkspace = workspaceOf(target) ?? focusedWorkspaceId()
-      } else {
-        // Restore the workspace this plugin itself persisted before following
-        // the shell's current. A plugin reload builds a new controller while
-        // dsh still points current at the native selection from before the
-        // split view; that older conversation is not what the panes were
-        // showing.
-        const remembered = rememberedWorkspaceId()
-        if (remembered !== null) {
-          targetWorkspace = remembered
-        } else {
-          fallbackTarget = catalogNow().current()
-          targetWorkspace =
-            fallbackTarget === undefined
-              ? focusedWorkspaceId()
-              : (workspaceOf(fallbackTarget) ?? focusedWorkspaceId())
-        }
-      }
-
-      if (typeof targetWorkspace === 'string' && targetWorkspace !== '') {
-        if (!ensureWorkspace(targetWorkspace)) {
-          emit({
-            ...statePatch(true),
-            active: true,
-            error: `cannot show workspace ${targetWorkspace}`,
-          })
-          return false
-        }
-        book.setActiveWorkspace(targetWorkspace)
-        if (!explicit) {
-          // The restored focused pane is the view the user was looking at, even
-          // when the workspace was picked from the shell's current. An empty
-          // tree leaves the target open for the boot settlement (a remembered
-          // empty workspace must not get another workspace's session).
-          const restored = focusedSessionOf(targetWorkspace)
-          if (restored !== undefined) {
-            target = restored
-            bootOwned = false
-            bootRestored = true
-          } else if (fallbackTarget !== undefined) {
-            target = fallbackTarget
-          }
-        }
-      }
-      if (target === undefined && (typeof targetWorkspace !== 'string' || targetWorkspace === '')) {
-        target = catalogNow().current()
-      }
-
-      const current = book.activeLayout()
-      // Already showing this session in the workspace that is on screen: nothing
-      // to retain. A workspace change still has to reconcile, even when the
-      // stored focus is already the requested session — otherwise that tree is
-      // published with no pane references and mainView stays on the old one.
-      const workspaceUnchanged = book.getActiveWorkspaceId() === previousWorkspaceId
-      if (snapshot.active && workspaceUnchanged) {
-        if (target === undefined) {
-          emit({ ...statePatch(true), active: true, error: null })
-          settleBootWorkspace()
-          return true
-        }
-        const holder = layoutTree.paneOfSession(current, target)
-        if (holder !== undefined && holder === current.activePaneId) {
-          emit({ ...statePatch(true), active: true, error: null })
-          settleBootWorkspace()
-          return true
-        }
-      }
-
-      let next = current
-      if (next.root === null) {
-        if (target !== undefined) {
-          next = layoutTree.openPane(next, freshPane(target))
-        }
-      } else if (target !== undefined) {
-        const holder = layoutTree.paneOfSession(next, target)
-        next =
-          holder !== undefined
-            ? layoutTree.focus(next, holder)
-            : layoutTree.replaceSession(next, next.activePaneId, target)
-      }
-
-      const previous = book.allLayouts()
-      const proposed = { ...previous, [book.activeKey()]: next }
-      const { failure } = reconcileAll(proposed)
-      if (failure !== null) {
-        reconcileAll(previous)
-        emit({ ...statePatch(true), active: true, error: failure })
-        return false
-      }
-      book.store(book.getActiveWorkspaceId(), next)
-      emit({ ...statePatch(true), active: true, error: null })
-      settleBootWorkspace()
-      return true
+      return activateValue(sessionId)
     },
     /**
      * Show another workspace's layout without closing anything (spec D5).

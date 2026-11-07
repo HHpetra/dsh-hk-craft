@@ -37,6 +37,8 @@
  *   `subagent` bit instead). Add a query when a caller appears, not before.
  */
 
+const { isRecord } = require('./shared.js')
+
 /** Client services this module is allowed to resolve. Nothing else. */
 const SESSIONS_SERVICE = 'sessions'
 const WORKSPACES_SERVICE = 'workspaces'
@@ -44,14 +46,6 @@ const UI_SESSION_SERVICE = 'uiSession'
 
 /** Shared empty result, so a miss allocates nothing. */
 const NO_ROWS = Object.freeze([])
-
-/**
- * @param {unknown} value
- * @returns {boolean}
- */
-function isRecord(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 /**
  * Whether one list snapshot can be trusted as complete.

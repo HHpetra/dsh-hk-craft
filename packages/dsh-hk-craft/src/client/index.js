@@ -16,7 +16,7 @@
  * plugin keeps working even when a service is absent.
  *
  * The pane feature is split into a pure adapter/controller (`dsh-pane-host.js`)
- * and thin React views (`pane-view.js`). File drags are routed by
+ * and the React views composed by `pane-view.js`. File drags are routed by
  * `pane-file-drop-events.js` for the life of that mount: one document listener,
  * the pane under the pointer. The HK Craft settings page
  * (`settings-view.js`) is the transitional home of the diagnostics, the pane
@@ -26,6 +26,7 @@
  * subagent viewer (`pane-subagents.js` projection, `pane-subagents-view.js` view).
  */
 
+const { browserStorage } = require('./shared.js')
 const { dictionaries } = require('./locale.js')
 const { WorkspaceSection } = require('./sidebar-workspaces.js')
 const { createSectionActions } = require('./dsh-workspaces.js')
@@ -210,7 +211,7 @@ function apply(ctx) {
   // memory is cmd on Windows. Prefer PowerShell 7, then Windows PowerShell,
   // once, then leave the menu alone.
   ctx.inject(['webTerminals', 'sessions'], (scope) => {
-    const storage = globalThis.localStorage
+    const storage = browserStorage()
     if (storage == null || typeof storage.getItem !== 'function') return () => {}
     return installPowerShellDefault({
       webTerminals: scope.get('webTerminals'),

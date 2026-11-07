@@ -803,6 +803,32 @@ test('an empty workspace explains a split-mode error', () => {
   })
 })
 
+test('a later React stand-in is the one the next pane render uses', () => {
+  const render = (mark) =>
+    PaneEmptyState({
+      controller: { watchConversations: () => () => {} },
+      workspaceId: null,
+      visible: false,
+      t: (key) => key,
+    }).react === mark
+  const standIn = (mark) => ({
+    ...fakeReact,
+    createElement: (type, props, ...children) => ({
+      type,
+      props: { ...(props ?? {}), children },
+      react: mark,
+    }),
+  })
+  assert.equal(
+    withFakeReact(standIn('first'), () => render('first')),
+    true,
+  )
+  assert.equal(
+    withFakeReact(standIn('second'), () => render('second')),
+    true,
+  )
+})
+
 test('the strip split control stays enabled with 0 panes as the cap', () => {
   withFakeReact(fakeReact, () => {
     const { plus } = stripPlus(0)

@@ -539,6 +539,32 @@ test('every shipped preset and the badge explanation have copy in both languages
   }
 })
 
+test('a locked-down localStorage does not stop the plugin from mounting', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    get() {
+      throw new Error('denied')
+    },
+  })
+  try {
+    const ctx = fakeCtx({
+      services: {
+        ...workspaceServices(),
+        webTerminals: {
+          launchShells() {},
+          selectShell() {},
+        },
+        sessions: { list: { getSnapshot: () => ({ byId: {}, phase: 'ready' }) } },
+      },
+    })
+    assert.doesNotThrow(() => apply(ctx))
+  } finally {
+    if (descriptor === undefined) delete globalThis.localStorage
+    else Object.defineProperty(globalThis, 'localStorage', descriptor)
+  }
+})
+
 test('the mode roster loader reads the optional remote once per preset id', async () => {
   const calls = []
   const services = {

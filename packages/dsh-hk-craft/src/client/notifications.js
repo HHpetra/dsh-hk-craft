@@ -25,7 +25,7 @@
 
 const { displayWorkspaceName } = require('./workspace-status.js')
 const { openCatalog, readCatalogs } = require('./catalog.js')
-const { messageOf } = require('./shared.js')
+const { browserStorage, isRecord, messageOf } = require('./shared.js')
 
 /** Versioned local key; notifications are a client preference, not profile data. */
 const STORAGE_KEY = 'dsh.hkcraft.notifications.v1'
@@ -67,14 +67,6 @@ const DEFAULT_SETTINGS = Object.freeze({
     [TYPE_FAILED]: true,
   }),
 })
-
-/**
- * @param {unknown} value
- * @returns {boolean}
- */
-function isRecord(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 /**
  * Merge stored/partial settings over the defaults, dropping unknown type keys.
@@ -361,19 +353,6 @@ function notificationTag(type, sessionId) {
 }
 
 /**
- * @returns {{getItem?: Function, setItem?: Function}|undefined}
- */
-function defaultStorage() {
-  try {
-    return typeof globalThis.localStorage === 'object' && globalThis.localStorage !== null
-      ? globalThis.localStorage
-      : undefined
-  } catch (_error) {
-    return undefined
-  }
-}
-
-/**
  * Build the notifier.
  *
  * Options are injectable for the unit tests; the production wiring in
@@ -394,7 +373,7 @@ function createNotifier(options) {
   const ctx = options.ctx
   const controller = options.controller
   const t = options.t
-  const storage = options.storage ?? defaultStorage()
+  const storage = options.storage ?? browserStorage()
   const NotificationImpl = options.NotificationImpl
   const documentRef = options.documentRef
   const windowRef = options.windowRef

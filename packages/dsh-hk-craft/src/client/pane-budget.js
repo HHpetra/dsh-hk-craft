@@ -118,7 +118,7 @@ function writeMaxPanes(storage, value) {
     )
     return { ok: true, maxPanes }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = messageOf(error)
     return { ok: false, maxPanes, message }
   }
 }

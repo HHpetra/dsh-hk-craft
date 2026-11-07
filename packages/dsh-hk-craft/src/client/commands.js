@@ -14,6 +14,7 @@
  * builder (`resume-list.js`), which keeps this file about wiring, not data.
  */
 
+const { messageOf } = require('./shared.js')
 const { buildResumeRows } = require('./resume-list.js')
 const { openCatalog, readCatalogs } = require('./catalog.js')
 const {
@@ -299,7 +300,7 @@ function forkFailureText(error) {
     error instanceof Error && error.name === 'SessionForkError' && typeof error.rpcError?.code === 'string'
       ? error.rpcError.code
       : ''
-  const message = error instanceof Error ? error.message : String(error)
+  const message = messageOf(error)
   return code === '' ? message : `${code}: ${message}`
 }
 
