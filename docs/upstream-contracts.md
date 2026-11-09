@@ -69,7 +69,12 @@ a drawer counts as wide. This plugin does not read `drawer`.
 unmounts the native Conversation. This plugin does not. It shadows the
 `conversation` cell. The one `selectPanel` call is `selectPanel(null)`, from
 `returnToPanes`, and only while the shadow is registered and split is active
-— that closes a 全局面板 and leaves `activePanelId` null. See
+— that closes a 全局面板 and leaves `activePanelId` null. The explicit
+workspace-row click always issues that request: reading `panelInfo` first is
+only an optimization, because a missing, throwing or stale read must not be
+able to leave a 全局面板 covering the panes. `placeNewSession` keeps the
+read-and-skip form, because it runs inside dsh's own `replaceMain` navigation
+and must not abort it. See
 [Shadowing the conversation cell](#shadowing-the-conversation-cell).
 `selectPanel('conversation')` is not that return: it sets `activePanelId` to
 `"conversation"` and the right bar hides.

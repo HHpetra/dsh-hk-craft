@@ -823,6 +823,39 @@ function watchPanelClose(fake, controller) {
   return seen
 }
 
+test('returnToPanes asks for the pane view even without a readable panel id', () => {
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
+  const controller = createPaneController(fake.ctx)
+  // The explicit click must not depend on this read: a shell whose panel face
+  // is unavailable or stale used to leave the panel covering the panes.
+  fake.ctx.layout.panelInfo = {
+    getSnapshot() {
+      throw new Error('panelInfo unavailable')
+    },
+    subscribe: () => () => {},
+  }
+  fake.setPanel('plugins')
+
+  assert.equal(controller.returnToPanes(), false)
+  assert.deepEqual(fake.calls.selectPanel, [])
+
+  controller.markRegistered()
+  assert.equal(controller.returnToPanes(), false)
+  assert.deepEqual(fake.calls.selectPanel, [])
+
+  controller.activate('s1')
+  fake.setPanel('plugins')
+  assert.equal(controller.returnToPanes(), true)
+  assert.deepEqual(fake.calls.selectPanel, [null])
+  assert.equal(fake.panel.activePanelId, null)
+
+  // The explicit face always asks; upstream treats the second request as a
+  // no-op, so a stale read can never strand the user in the panel.
+  assert.equal(controller.returnToPanes(), true)
+  assert.deepEqual(fake.calls.selectPanel, [null, null])
+  controller.dispose()
+})
+
 test('returnToPanes closes a global panel only while split owns the conversation cell', () => {
   const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT })
   const controller = createPaneController(fake.ctx)
@@ -842,7 +875,7 @@ test('returnToPanes closes a global panel only while split owns the conversation
   assert.equal(fake.panel.activePanelId, null)
 
   assert.equal(controller.returnToPanes(), true)
-  assert.deepEqual(fake.calls.selectPanel, [null])
+  assert.deepEqual(fake.calls.selectPanel, [null, null])
   controller.dispose()
 })
 

@@ -264,12 +264,23 @@ function createSectionActions(ctx, options = {}) {
    *
    * A 全局面板 is closed first, and only when this plugin owns the conversation
    * cell. Outside split the click is unchanged and does not touch the panel.
+   * That close is best-effort: a failure in the pane face must not swallow the
+   * click, because the native reveal below is also a way back to the main area.
    *
    * @param {string} workspaceId
    */
   function openWorkspace(workspaceId) {
-    panes?.returnToPanes?.()
-    if (panes?.active?.() === true && panes?.switchWorkspace?.(workspaceId) === true) return
+    // The pane face is best-effort: a throw from the controller must not swallow
+    // the click, because the native reveal below is also a way back to the main
+    // area. A false result means the pane view does not own this click.
+    let paneViewHandled = false
+    try {
+      panes?.returnToPanes?.()
+      paneViewHandled = panes?.active?.() === true && panes?.switchWorkspace?.(workspaceId) === true
+    } catch (error) {
+      console.error('[dsh-hk-craft] failed to switch the pane workspace', error)
+    }
+    if (paneViewHandled) return
     const uiWorkspace = ctx.get('uiWorkspace')
     const sessionId = nativeConversationId(openCatalog(readCatalogs(ctx)), workspaceId)
     if (sessionId !== undefined && typeof uiWorkspace?.openSession === 'function') {

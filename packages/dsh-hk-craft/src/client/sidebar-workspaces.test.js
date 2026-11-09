@@ -179,7 +179,13 @@ function renderSection({
   const { workspaces, sessions, statuses } = snapshots({ current, started })
   return WorkspaceSection({
     ...extra,
-    t: (key) => zh[key] ?? key,
+    t: (key, params) => {
+      const template = zh[key] ?? key
+      if (params === undefined) return template
+      return template.replace(/\{(\w+)\}/g, (match, name) =>
+        Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match,
+      )
+    },
     wide,
     useWorkspaces: (selector) => selector(workspaces),
     useSessions: (selector) => selector(sessions),
@@ -438,16 +444,41 @@ test('a visible workspace id with no loaded layout marks the row the screen show
   })
 })
 
-test('the narrow sidebar has no current marker', () => {
+test('the narrow sidebar turns the current workspace into the one return target', () => {
   const fakeReact = createFakeReact()
   withFakeReact(fakeReact, () => {
     const { panes } = paneFace(['w1'], visibleSnapshot('w1'))
-    const tree = renderSection({ panes, current: true, wide: false })
+    const opened = []
+    const tree = renderSection({
+      panes,
+      current: true,
+      wide: false,
+      openWorkspace: (workspaceId) => opened.push(workspaceId),
+    })
+    // The full rows are gone, so the rail's only way back to the panes is this
+    // current-workspace control; the add entry stays next to it.
     assert.deepEqual(currentRowShapes(tree), [])
     assert.equal(
       descendants(tree).some((element) => element.props?.['aria-current'] !== undefined),
       false,
     )
+    const rail = findByAttribute(tree, 'data-hkcraft-workspace-rail')
+    assert.notEqual(rail, null, 'the rail must offer the current workspace')
+    assert.equal(rail.props['data-hkcraft-workspace-rail'], 'w1')
+    assert.equal(rail.props.type, 'button')
+    assert.match(rail.props['aria-label'], /Project A/)
+    rail.props.onClick()
+    assert.deepEqual(opened, ['w1'])
+    assert.notEqual(findByAttribute(tree, 'data-hkcraft-workspace-add'), null)
+  })
+})
+
+test('a narrow sidebar with no visible workspace only offers add', () => {
+  const fakeReact = createFakeReact()
+  withFakeReact(fakeReact, () => {
+    const { panes } = paneFace([], { active: true, workspaceId: null, layouts: {} })
+    const tree = renderSection({ panes, current: false, wide: false })
+    assert.equal(findByAttribute(tree, 'data-hkcraft-workspace-rail'), null)
     assert.notEqual(findByAttribute(tree, 'data-hkcraft-workspace-add'), null)
   })
 })

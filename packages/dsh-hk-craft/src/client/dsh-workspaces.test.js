@@ -597,6 +597,48 @@ test('a workspace click closes the global panel before switching the pane tree',
   assert.deepEqual(calls.startSession, [])
 })
 
+test('a workspace click closes the panel even when the panel snapshot cannot be read', () => {
+  const { ctx, calls, controller } = workspaceClickRig()
+  // A stale/missing panel face must not turn the explicit click into a no-op:
+  // the click itself is the request to show the panes again.
+  ctx.layout.panelInfo.getSnapshot = () => {
+    throw new Error('panelInfo unavailable')
+  }
+  const actions = createSectionActions(ctx, { panes: rigPanes(controller) })
+
+  actions.openWorkspace('w2')
+
+  assert.deepEqual(calls.selectPanel, [null])
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.deepEqual(calls.openSession, [])
+  assert.deepEqual(calls.startSession, [])
+})
+
+test('a pane face that throws still lets the native reveal run', () => {
+  const { ctx, calls } = workspaceClickRig()
+  const actions = createSectionActions(ctx, {
+    panes: {
+      returnToPanes() {
+        throw new Error('panel close failed')
+      },
+      active: () => true,
+      switchWorkspace: () => true,
+    },
+  })
+
+  const originalError = console.error
+  console.error = () => {}
+  try {
+    actions.openWorkspace('w2')
+  } finally {
+    console.error = originalError
+  }
+
+  assert.deepEqual(calls.selectPanel, [])
+  assert.deepEqual(calls.openSession, ['s2'])
+  assert.deepEqual(calls.startSession, [])
+})
+
 test('a workspace click outside split mode does not touch the global panel', () => {
   const { ctx, calls, controller } = workspaceClickRig({ active: false })
   const actions = createSectionActions(ctx, { panes: rigPanes(controller) })

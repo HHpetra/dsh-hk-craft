@@ -19,6 +19,11 @@
  * so a row action keeps its own click. The pointer plumbing itself lives in
  * `workspace-drag.js`.
  *
+ * The narrow rail cannot show the list, but the row click is also the way back
+ * from a global panel. It therefore shows the current row as one compact
+ * button; without it the rail would only offer "Add workspace" and a panel
+ * would be a one-way trip.
+ *
  * Written with `React.createElement` and a lazy `require('react')` for the same
  * reason as `react-and-translator.js`: the repository links client modules itself
  * and the unit tests run in Node, where the platform module graph does not exist.
@@ -282,7 +287,9 @@ const deleteEntryStyle = {
 
 const railStyle = {
   display: 'flex',
-  justifyContent: 'center',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 2,
   padding: '2px 0',
 }
 
@@ -292,6 +299,39 @@ const railButtonStyle = {
   height: 34,
   borderRadius: T.radiusMd,
   fontSize: 17,
+}
+
+/** The rail's current-workspace target: the light is the row, the button is the return. */
+const railCurrentStyle = {
+  ...railButtonStyle,
+  position: 'relative',
+  width: 36,
+  height: 36,
+  justifyContent: 'center',
+  padding: 0,
+}
+
+const railGlyphStyle = {
+  display: 'grid',
+  placeItems: 'center',
+  width: 24,
+  height: 24,
+  borderRadius: T.radiusSm,
+  background: paint('icon-bg'),
+  color: ink('icon-fg', T.textSecondary),
+  fontSize: 12,
+  fontWeight: 500,
+  lineHeight: 1,
+}
+
+const railBadgeStyle = {
+  position: 'absolute',
+  right: 4,
+  bottom: 4,
+  width: 6,
+  height: 6,
+  borderRadius: '50%',
+  boxShadow: `0 0 0 2px ${T.sidebar}`,
 }
 
 const errorStyle = {
@@ -590,10 +630,44 @@ function WorkspaceSection(props) {
         })
 
   if (!wide) {
+    // The rail has no room for the full list, but a global panel is closed by
+    // the workspace click. Without this row the rail would be a one-way trip
+    // into 插件管理: its only other control adds a workspace. The current
+    // workspace is the row that click would return to.
+    const current = rows.find((row) => row.current) ?? null
+    const currentName = current === null ? '' : displayWorkspaceName(current.title, defaultName)
+    const currentLight = current === null ? null : t(`workspace.light.${current.light}`)
+    const railCurrent =
+      current === null
+        ? null
+        : h(
+            'button',
+            {
+              type: 'button',
+              'data-hkcraft-workspace-rail': current.workspaceId,
+              title: `${t('workspace.returnToPanes', { name: currentName })} — ${currentLight}`,
+              'aria-label': `${t('workspace.returnToPanes', { name: currentName })} — ${currentLight}`,
+              onClick: () => openRow(current),
+              style: railCurrentStyle,
+            },
+            h(
+              'span',
+              { 'aria-hidden': 'true', style: railGlyphStyle },
+              Array.from(currentName)[0] ?? '·',
+            ),
+            h('span', {
+              'aria-hidden': 'true',
+              style: {
+                ...railBadgeStyle,
+                background: LIGHT_COLORS[current.light] ?? LIGHT_FALLBACK,
+              },
+            }),
+          )
+
     return h(
       'div',
       { style: rootStyle, 'data-hkcraft': 'workspaces' },
-      h('div', { style: railStyle }, addButton),
+      h('div', { style: railStyle }, railCurrent, addButton),
       errorLine,
       deleteDialog,
     )

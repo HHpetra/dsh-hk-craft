@@ -1387,17 +1387,26 @@ function createPaneController(ctx, options = {}) {
    * Close a 全局面板 so the pane view shows again.
    *
    * The only `selectPanel` call in this plugin. It runs only while the shadow
-   * is registered and split is active; otherwise dsh keeps the click. Already
-   * being in the pane view is a no-op — `selectPanel('conversation')` is never
-   * passed, because a non-null id hides the right bar.
+   * is registered and split is active; otherwise dsh keeps the click. It never
+   * passes `'conversation'`, because a non-null id hides the right bar.
    *
+   * `force` is for an explicit user navigation (a workspace-row click). The
+   * read of `panelInfo` is an optimisation, not evidence: when that face is
+   * missing, throws or reports a stale id, skipping `selectPanel(null)` leaves
+   * the panel covering the panes and the click looks dead. An explicit click
+   * therefore always asks for the pane view, and upstream treats a request
+   * while already there as a no-op. Without `force` the detection is kept,
+   * because `placeNewSession` runs inside dsh's own `replaceMain` navigation
+   * and closing a panel there must not abort that navigation.
+   *
+   * @param {{ force?: boolean }} [options]
    * @returns {boolean} whether the pane view is showing (or was already)
    */
-  function returnToPanesValue() {
+  function returnToPanesValue(options = {}) {
     if (disposed || !registered || !snapshot.active) return false
-    if (!globalPanelOpen()) return true
     const select = ctx?.layout?.selectPanel
     if (typeof select !== 'function') return false
+    if (options?.force !== true && !globalPanelOpen()) return true
     try {
       select(null)
     } catch (error) {
@@ -1807,14 +1816,15 @@ function createPaneController(ctx, options = {}) {
     /**
      * Close a 全局面板 and show the pane view again.
      *
-     * No-op unless this plugin owns the conversation cell (shadow registered
-     * and split active). Already showing the pane view does not call
-     * `selectPanel`. Never selects `'conversation'`.
+     * This is the explicit-navigation face (a workspace-row click), so it
+     * always asks for the pane view instead of trusting a `panelInfo` read.
+     * The call is a no-op when this plugin does not own the conversation cell
+     * (shadow not registered or split inactive). Never selects `'conversation'`.
      *
      * @returns {boolean}
      */
     returnToPanes() {
-      return returnToPanesValue()
+      return returnToPanesValue({ force: true })
     },
     refreshProbe,
     /**
