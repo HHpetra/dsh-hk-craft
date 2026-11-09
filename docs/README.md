@@ -121,8 +121,9 @@ client 依赖的 dsh 契约（`main` 键控槽、`selectPanel`、`SessionProvide
   `sessionStatus.pendingInteraction.kind`，完成来自 `running` 的 true→false，失败来自
   `api-session/error`；失败优先于紧随其后的完成，子代理会话不单独通知。默认始终通知；可在设置页
   勾选“dsh 在前台且该对话可见时不再通知”，此时焦点窗口里已显示的对话（原生主对话或分屏当前
-  工作区任一窗格）不弹系统通知，其它工作区仍通知。点击通知聚焦 dsh 并切到该会话（分屏内
-  聚焦/新开窗格，原生视图走 `openSession`）。设置页有总开关、五类开关、声音、前台抑制、
+  工作区任一窗格）不弹系统通知，其它工作区仍通知。点击通知切到该会话（分屏内
+  聚焦/新开窗格，原生视图走 `openSession`）；Windows 上受 Electron 限制，不会把
+  dsh 窗口提到前台。设置页有总开关、五类开关、声音、前台抑制、
   权限状态与测试按钮，设置存 `localStorage["dsh.hkcraft.notifications.v1"]`。
   通知不改变五态灯与 `completionUnread`；不可用/被拒时安静降级。见 ADR-0012 / ADR-0013。
 - **兼容与降级**：新增的可选能力（Agent 预设名册、子代理目录、设置分区、桌面通知）在服务缺失时安静降级；

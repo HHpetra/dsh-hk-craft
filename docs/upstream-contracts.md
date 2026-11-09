@@ -458,6 +458,22 @@ history:
 types on screen, and routes a click back into the pane controller or
 `uiWorkspace.openSession`.
 
+**Focus caveat (Windows, Desktop 0.2.2-rc.1):** the click callback runs in the
+renderer. `window.focus()` there is renderer-level: it does not `show()` or
+`restore()` a hidden or minimized window and does not reliably pass Windows'
+foreground lock, so the session switches while the window stays behind.
+Electron's own `win.focus()` is likewise not a reliable bring-to-front call
+([electron#2867](https://github.com/electron/electron/issues/2867),
+[electron#4766](https://github.com/electron/electron/issues/4766)).
+dsh's main process has `focusPrimaryWindow()` (`restore` → `show` → `focus`,
+used by the tray, `second-instance` and `dsh://open`), but 0.2.2-rc.1 exposes
+no renderer IPC or preload method for it; `webPreferences` are
+`nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, so a
+plugin cannot reach the main process. A fix therefore needs either an upstream
+focus bridge (for example `dshDesktop.window.focus()`) or a host/native
+helper. Until then the plugin's `window.focus()` call is best-effort and must
+not be described as raising the window.
+
 The optional foreground gate is client policy, not a dsh service:
 `document.hasFocus()` and `document.visibilityState` decide whether the dsh
 window is in front; split-view visibility is
@@ -480,6 +496,9 @@ status map and the error relay are the only public signals that separate
 `dsh-client-ui-approval`, `dsh-client-ui-user-questions`,
 `dsh-api-session-controller`). Runtime probe: restart dsh, trigger each of the
 five types, and confirm the settings page's test button shows a Windows toast.
+The focus caveat was re-checked in Desktop 0.2.2-rc.1: `lib/preload-app.cjs`
+exposes no window-focus method, and `lib/main.js`'s `focusPrimaryWindow()` is
+wired only to the tray, `second-instance` and `dsh://open`.
 
 **Windows identity caveat:** the toast's application identity is the Electron
 process AUMID/Start Menu shortcut, not the plugin. The installed shortcut is
