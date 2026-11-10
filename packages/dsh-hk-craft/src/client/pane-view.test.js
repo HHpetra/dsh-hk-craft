@@ -650,12 +650,14 @@ function stripWithRightbar({
   tools = [],
   toggle = () => {},
   openTool = () => {},
+  reveal = () => {},
 }) {
   const controller = {
     close: { request: () => {} },
     budget: { newPane: () => {} },
     focusPane: () => {},
     swapPanes: () => {},
+    revealFocusedSession: reveal,
     panel: { toggle, openTool },
   }
   const state = {
@@ -719,6 +721,7 @@ test('the strip opens each native right-bar tool from its icon', () => {
       return null
     }
     const calls = []
+    const reveals = []
     const { view } = stripWithRightbar({
       available: true,
       expanded: true,
@@ -726,8 +729,9 @@ test('the strip opens each native right-bar tool from its icon', () => {
         { kind: 'files', entryId: 'workspace', providerId: 'files', title: '文件', icon: FilesIcon },
         { kind: 'terminal', entryId: 'new', providerId: 'terminal', title: '终端', icon: TerminalIcon },
       ],
-      openTool: (kind) => {
-        calls.push(kind)
+      reveal: () => reveals.push('reveal'),
+      openTool: (kind, sessionId) => {
+        calls.push([kind, sessionId])
       },
     })
     const files = elementWhere(view, (node) => node.props?.['data-hkcraft-rightbar-tool'] === 'files')
@@ -737,7 +741,10 @@ test('the strip opens each native right-bar tool from its icon', () => {
     assert.equal(terminal.props['aria-label'], '终端')
     files.props.onClick()
     terminal.props.onClick()
-    assert.deepEqual(calls, ['files', 'terminal'])
+    // A tool click must reveal the focused pane first and open the page on that
+    // pane's Session, not on the right bar's possibly stale mounted Session.
+    assert.deepEqual(reveals, ['reveal', 'reveal'])
+    assert.deepEqual(calls, [['files', 's1'], ['terminal', 's1']])
   })
 })
 

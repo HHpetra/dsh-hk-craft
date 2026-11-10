@@ -209,6 +209,27 @@ view: the call follows the pane and does not replace the pane with the
 previous current. A running focused pane keeps the focus and the right bar
 when current names an idle session (ADR-0019).
 
+**Reveal prerequisites (verified 2026-11-10 in the desktop shell):** three
+details decide whether that call actually moves anything.
+
+- Cordis only exposes a service inside the scope that declared it. The pane
+  kernel is built on the plugin root context, whose `inject` list does not name
+  `uiWorkspace`, so `ctx.get('uiWorkspace')` there is `undefined`. The client
+  entry therefore attaches the face from its own
+  `ctx.inject(['uiWorkspace'])` (`controller.attachWorkspace`); without it every
+  reveal — boot, workspace switch and right-bar tool click — was a silent
+  no-op and the bar stayed on the startup workspace.
+- `openSession` is a prototype method that reads `this.replaceMain`. Calling a
+  detached `openSession` reference throws `Cannot read properties of undefined
+  (reading 'replaceMain')` instead of navigating, so the reveal must call it
+  through the face.
+- `sidebarRight.openTabIn(sessionId, kind)` is a silent no-op until that
+  Session's layout store is adopted. Adoption happens one render after
+  `sidebarRight.mounted` (and `uiSession.current`) already name the Session:
+  `mounted` alone is not a readiness signal. `sidebarRight.screen()` is —
+  it returns `undefined` until the adopted surface exists — and the strip's
+  `openTool` waits on it before opening.
+
 **Changes review:** the upstream review body
 (`@deepseek-ai/dsh-client-ui-deliverables` 0.2.1-rc.5, `ReviewTab`) loads
 `/api/changes.summary` with the right-bar slot's `sessionId` and only the

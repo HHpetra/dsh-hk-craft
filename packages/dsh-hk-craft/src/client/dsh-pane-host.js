@@ -405,6 +405,8 @@ function createPaneController(ctx, options = {}) {
    * @type {string|null}
    */
   let revealMiss = null
+  /** Deferred retry for an explicit reveal that the shell had not applied yet. */
+  let revealRetryTimer = null
   /**
    * Last `mainView` counts read from the session list. A 新会话 retains
    * `mainView` on the new session without moving the sticky current, so a
@@ -428,6 +430,17 @@ function createPaneController(ctx, options = {}) {
   /** `uiSession.adapter.current`, once attached. */
   let sessionCurrent = null
   let unsubscribeCurrent = () => {}
+  /**
+   * `uiWorkspace`, once attached.
+   *
+   * The plugin's root context does not declare `uiWorkspace`, and Cordis only
+   * exposes a service inside the `inject` scope that asked for it. Reading it
+   * through `ctx.get` here therefore returned undefined and every reveal — the
+   * one at boot, the one on a workspace switch, the one behind the right-bar
+   * tool icons — silently did nothing. The client entry attaches the real face
+   * from its own `ctx.inject(['uiWorkspace'])`.
+   */
+  let attachedWorkspace = null
   let snapshot = Object.freeze({
     active: false,
     sessionId: null,
@@ -448,7 +461,10 @@ function createPaneController(ctx, options = {}) {
     closeError: null,
   })
 
-  panel = createRightbar({ publish: (patch) => emit(patch ?? {}) })
+  panel = createRightbar({
+    publish: (patch) => emit(patch ?? {}),
+    reveal: () => revealFocusedSessionValue(),
+  })
 
   /** The fields a holder owns, merged into every publish after the caller's patch. */
   function holderPatch() {
@@ -1670,7 +1686,14 @@ function createPaneController(ctx, options = {}) {
    */
   function revealFocusedPane(request = {}) {
     if (revealing || routingDepth > 0 || disposed || !snapshot.active) return false
-    if (request?.force !== true && !bootRevealSettled) return false
+    if (request?.force === true) {
+      // An explicit user action is allowed to move current during the cold
+      // start, and must be allowed to retry a pair an earlier automatic attempt
+      // gave up on: that earlier attempt may have run before the shell could
+      // mount the Session view.
+      openBootRevealGate()
+      revealMiss = null
+    } else if (!bootRevealSettled) return false
     if (sessionCurrent === null) return false
     const focused = focusedPane()
     const sessionId = focused?.sessionId
@@ -1682,12 +1705,14 @@ function createPaneController(ctx, options = {}) {
     }
     const miss = `${sessionId}\0${currentId ?? ''}`
     if (revealMiss === miss) return false
-    const open = uiWorkspaceFace()?.openSession
-    if (typeof open !== 'function') return false
+    const face = uiWorkspaceFace()
+    if (face == null || typeof face.openSession !== 'function') return false
     revealMiss = miss
     revealing = true
     try {
-      open(sessionId)
+      // Call through the face: `openSession` is a prototype method and reads
+      // `this.replaceMain`, so a detached call throws instead of navigating.
+      face.openSession(sessionId)
     } catch (error) {
       console.error('[dsh-hk-craft] failed to show the focused session in the right bar', error)
       return false
@@ -1698,9 +1723,77 @@ function createPaneController(ctx, options = {}) {
     return true
   }
 
+  /**
+   * One explicit reveal, plus the bounded follow-up that catches a shell still
+   * mounting the previous Session.
+   *
+   * Shared by the public controller method and the right-bar panel's open wait,
+   * so a tool click right after a workspace switch keeps asking until the bar
+   * has adopted the focused Session.
+   *
+   * @returns {boolean} whether `openSession` was called on this attempt
+   */
+  function revealFocusedSessionValue() {
+    const revealed = revealFocusedPane({ force: true })
+    scheduleFocusedReveal()
+    return revealed
+  }
+
+  /** Drop a pending explicit-reveal retry without touching the shell. */
+  function clearRevealRetry() {
+    if (revealRetryTimer === null) return
+    try {
+      clearTimeout(revealRetryTimer)
+    } catch (_error) {
+      // A disposed host may already have torn the timer registry down.
+    }
+    revealRetryTimer = null
+  }
+
+  /**
+   * Retry one explicit reveal until the shell current names the focused pane.
+   *
+   * `uiWorkspace.openSession` moves current synchronously in the shell's store
+   * but the right bar's Session view and its adopted layout mount on a later
+   * render. A single attempt can therefore be too early: the bar keeps the
+   * previous workspace's Session, and opening a tool from there creates the
+   * terminal in that Session's directory. This bounded retry closes that gap
+   * without fighting a later user navigation (it stops as soon as the focused
+   * pane changes) or a shell that truly refuses to move current.
+   *
+   * @param {number} [attempts] - remaining retries after the first frame.
+   * @returns {boolean} whether a target Session was scheduled.
+   */
+  function scheduleFocusedReveal(attempts = 6) {
+    if (disposed || !snapshot.active) return false
+    const target = focusedPane()?.sessionId
+    if (typeof target !== 'string' || target === '') return false
+    openBootRevealGate()
+    clearRevealRetry()
+    const attempt = (remaining) => {
+      if (disposed || focusedPane()?.sessionId !== target || currentSessionId() === target) return
+      revealFocusedPane({ force: true })
+      if (currentSessionId() === target || remaining <= 0) return
+      revealRetryTimer = setTimeout(() => {
+        revealRetryTimer = null
+        attempt(remaining - 1)
+      }, 200)
+      if (typeof revealRetryTimer?.unref === 'function') revealRetryTimer.unref()
+    }
+    scheduleNextFrame(() => attempt(attempts))
+    return true
+  }
+
   function uiWorkspaceFace() {
-    if (typeof ctx?.get === 'function') return ctx.get('uiWorkspace')
-    return ctx?.uiWorkspace
+    if (attachedWorkspace !== null) return attachedWorkspace
+    try {
+      if (typeof ctx?.get === 'function') return ctx.get('uiWorkspace')
+      return ctx?.uiWorkspace
+    } catch (_error) {
+      // A service that this context did not inject is not an error here: the
+      // caller treats an absent navigation face as "nothing to reveal".
+      return undefined
+    }
   }
 
   /**
@@ -2040,6 +2133,7 @@ function createPaneController(ctx, options = {}) {
       if (catalogNow().complete()) bootSettled = true
       focusOrOpenWorkspaceConversation(workspaceId)
       revealFocusedPane()
+      scheduleFocusedReveal()
       return true
     },
     /**
@@ -2125,19 +2219,34 @@ function createPaneController(ctx, options = {}) {
       return unsubscribeCurrent
     },
     /**
+     * Remember `uiWorkspace`, the face that moves the shell current (and so the
+     * native right bar) onto the focused pane. Must come from the client
+     * entry's `ctx.inject(['uiWorkspace'])`: the root context cannot see it.
+     *
+     * @param {any} face `uiWorkspace`, or null to detach
+     * @returns {() => void} detaches this exact face
+     */
+    attachWorkspace(face) {
+      attachedWorkspace = face ?? null
+      return () => {
+        if (attachedWorkspace === face) attachedWorkspace = null
+      }
+    },
+    /**
      * Make the shell current, and therefore the right bar, name the focused
      * pane. A no-op when they already agree or no workspace service is attached.
      *
      * @returns {boolean}
      */
     revealFocusedSession() {
-      return revealFocusedPane({ force: true })
+      return revealFocusedSessionValue()
     },
     /** Plugin unload: release everything. Unregistering the shadow hands `conversation` back. */
     dispose() {
       if (disposed) return
       disposed = true
       clearBootRevealTimer()
+      clearRevealRetry()
       unsubscribeCurrent()
       unsubscribeCurrent = () => {}
       sessionCurrent = null

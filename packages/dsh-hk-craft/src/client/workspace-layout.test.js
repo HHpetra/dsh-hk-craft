@@ -1396,6 +1396,74 @@ test('the settled cold start reveals the restored pane exactly once', () => {
   boot.controller.dispose()
 })
 
+test('an attached workspace face reveals even when the root context cannot see it', () => {
+  // Cordis only exposes a service inside the `inject` scope that asked for it,
+  // so `ctx.get('uiWorkspace')` from the pane kernel is undefined in the real
+  // shell. The client entry attaches the face; without it every reveal was a
+  // silent no-op and the right bar stayed on the startup workspace.
+  const { fake, controller } = readyController({
+    storage: restoredSinglePane(),
+    rows: bootRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'native-old'] }],
+    workspacesPhase: 'pending',
+  })
+  const shell = movableCurrent('native-old')
+  assert.equal(fake.ctx.uiWorkspace, undefined, 'the root context exposes no uiWorkspace')
+  controller.attachWorkspace(shell.uiWorkspace)
+  controller.attachSessionSelection(shell.current)
+
+  assert.equal(controller.activate(), true)
+  assert.deepEqual(shell.current.opened, [], 'the cold start still waits for the catalog')
+
+  fake.setWorkspacesPhase('ready')
+  assert.deepEqual(shell.current.opened, ['s1'])
+  assert.equal(shell.current.getSnapshot().key, 's1')
+  controller.dispose()
+})
+
+test('detaching the workspace face stops the reveal it enabled', () => {
+  const boot = bootWithCurrent()
+  delete boot.fake.ctx.uiWorkspace
+  const detach = boot.controller.attachWorkspace(boot.shell.uiWorkspace)
+  detach()
+
+  assert.equal(boot.controller.activate(), true)
+  boot.fake.setWorkspacesPhase('ready')
+
+  assert.deepEqual(boot.shell.current.opened, [])
+  boot.controller.dispose()
+})
+
+test('the reveal calls openSession through the face, never detached', () => {
+  // `uiWorkspace.openSession` is a prototype method that reads
+  // `this.replaceMain`; extracting it and calling it bare throws instead of
+  // moving the current session.
+  const { controller } = readyController({
+    storage: restoredSinglePane(),
+    rows: bootRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'native-old'] }],
+  })
+  const shell = movableCurrent('native-old')
+  controller.attachSessionSelection(shell.current)
+  assert.equal(controller.activate(), true)
+  assert.deepEqual(shell.current.opened, [], 'no face is attached yet')
+
+  const calls = []
+  const instance = {
+    replaceMain(sessionId) {
+      calls.push(sessionId)
+    },
+    openSession(sessionId) {
+      this.replaceMain(sessionId)
+    },
+  }
+  controller.attachWorkspace(instance)
+
+  assert.equal(controller.revealFocusedSession(), true)
+  assert.deepEqual(calls, ['s1'])
+  controller.dispose()
+})
+
 test('a shell current that already names the pane is not revealed again after settling', () => {
   const boot = bootWithCurrent({ shellKey: 's1' })
 

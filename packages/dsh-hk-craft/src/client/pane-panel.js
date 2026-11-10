@@ -57,18 +57,40 @@ function readToolEntries(tabs) {
   return tools
 }
 
+/** How long the per-Session open waits for the bar to reach that Session. */
+const OPEN_RETRY_MS = 50
+/** Bounded waits: a shell that never adopts the Session falls back, it does not hang. */
+const OPEN_RETRY_ATTEMPTS = 60
+
 /**
- * @param {{ publish?: (patch?: object) => void }} [deps]
+ * @param {{
+ *   publish?: (patch?: object) => void,
+ *   reveal?: () => unknown,
+ *   retryDelayMs?: number,
+ *   retryAttempts?: number,
+ * }} [deps]
  *   `publish` is the kernel's `emit`. This module holds no snapshot of its own:
  *   it reports the fields it owns and the kernel freezes them with everything
- *   else, so one publish still reaches every consumer at once.
+ *   else, so one publish still reaches every consumer at once. `reveal` points
+ *   the shell at the focused pane; the per-Session open retries call it while
+ *   the native bar has not adopted that Session yet. `retryDelayMs` and
+ *   `retryAttempts` are test seams for the same wait.
  */
-function createRightbar({ publish } = {}) {
+function createRightbar({
+  publish,
+  reveal,
+  retryDelayMs = OPEN_RETRY_MS,
+  retryAttempts = OPEN_RETRY_ATTEMPTS,
+} = {}) {
   /** `ctx.sidebarRight` when the shell has one. Optional; the strip hides without it. */
   let service = null
   /** `ctx.sidebarRightTabs`, the registry whose guide entries are the native tool icons. */
   let tabs = null
   let unsubscribeTabs = () => {}
+  /** Kernel-provided navigation, used to bring the bar onto the focused Session. */
+  let revealFace = typeof reveal === 'function' ? reveal : null
+  /** Pending wait for the bar to adopt the Session a tool was opened for. */
+  let openRetry = null
   /**
    * Frozen and reference-stable: `snapshotPatch()` hands out the same array
    * while the registry has not changed, which is what keeps the kernel's
@@ -96,6 +118,86 @@ function createRightbar({ publish } = {}) {
 
   function announceError(error) {
     if (typeof publish === 'function') publish({ error: messageOf(error) })
+  }
+
+  function clearOpenRetry() {
+    if (openRetry === null) return
+    try {
+      clearTimeout(openRetry)
+    } catch (_error) {
+      // A disposed panel may already have torn the timer registry down.
+    }
+    openRetry = null
+  }
+
+  /**
+   * Whether the native bar has actually adopted `sessionId`.
+   *
+   * `mounted` alone is not enough: the bar names the on-screen Session as soon
+   * as the shell current moves, one render before the Session's layout store is
+   * minted. `screen()` is the only observable that requires that store, and
+   * `openTabIn` silently no-ops without it. A shell that exposes neither keeps
+   * the old immediate attempt.
+   *
+   * @param {string} sessionId
+   * @returns {boolean}
+   */
+  function surfaceOn(sessionId) {
+    try {
+      if (typeof service?.screen === 'function') {
+        const screen = service.screen()
+        return screen !== undefined && screen.sessionId === sessionId
+      }
+      const mounted = service?.mounted
+      if (mounted != null && typeof mounted.getSnapshot === 'function') {
+        return mounted.getSnapshot() === sessionId
+      }
+    } catch (_error) {
+      return false
+    }
+    return true
+  }
+
+  function expand() {
+    if (readExpanded() || typeof service?.toggleExpanded !== 'function') return
+    try {
+      service.toggleExpanded()
+    } catch (error) {
+      announceError(error)
+    }
+  }
+
+  /** Open one page in an adopted Session; false when the shell refused it. */
+  function placeInSession(sessionId, kind) {
+    try {
+      const result = service.openTabIn(sessionId, kind)
+      if (result != null && typeof result.then === 'function') {
+        result.catch((error) => announceError(error))
+      }
+    } catch (error) {
+      announceError(error)
+      return false
+    }
+    expand()
+    announce({})
+    return true
+  }
+
+  /** Last resort: open on whatever Session the bar does show, so the click still works. */
+  function placeOnMounted(kind) {
+    if (typeof service?.openTab !== 'function') return false
+    try {
+      const result = service.openTab(kind)
+      if (result != null && typeof result.then === 'function') {
+        result.catch((error) => announceError(error))
+      }
+    } catch (error) {
+      announceError(error)
+      return false
+    }
+    expand()
+    announce({})
+    return true
   }
 
   return {
@@ -155,27 +257,81 @@ function createRightbar({ publish } = {}) {
     },
 
     /**
-     * Open one native right-bar tool. `openTab` expands the bar and focuses that
-     * page, which is what its guide icon does.
+     * Open one native right-bar tool for the focused pane's Session.
+     *
+     * The bar's mounted Session can still name the workspace the user just left
+     * while the pane tree already shows the new one (the shell current moves
+     * asynchronously). Calling bare `openTab(kind)` would then create the page
+     * in that stale Session: the terminal would start in the previous
+     * workspace's directory. When the caller supplies the focused Session, use
+     * the per-Session open (`openTabIn`) so the page is placed on the workspace
+     * actually on screen.
+     *
+     * `openTabIn` is a silent no-op until the bar has adopted that Session: the
+     * shell names the new current immediately, but the Session's layout store
+     * is minted one render later. So the open waits for adoption, asking the
+     * kernel to reveal the focused pane again on every wait; only then does it
+     * expand the bar, which is why a click never flashes the previous
+     * workspace's page. A shell that never adopts the Session (no navigation
+     * face) falls back to the mounted open instead of doing nothing.
+     *
+     * @param {string} kind - native tab kind (files, terminal, …)
+     * @param {string} [sessionId] - focused pane's Session, when known
+     * @returns {boolean} whether a service call was attempted
      */
-    openTool(kind) {
+    openTool(kind, sessionId) {
       if (service === null || typeof kind !== 'string' || kind === '') return false
-      if (typeof service.openTab !== 'function') return false
-      try {
-        const result = service.openTab(kind)
-        if (result != null && typeof result.then === 'function') {
-          result.catch((error) => announceError(error))
+      const target = typeof sessionId === 'string' && sessionId !== '' ? sessionId : undefined
+      const perSession = target !== undefined && typeof service.openTabIn === 'function'
+      if (!perSession && typeof service.openTab !== 'function') return false
+      if (!perSession) return placeOnMounted(kind)
+      clearOpenRetry()
+      let attempts = 0
+      const attempt = () => {
+        openRetry = null
+        if (service === null) return
+        if (surfaceOn(target)) {
+          placeInSession(target, kind)
+          return
         }
-      } catch (error) {
-        announceError(error)
-        return false
+        if (attempts >= retryAttempts) {
+          placeOnMounted(kind)
+          return
+        }
+        attempts += 1
+        if (typeof revealFace === 'function') {
+          try {
+            revealFace()
+          } catch (error) {
+            announceError(error)
+          }
+        }
+        openRetry = setTimeout(attempt, retryDelayMs)
+        if (typeof openRetry?.unref === 'function') openRetry.unref()
       }
-      announce({})
+      attempt()
       return true
     },
 
-    /** Plugin unload: drop the registry subscription and both service handles. */
+    /**
+     * Remember the kernel's reveal call, or clear it with a null. The wait in
+     * `openTool` uses it to retry moving the shell current; a panel without it
+     * still opens on an adopted Session.
+     *
+     * @param {(() => unknown)|null} next
+     * @returns {() => void} detaches this exact callback
+     */
+    attachReveal(next) {
+      revealFace = typeof next === 'function' ? next : null
+      return () => {
+        if (revealFace === next) revealFace = null
+      }
+    },
+
+    /** Plugin unload: drop the registry subscription, both service handles and pending work. */
     dispose() {
+      clearOpenRetry()
+      revealFace = null
       unsubscribeTabs()
       unsubscribeTabs = () => {}
       tabs = null

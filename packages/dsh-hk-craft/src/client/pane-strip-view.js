@@ -312,7 +312,14 @@ function PaneStrip({
                   'aria-label': tool.title,
                   'data-hkcraft-rightbar-tool': tool.kind,
                   style: stripRightbarStyle,
-                  onClick: () => controller.panel.openTool(tool.kind),
+                  onClick: () => {
+                    // An explicit tool click must land on the pane the user is
+                    // looking at, even when the shell current still names the
+                    // workspace left a moment ago.
+                    controller.revealFocusedSession?.()
+                    const focused = state.activePaneId == null ? undefined : state.panes?.[state.activePaneId]
+                    controller.panel.openTool(tool.kind, focused?.sessionId)
+                  },
                 },
                 h(
                   'span',

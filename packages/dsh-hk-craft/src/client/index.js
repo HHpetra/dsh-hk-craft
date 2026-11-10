@@ -163,6 +163,31 @@ function apply(ctx) {
   // developer-tools gate) the panes stay chat-only instead of failing to mount.
   const controller = createPaneController(ctx, { viewSwitch: createViewSwitch(ctx) })
 
+  /**
+   * `uiWorkspace`, the shell navigation face.
+   *
+   * The plugin's root context does not inject it, and Cordis only exposes a
+   * service inside the scope that asked for it. Reading it through `ctx.get`
+   * from the pane kernel therefore returned undefined: every reveal that should
+   * move the native right bar onto the focused pane silently did nothing, and a
+   * terminal opened from the strip landed in the startup workspace instead.
+   * Attach the real face here; the sidebar section injects the same service for
+   * workspace clicks.
+   *
+   * @type {any}
+   */
+  let shellWorkspace = null
+  ctx.inject(['uiWorkspace'], (scope) => {
+    shellWorkspace = scope.get('uiWorkspace') ?? null
+    const detachWorkspace = controller.attachWorkspace(shellWorkspace)
+    const detachReveal = controller.panel.attachReveal(() => controller.revealFocusedSession())
+    return () => {
+      detachReveal()
+      detachWorkspace()
+      shellWorkspace = null
+    }
+  })
+
   // Desktop notifications are a client capability: dsh exposes no notification
   // service, so the renderer's own Notification API maps to a Windows toast.
   // The notifier seeds itself from the current status store, so installing or
@@ -191,7 +216,7 @@ function apply(ctx) {
     // The review tab reads its summary with the on-screen session. While split
     // is showing, open that session before the resource lands.
     const disposeReview = installChangesReviewRoute(sidebarRight, {
-      openSession: (sessionId) => ctx.get('uiWorkspace')?.openSession?.(sessionId),
+      openSession: (sessionId) => shellWorkspace?.openSession?.(sessionId),
       enabled: () => controller.getSnapshot().active === true,
     })
     return () => {

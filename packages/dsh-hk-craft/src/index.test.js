@@ -34,6 +34,36 @@ test('a configured terminal shell skips the PowerShell probe', () => {
   )
 })
 
+test('the system prompt separates the user terminal from the agent shell sandbox', () => {
+  const registered = []
+  const ctx = {
+    logger: { debug() {}, warn() {} },
+    get: () => undefined,
+    inject(names, callback) {
+      if (!names.includes('systemPrompt')) return
+      callback({
+        get: () => ({
+          getContextOrder: () => 42,
+          context: (entry) => {
+            registered.push(entry)
+            return () => {}
+          },
+        }),
+      })
+    },
+  }
+
+  apply(ctx)
+
+  assert.equal(registered.length, 1)
+  assert.equal(registered[0].name, 'dsh-hk-craft:user-terminal-scope')
+  assert.equal(registered[0].order, 43)
+  assert.equal(registered[0].required, false)
+  assert.match(registered[0].text, /user-operated system shell/)
+  assert.match(registered[0].text, /outside the Agent sandbox/)
+  assert.match(registered[0].text, /do not say the sidebar terminal is sandboxed/)
+})
+
 test('a missing terminal controller config is not fatal', () => {
   const controller = { config: null }
   const ctx = {

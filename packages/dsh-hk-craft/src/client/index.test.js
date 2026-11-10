@@ -352,7 +352,18 @@ test('feature-probes conversation.content when the pane registration mounts', ()
 test('waits for the workspace services before touching the workspaces slot', () => {
   const ctx = fakeCtx()
   apply(ctx)
-  assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
+  assert.deepEqual(ctx.calls.injections.at(-1), ['uiWorkspace', 'workspaces'])
+})
+
+test('requests uiWorkspace on its own so the pane kernel can reveal the focused pane', () => {
+  // The pane kernel does not see services this plugin does not inject: the
+  // dedicated inject is what hands it the navigation face. The workspaces
+  // section has its own `['uiWorkspace', 'workspaces']` inject for its clicks.
+  const ctx = fakeCtx()
+  apply(ctx)
+  assert.ok(
+    ctx.calls.injections.some((names) => names.length === 1 && names[0] === 'uiWorkspace'),
+  )
 })
 
 test('stays out of the settings panel when the shell declares no section slot', () => {
@@ -489,7 +500,9 @@ test('skips /fork when the shell has no forkSession and still registers the othe
 test('skips command registration when a command service is missing', () => {
   const ctx = fakeCtx()
   apply(ctx)
-  assert.deepEqual(ctx.calls.injections, [['uiWorkspace', 'workspaces']])
+  // Only the pane kernel's navigation face and the workspace section; no
+  // command-services inject without `commandUi`.
+  assert.deepEqual(ctx.calls.injections, [['uiWorkspace'], ['uiWorkspace', 'workspaces']])
   assert.equal(ctx.calls.registered.length, 4)
 })
 
