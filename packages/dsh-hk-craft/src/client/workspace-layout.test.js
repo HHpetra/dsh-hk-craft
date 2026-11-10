@@ -201,12 +201,13 @@ function livePaneRefs(fake) {
 }
 
 /** A ready controller with an injected pane-id sequence and storage. */
-function readyController({ storage, paneIds = [], ...options } = {}) {
+function readyController({ storage, paneIds = [], controllerOptions = {}, ...options } = {}) {
   const ids = [...paneIds]
   const fake = fakeCtx(options)
   const controller = createPaneController(fake.ctx, {
     storage,
     nextPaneId: () => ids.shift(),
+    ...controllerOptions,
   })
   controller.markRegistered()
   return { fake, controller }
@@ -1306,5 +1307,195 @@ test('a broken storage backend never makes the enablement check throw', () => {
   assert.equal(controller.isWorkspaceEnabled('w2'), false)
   assert.equal(controller.activate('s1'), true)
   assert.equal(controller.isWorkspaceEnabled('w1'), true, 'a loaded layout is enough')
+  controller.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Cold start: no navigation until the restore settles (#12)
+// ---------------------------------------------------------------------------
+
+/**
+ * A shell current the controller can move, plus the native reveal it follows.
+ * The controller reads `uiWorkspace` through the plain ctx fallback when the
+ * fake has no `get`, which is what this module's fakeCtx provides.
+ *
+ * @param {string} [initialKey]
+ */
+function movableCurrent(initialKey = 'native-old') {
+  let key = initialKey
+  const opened = []
+  const listeners = new Set()
+  const current = {
+    opened,
+    getSnapshot: () => ({ key }),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    setKey(next) {
+      key = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+  const uiWorkspace = {
+    openSession(sessionId) {
+      opened.push(sessionId)
+      key = sessionId
+      for (const listener of [...listeners]) listener()
+    },
+  }
+  return { current, uiWorkspace }
+}
+
+/** Rows for the restored pane session and the shell's own native selection. */
+function bootRows() {
+  return {
+    s1: { id: 's1', title: 'Pane', blank: false, updatedAt: 20 },
+    'native-old': { id: 'native-old', title: 'Native', blank: false, updatedAt: 1 },
+  }
+}
+
+/** One restored workspace with a single pane showing `s1`. */
+function restoredSinglePane() {
+  return memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 's1')) })
+}
+
+/** Boot a controller with one restored pane and a movable shell current. */
+function bootWithCurrent({ shellKey = 'native-old', catalogPhase = 'pending', controllerOptions } = {}) {
+  const { fake, controller } = readyController({
+    storage: restoredSinglePane(),
+    rows: bootRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'native-old'] }],
+    workspacesPhase: catalogPhase,
+    controllerOptions,
+  })
+  const shell = movableCurrent(shellKey)
+  fake.ctx.uiWorkspace = shell.uiWorkspace
+  controller.attachSessionSelection(shell.current)
+  return { fake, controller, shell }
+}
+
+test('the cold start does not move the shell current while the catalogs are still loading', () => {
+  const boot = bootWithCurrent()
+
+  assert.equal(boot.controller.activate(), true)
+  assert.equal(boot.controller.getSnapshot().sessionId, 's1', 'the restore still shows its own pane')
+  assert.deepEqual(boot.shell.current.opened, [], 'navigation waits for the restore to settle')
+  boot.controller.dispose()
+})
+
+test('the settled cold start reveals the restored pane exactly once', () => {
+  const boot = bootWithCurrent()
+
+  assert.equal(boot.controller.activate(), true)
+  assert.deepEqual(boot.shell.current.opened, [])
+
+  boot.fake.setWorkspacesPhase('ready')
+
+  assert.deepEqual(boot.shell.current.opened, ['s1'])
+  boot.controller.dispose()
+})
+
+test('a shell current that already names the pane is not revealed again after settling', () => {
+  const boot = bootWithCurrent({ shellKey: 's1' })
+
+  assert.equal(boot.controller.activate(), true)
+  boot.fake.setWorkspacesPhase('ready')
+
+  assert.deepEqual(boot.shell.current.opened, [])
+  boot.controller.dispose()
+})
+
+test('a user focus during the cold-start window reveals immediately', () => {
+  const boot = bootWithCurrent()
+
+  assert.equal(boot.controller.activate(), true)
+  assert.equal(boot.controller.revealFocusedSession(), true)
+
+  assert.deepEqual(boot.shell.current.opened, ['s1'])
+  boot.controller.dispose()
+})
+
+test('a catalog that never reports ready still lets the deadline reveal the pane', async () => {
+  const boot = bootWithCurrent({ controllerOptions: { bootRevealTimeoutMs: 5 } })
+
+  assert.equal(boot.controller.activate(), true)
+  assert.deepEqual(boot.shell.current.opened, [])
+
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  assert.deepEqual(boot.shell.current.opened, ['s1'], 'the deadline opens the reveal gate')
+  boot.controller.dispose()
+})
+
+test('disposing before the deadline cancels the pending reveal', async () => {
+  const boot = bootWithCurrent({ controllerOptions: { bootRevealTimeoutMs: 5 } })
+
+  assert.equal(boot.controller.activate(), true)
+  boot.controller.dispose()
+
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  assert.deepEqual(boot.shell.current.opened, [])
+})
+
+// ---------------------------------------------------------------------------
+// Cold start: focused pane first (#13, option B)
+// ---------------------------------------------------------------------------
+
+/** A two-pane layout whose focus is the second pane. */
+function twoPaneLayout() {
+  return split(openPane(createLayout('w1'), pane('p1', 's1')), 'p1', 'row', pane('p2', 's2'))
+}
+
+/** Rows for both panes of `twoPaneLayout`. */
+function twoPaneRows() {
+  return {
+    s1: { id: 's1', title: 'One', blank: false, updatedAt: 1 },
+    s2: { id: 's2', title: 'Two', blank: false, updatedAt: 2 },
+  }
+}
+
+test('a restored multi-pane layout retains the focused pane before the rest', () => {
+  const frames = []
+  const { fake, controller } = readyController({
+    storage: memoryStorage({ w1: twoPaneLayout() }),
+    rows: twoPaneRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }],
+    controllerOptions: { scheduleFrame: (fn) => frames.push(fn) },
+  })
+
+  assert.equal(controller.activate(), true)
+
+  const retained = fake.calls.retain
+    .filter((call) => call.options.source === PANE_SOURCE)
+    .map((call) => call.sessionId)
+  assert.deepEqual(retained, ['s2', 's1'], 'the focused pane opens first')
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+  assert.equal(controller.getSnapshot().mountFocusedOnly, true, 'the first frame shows only the focused pane')
+
+  const frame = frames.shift()
+  assert.equal(typeof frame, 'function')
+  frame()
+
+  assert.equal(controller.getSnapshot().mountFocusedOnly, false, 'the next frame mounts every pane')
+  assert.equal(controller.activate(), true, 'a later activation does not re-arm the window')
+  assert.equal(controller.getSnapshot().mountFocusedOnly, false)
+  controller.dispose()
+})
+
+test('an explicit activation mounts every pane at once', () => {
+  const frames = []
+  const { controller } = readyController({
+    storage: memoryStorage({ w1: twoPaneLayout() }),
+    rows: twoPaneRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }],
+    controllerOptions: { scheduleFrame: (fn) => frames.push(fn) },
+  })
+
+  assert.equal(controller.activate('s1'), true)
+
+  assert.equal(controller.getSnapshot().mountFocusedOnly, false, 'a user action is not a cold start')
+  assert.deepEqual(frames, [])
   controller.dispose()
 })

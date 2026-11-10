@@ -771,3 +771,36 @@ test('the running-session count is what the delete warning promises', () => {
   assert.equal(workspaceRunningCount(catalogOf({ phase: 'loading' }, sessions, statuses), 'w1'), 0)
   assert.equal(workspaceRunningCount(catalogOf(workspaces, { phase: 'loading' }, statuses), 'w1'), 0)
 })
+
+test('the enabled set is computed once per pane snapshot, not per store tick', () => {
+  const workspaces = {
+    phase: 'ready',
+    items: [
+      { workspaceId: 'w1', title: 'A', sessionIds: [] },
+      { workspaceId: 'w2', title: 'B', sessionIds: [] },
+    ],
+    archivedSessionIds: [],
+  }
+  const sessions = { phase: 'ready', ids: [], byId: {} }
+  const paneSnapshot = { active: true, workspaceId: 'w1', layouts: {} }
+  let probes = 0
+  const panes = {
+    isWorkspaceEnabled(workspaceId) {
+      probes += 1
+      return workspaceId === 'w1'
+    },
+  }
+
+  const first = sectionModel(catalogOf(workspaces, sessions), panes, paneSnapshot)
+  assert.equal(probes, 2, 'one probe per workspace on the first projection')
+  assert.deepEqual(first.map((row) => row.light), ['gray', 'gray'])
+
+  // A later store tick rebuilds the catalog but not the pane snapshot: the
+  // inventory is the same, so the storage probes must not run again.
+  sectionModel(catalogOf(workspaces, { ...sessions }), panes, paneSnapshot)
+  assert.equal(probes, 2)
+
+  // A new controller snapshot means the loaded layouts may have moved.
+  sectionModel(catalogOf(workspaces, { ...sessions }), panes, { ...paneSnapshot })
+  assert.equal(probes, 4)
+})

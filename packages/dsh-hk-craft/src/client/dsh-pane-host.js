@@ -68,6 +68,14 @@ const PANE_SOURCE = 'hkcraftPane'
 const MAIN_SOURCE = 'mainView'
 
 /**
+ * How long the cold start may stay undecided before the reveal gate opens
+ * anyway. A shell whose catalogs never report ready must not leave the right
+ * bar permanently detached from the panes, so the deadline is a fallback, not
+ * the rule: a settled restore opens the gate as soon as both catalogs are ready.
+ */
+const BOOT_REVEAL_TIMEOUT_MS = 4000
+
+/**
  * Probe the `conversation.content` Factory through the public slots snapshot.
  *
  * `ctx.slots.snapshot(root)` accepts `factory:<name>` and returns an array of
@@ -332,6 +340,27 @@ function createPaneController(ctx, options = {}) {
    */
   let bootRestored = false
   /**
+   * Whether the plugin may move dsh's current session onto the focused pane.
+   *
+   * Closed from the first activation until the cold-start restore settles, so
+   * a restart does not navigate the shell away from the session it restored
+   * itself: doing that loads a second conversation and is what makes a start
+   * feel slow. Explicit user actions open the gate immediately; a deadline
+   * opens it when the catalogs never arrive.
+   */
+  let bootRevealSettled = false
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let bootRevealTimer = null
+  /**
+   * True for one frame after the first cold-start activation: the view mounts
+   * the focused pane's conversation first and gives every other pane its
+   * header only until the next frame. Ordering, not deferral — every pane still
+   * mounts with its session retained (#13, option B).
+   */
+  let mountFocusedOnly = false
+  /** Whether the one-frame window was already armed for this process. */
+  let mountFocusedOnlyArmed = false
+  /**
    * Sessions this controller created or placed before `workspaces.list` links
    * them. A ready catalog that does not list them yet is not a delete: pruning
    * on that gap closes the new-conversation pane on the same tick the row
@@ -402,6 +431,7 @@ function createPaneController(ctx, options = {}) {
   let snapshot = Object.freeze({
     active: false,
     sessionId: null,
+    mountFocusedOnly: false,
     probe: probeConversationContent(slots),
     error: null,
     rightbarAvailable: false,
@@ -463,6 +493,7 @@ function createPaneController(ctx, options = {}) {
       panes: value.panes,
       activePaneId: value.activePaneId,
       sessionId: active && focused !== undefined ? focused.sessionId : null,
+      mountFocusedOnly,
     }
   }
 
@@ -583,9 +614,24 @@ function createPaneController(ctx, options = {}) {
       else stale.push(held)
     }
 
+    // Establish the focused pane's retention first, then the rest in layout
+    // order (#13, option B): the shell opens a session as it is retained, so
+    // the conversation on screen gets the head start instead of waiting behind
+    // the whole tree.
+    const focused = book.focusedPaneOf(nextLayouts)
+    const ordered = []
+    if (focused !== null) {
+      const pane = desired.get(focused.paneId)
+      if (pane !== undefined) ordered.push(pane)
+    }
+    for (const pane of desired.values()) {
+      if (focused !== null && pane.paneId === focused.paneId) continue
+      ordered.push(pane)
+    }
+
     /** @type {Array<{sessionId: string, pane: any, main: undefined}>} */
     const acquired = []
-    for (const pane of desired.values()) {
+    for (const pane of ordered) {
       if (keep.has(pane.paneId)) continue
       try {
         const held = { sessionId: pane.sessionId, pane: retainSource(pane.sessionId, PANE_SOURCE), main: undefined }
@@ -610,7 +656,6 @@ function createPaneController(ctx, options = {}) {
     refs.clear()
     for (const [paneId, held] of keep) refs.set(paneId, held)
 
-    const focused = book.focusedPaneOf(nextLayouts)
     for (const [paneId, held] of [...refs]) {
       if ((focused === null || paneId !== focused.paneId) && held.main !== undefined) {
         releaseOne(held.main)
@@ -804,6 +849,9 @@ function createPaneController(ctx, options = {}) {
     if (typeof sessions?.create !== 'function') {
       throw new Error('sessions.create is not available in this shell')
     }
+    // Creating a conversation is always a user action (/clear, 新会话, a split
+    // entry); the right bar may follow it even during the cold-start window.
+    openBootRevealGate()
     const sessionId =
       workspaceId === undefined ? await sessions.create({}) : await sessions.create({ workspaceId })
     if (typeof sessionId !== 'string' || sessionId === '') {
@@ -1067,6 +1115,7 @@ function createPaneController(ctx, options = {}) {
       // native selection, and replacing the blank one is the same jump the
       // running/idle guard prevents elsewhere.
       bootSettled = true
+      markBootRevealSettled()
       return
     }
     const target = bootOwned ? bootWorkspaceId(catalog, active) : active
@@ -1082,7 +1131,11 @@ function createPaneController(ctx, options = {}) {
       return
     }
     if (focusedPane() === null) focusOrOpenWorkspaceConversation(target)
-    if (focusedPane() === null) bootSettled = false
+    if (focusedPane() === null) {
+      bootSettled = false
+      return
+    }
+    markBootRevealSettled()
   }
 
   /** The catalog row of one session, or undefined when the shell no longer lists it. */
@@ -1505,6 +1558,99 @@ function createPaneController(ctx, options = {}) {
     }
   }
 
+  /** Drop the cold-start deadline, e.g. once the restore has settled or the plugin unloads. */
+  function clearBootRevealTimer() {
+    if (bootRevealTimer === null) return
+    try {
+      clearTimeout(bootRevealTimer)
+    } catch (_error) {
+      // A disposed host may have already torn the timer registry down.
+    }
+    bootRevealTimer = null
+  }
+
+  /**
+   * Let the plugin move dsh's current session, without navigating yet.
+   *
+   * Explicit user actions (activating a session from the empty state, switching
+   * the visible workspace, focusing a pane) call this so their reveal is never
+   * held back by the cold-start rule.
+   *
+   * @returns {boolean} whether this call opened the gate
+   */
+  function openBootRevealGate() {
+    if (bootRevealSettled) return false
+    bootRevealSettled = true
+    clearBootRevealTimer()
+    return true
+  }
+
+  /**
+   * The cold start has settled: open the gate and make the one compensating
+   * reveal the plugin still owes the right bar.
+   *
+   * `revealFocusedPane` refuses when current already names the focused session,
+   * so this is a no-op unless the two genuinely disagree. Called when the
+   * restore lands (both catalogs ready) and from the deadline.
+   */
+  function markBootRevealSettled() {
+    if (!openBootRevealGate()) return
+    revealFocusedPane()
+  }
+
+  /** Run one callback after the next frame, through the injected seam when present. */
+  function scheduleNextFrame(callback) {
+    if (typeof options?.scheduleFrame === 'function') {
+      options.scheduleFrame(callback)
+      return
+    }
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => callback())
+      return
+    }
+    if (typeof setTimeout === 'function') {
+      const handle = setTimeout(callback, 0)
+      if (typeof handle?.unref === 'function') handle.unref()
+    }
+  }
+
+  /**
+   * Give the focused pane's conversation the first frame of a cold start.
+   *
+   * Only the first activation of this process arms it: reloading the shadow or
+   * re-activating later must not re-defer the other panes. The next frame
+   * publishes `mountFocusedOnly: false`, which mounts everything; no pane is
+   * ever unmounted by this window.
+   */
+  function armFocusedOnlyMount() {
+    if (mountFocusedOnlyArmed || disposed) return
+    mountFocusedOnlyArmed = true
+    mountFocusedOnly = true
+    scheduleNextFrame(() => {
+      if (disposed || !mountFocusedOnly) return
+      mountFocusedOnly = false
+      emit({ ...statePatch(snapshot.active), mountFocusedOnly })
+    })
+  }
+
+  /**
+   * Bound the cold start even when a catalog never reports ready.
+   *
+   * The deadline only opens the reveal gate; it never changes which workspace
+   * the restore picked. `options.bootRevealTimeoutMs` is a test seam.
+   */
+  function startBootRevealDeadline() {
+    if (bootRevealSettled || bootRevealTimer !== null) return
+    const configured = options?.bootRevealTimeoutMs
+    const timeout = Number.isFinite(configured) ? configured : BOOT_REVEAL_TIMEOUT_MS
+    if (typeof setTimeout !== 'function' || !(timeout >= 0)) return
+    bootRevealTimer = setTimeout(() => {
+      bootRevealTimer = null
+      markBootRevealSettled()
+    }, timeout)
+    if (typeof bootRevealTimer?.unref === 'function') bootRevealTimer.unref()
+  }
+
   /**
    * Point the shell's current session at the focused pane.
    *
@@ -1515,10 +1661,16 @@ function createPaneController(ctx, options = {}) {
    * Calling this after the pane is already focused makes current follow the
    * pane; `syncCurrent` still applies a later native current onto the pane.
    *
+   * Nothing happens before the cold-start restore settles unless the caller is
+   * an explicit user action (`force`): navigating during that window is what
+   * made a restart load a second conversation.
+   *
+   * @param {{ force?: boolean }} [request] `force` is a user-initiated reveal
    * @returns {boolean} whether `openSession` was called
    */
-  function revealFocusedPane() {
+  function revealFocusedPane(request = {}) {
     if (revealing || routingDepth > 0 || disposed || !snapshot.active) return false
+    if (request?.force !== true && !bootRevealSettled) return false
     if (sessionCurrent === null) return false
     const focused = focusedPane()
     const sessionId = focused?.sessionId
@@ -1660,7 +1812,19 @@ function createPaneController(ctx, options = {}) {
       return false
     }
     const explicit = typeof sessionId === 'string' && sessionId !== ''
-    if (explicit) bootOwned = false
+    if (explicit) {
+      bootOwned = false
+      // A user action, not the cold start: its reveal must not wait for the
+      // restore to settle, and it mounts every pane at once.
+      openBootRevealGate()
+      if (mountFocusedOnly) {
+        mountFocusedOnly = false
+        mountFocusedOnlyArmed = true
+      }
+    } else {
+      startBootRevealDeadline()
+      armFocusedOnlyMount()
+    }
     ensureCatalogSubscription()
     refreshProbe()
     pruneLoadedWorkspaces()
@@ -1870,8 +2034,12 @@ function createPaneController(ctx, options = {}) {
         if (!alreadyClaimed) bootOwned = true
         return false
       }
+      // An explicit user switch: let the right bar follow this workspace's
+      // focused pane from now on, even before both catalogs are ready.
+      openBootRevealGate()
       if (catalogNow().complete()) bootSettled = true
       focusOrOpenWorkspaceConversation(workspaceId)
+      revealFocusedPane()
       return true
     },
     /**
@@ -1963,12 +2131,13 @@ function createPaneController(ctx, options = {}) {
      * @returns {boolean}
      */
     revealFocusedSession() {
-      return revealFocusedPane()
+      return revealFocusedPane({ force: true })
     },
     /** Plugin unload: release everything. Unregistering the shadow hands `conversation` back. */
     dispose() {
       if (disposed) return
       disposed = true
+      clearBootRevealTimer()
       unsubscribeCurrent()
       unsubscribeCurrent = () => {}
       sessionCurrent = null
@@ -1984,6 +2153,7 @@ function createPaneController(ctx, options = {}) {
         ...holderPatch(),
         active: false,
         sessionId: null,
+        mountFocusedOnly: false,
         error: null,
         workspaceId: null,
         layouts: {},

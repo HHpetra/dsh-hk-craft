@@ -90,7 +90,7 @@ function PaneViewToggle({ controller, pane, t }) {
  *
  * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
+function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, kit, t, seats }) {
   const React = react()
   const h = React.createElement
   const reference = controller.layout.paneReference(pane.paneId)
@@ -179,26 +179,38 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
     ),
   )
 
-  let body
-  if (reference === undefined) {
-    body = h(PaneFallback, {
-      t,
-      text: t('pane.empty.title'),
-      detail: t('pane.empty.body'),
-      label: t('pane.close'),
-      onBack: close,
-    })
-  } else if (typeof kit.SessionProvider !== 'function' || typeof kit.renderSlot !== 'function') {
-    body = h(PaneFallback, {
-      t,
-      text: t('pane.fallback.title'),
-      detail: t('pane.fallback.error'),
-      label: t('pane.close'),
-      onBack: close,
-    })
-  } else {
+  // The conversation body is memoised on its own inputs, not on the store
+  // snapshots the header subscribes to. A session-list or status tick
+  // re-renders this frame (the title and the seats follow it), but the element
+  // below keeps its identity, so React bails out of the conversation subtree.
+  // `t`, `kit`, `reference` and `controller` only change when the shell or the
+  // layout really changes.
+  //
+  // `bodyAllowed` is the cold-start ordering seam (#13): the focused pane's
+  // conversation mounts in the first frame, every other pane in the next one.
+  // A disallowed pane keeps its header and an empty body; it is never unmounted.
+  const body = React.useMemo(() => {
+    if (!bodyAllowed) return null
+    if (reference === undefined) {
+      return h(PaneFallback, {
+        t,
+        text: t('pane.empty.title'),
+        detail: t('pane.empty.body'),
+        label: t('pane.close'),
+        onBack: close,
+      })
+    }
+    if (typeof kit.SessionProvider !== 'function' || typeof kit.renderSlot !== 'function') {
+      return h(PaneFallback, {
+        t,
+        text: t('pane.fallback.title'),
+        detail: t('pane.fallback.error'),
+        label: t('pane.close'),
+        onBack: close,
+      })
+    }
     const boundary = errorBoundaryClass()
-    body = h(
+    return h(
       boundary,
       {
         key: pane.sessionId,
@@ -213,7 +225,7 @@ function PaneFrame({ controller, pane, rect, focused, kit, t, seats }) {
       },
       h(kit.SessionProvider, { session: reference }, kit.renderSlot(PANE_SLOT, {})),
     )
-  }
+  }, [reference, pane.sessionId, kit, t, controller, bodyAllowed])
 
   return h(
     'div',

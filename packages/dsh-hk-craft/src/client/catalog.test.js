@@ -7,6 +7,7 @@ const {
   openCatalog,
   readCatalogs,
   phaseReady,
+  sessionStartedOf,
   readStatusEntry,
   SESSIONS_SERVICE,
   WORKSPACES_SERVICE,
@@ -430,4 +431,21 @@ test('a catalog built from readCatalogs answers without any service', () => {
     started: false,
     unread: false,
   })
+})
+test('sessionStartedOf reads only the started bit and tolerates a missing row', () => {
+  const snapshot = sessionsSnapshot([
+    sessionRow('started', { blank: false }),
+    sessionRow('fresh', { blank: true }),
+    // A host reconnect can publish a stale blank before the persisted metadata
+    // arrives; `blank: false` metadata is the correction, as in `session()`.
+    sessionRow('stale', { blank: true, projectionValues: { sessionListMetadata: { blank: false } } }),
+  ])
+
+  assert.equal(sessionStartedOf(snapshot, 'started'), true)
+  assert.equal(sessionStartedOf(snapshot, 'fresh'), false)
+  assert.equal(sessionStartedOf(snapshot, 'stale'), true)
+  assert.equal(sessionStartedOf(snapshot, 'missing'), undefined)
+  assert.equal(sessionStartedOf(undefined, 'started'), undefined)
+  assert.equal(sessionStartedOf(snapshot, ''), undefined)
+  assert.equal(sessionStartedOf(snapshot, null), undefined)
 })

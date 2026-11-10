@@ -14,6 +14,16 @@ const PACKAGE_KEY_ROOT =
   'HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages'
 
 /**
+ * How long one registry query may take before it counts as "not found".
+ *
+ * Both queries spawn `reg.exe`, which a slow disk or an antivirus real-time
+ * scan can stall. The probe runs on the host's load path, so an unbounded wait
+ * would hold the whole app. A timeout is a miss: the controller keeps whatever
+ * shell it already has.
+ */
+const PROBE_TIMEOUT_MS = 1500
+
+/**
  * @param {string} text `reg query` output
  * @returns {string | null}
  */
@@ -67,7 +77,7 @@ function defaultQueryPackages() {
   return execFileSync(
     'reg',
     ['query', PACKAGE_KEY_ROOT, '/f', 'Microsoft.PowerShell_', '/k'],
-    { encoding: 'utf8', windowsHide: true },
+    { encoding: 'utf8', windowsHide: true, timeout: PROBE_TIMEOUT_MS },
   )
 }
 
@@ -79,6 +89,7 @@ function defaultQueryRoot(key) {
   return execFileSync('reg', ['query', key, '/v', 'PackageRootFolder'], {
     encoding: 'utf8',
     windowsHide: true,
+    timeout: PROBE_TIMEOUT_MS,
   })
 }
 
@@ -98,19 +109,57 @@ function defaultExecutable(exe) {
 }
 
 /**
+ * A resolver that runs one probe per process, success and miss alike.
+ *
+ * The probe spawns `reg.exe` twice, so it must not run on every plugin load or
+ * reload: a miss is cached too, otherwise a machine without PowerShell 7 pays
+ * for the search on every start. The cache lives in the closure, so tests
+ * create their own instance instead of sharing process state.
+ *
+ * @param {() => string | null} [resolve]
+ * @returns {() => string | null}
+ */
+function createPwshProbe(resolve = findInstalledPwsh) {
+  let resolved = false
+  let value = null
+  return function probePwsh() {
+    if (resolved) return value
+    resolved = true
+    try {
+      value = resolve()
+    } catch (_error) {
+      value = null
+    }
+    return value
+  }
+}
+
+/**
  * Make PowerShell 7 the terminal controller's configured shell so shell
  * discovery lists that absolute path. An existing `config.shell` is a user
  * override and is left alone.
  *
+ * The resolution is deliberately *lazy*: a configured shell answers before any
+ * resolver runs, so the registry probe only happens when the answer is still
+ * unknown. `resolve` accepts either the memoised probe or a plain path, which
+ * keeps the old call shape working.
+ *
  * @param {any} controller
- * @param {string | null} [pwshPath]
+ * @param {string | null | (() => string | null)} [resolve] path, probe, or resolver
  * @returns {boolean} whether the controller config changed
  */
-function installPwshDefault(controller, pwshPath = findInstalledPwsh()) {
+function installPwshDefault(controller, resolve = findInstalledPwsh) {
+  if (controller?.config == null) return false
+  if (controller.config.shell != null) return false
+  let pwshPath
+  try {
+    pwshPath = typeof resolve === 'function' ? resolve() : resolve
+  } catch (_error) {
+    return false
+  }
   if (typeof pwshPath !== 'string' || pwshPath === '') return false
-  if (controller?.config == null || controller.config.shell != null) return false
   controller.config.shell = { path: pwshPath, name: 'pwsh', args: ['-NoLogo'] }
   return true
 }
 
-export { parsePackageRoot, parsePackageKey, findInstalledPwsh, installPwshDefault }
+export { parsePackageRoot, parsePackageKey, findInstalledPwsh, createPwshProbe, installPwshDefault }

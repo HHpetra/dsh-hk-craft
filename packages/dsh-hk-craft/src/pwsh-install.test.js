@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  createPwshProbe,
   findInstalledPwsh,
   installPwshDefault,
   parsePackageKey,
@@ -61,4 +62,77 @@ test('the terminal controller uses that executable unless a shell is already con
   const chosen = { config: { shell: { path: 'C:\\Windows\\System32\\cmd.exe', name: 'cmd', args: [] } } }
   assert.equal(installPwshDefault(chosen, EXE), false)
   assert.equal(chosen.config.shell.path, 'C:\\Windows\\System32\\cmd.exe')
+})
+
+test('a configured shell answers before the resolver runs', () => {
+  let calls = 0
+  const controller = { config: { shell: { path: 'C:\\Windows\\System32\\cmd.exe', name: 'cmd', args: [] } } }
+  const changed = installPwshDefault(controller, () => {
+    calls += 1
+    return EXE
+  })
+  assert.equal(changed, false)
+  assert.equal(calls, 0, 'a configured shell must not pay for the registry probe')
+  assert.equal(controller.config.shell.path, 'C:\\Windows\\System32\\cmd.exe')
+})
+
+test('an unconfigured shell resolves once and writes the PowerShell default', () => {
+  let calls = 0
+  const controller = { config: {} }
+  const changed = installPwshDefault(controller, () => {
+    calls += 1
+    return EXE
+  })
+  assert.equal(changed, true)
+  assert.equal(calls, 1)
+  assert.deepEqual(controller.config.shell, { path: EXE, name: 'pwsh', args: ['-NoLogo'] })
+})
+
+test('a miss or an unusable controller leaves the shell alone', () => {
+  let calls = 0
+  const miss = installPwshDefault({ config: {} }, () => {
+    calls += 1
+    return null
+  })
+  assert.equal(miss, false)
+  assert.equal(calls, 1)
+
+  assert.equal(installPwshDefault({ config: {} }, undefined), false)
+  assert.equal(installPwshDefault({}, () => EXE), false)
+  assert.equal(installPwshDefault(null, () => EXE), false)
+  assert.equal(
+    installPwshDefault(
+      { config: {} },
+      () => {
+        throw new Error('registry unavailable')
+      },
+    ),
+    false,
+  )
+})
+
+test('the probe runs once per process, success and miss alike', () => {
+  let calls = 0
+  const probe = createPwshProbe(() => {
+    calls += 1
+    return EXE
+  })
+  assert.equal(probe(), EXE)
+  assert.equal(probe(), EXE)
+  assert.equal(calls, 1)
+
+  let misses = 0
+  const missProbe = createPwshProbe(() => {
+    misses += 1
+    return null
+  })
+  assert.equal(missProbe(), null)
+  assert.equal(missProbe(), null)
+  assert.equal(misses, 1)
+
+  const throwing = createPwshProbe(() => {
+    throw new Error('registry unavailable')
+  })
+  assert.equal(throwing(), null)
+  assert.equal(throwing(), null)
 })

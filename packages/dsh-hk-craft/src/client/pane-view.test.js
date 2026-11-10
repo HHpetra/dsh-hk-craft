@@ -34,6 +34,7 @@ const fakeReact = {
   },
   createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
   useEffect: () => {},
+  useMemo: (factory) => factory(),
   useRef: (value) => ({ current: value }),
   useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
   useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
@@ -837,5 +838,32 @@ test('the strip split control stays enabled with 0 panes as the cap', () => {
     assert.equal(plus.props.disabled, false)
     assert.equal(plus.props['aria-disabled'], undefined)
     assert.equal(plus.props['data-hkcraft-strip-budget'], undefined)
+  })
+})
+
+test('a pane waiting for the first frame keeps its header and an empty body', () => {
+  withFakeReact(fakeReact, () => {
+    const rendered = []
+    const frame = PaneFrame({
+      controller: headerController(),
+      pane: pane('p1', 's1'),
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      focused: false,
+      bodyAllowed: false,
+      kit: {
+        SessionProvider: () => null,
+        renderSlot: () => {
+          rendered.push('body')
+          return null
+        },
+      },
+      t: (key) => key,
+    })
+
+    assert.equal(rendered.length, 0, 'the conversation is not mounted yet')
+    const header = frame.props.children[0]
+    assert.equal(header.props['data-hkcraft-pane-header'], '', 'the header is there from the first frame')
+    const body = frame.props.children[1]
+    assert.equal(body.props.children[0], null, 'the body area is empty, not a skeleton')
   })
 })

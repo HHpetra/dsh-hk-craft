@@ -72,6 +72,42 @@ function phaseReady(snapshot) {
 }
 
 /**
+ * Whether one raw session row says its conversation has started.
+ *
+ * The single rule for the `blank` bit: a row's own `blank` is inverted, and a
+ * persisted metadata `blank: false` corrects a summary that is still stale
+ * after a host reconnect (the same correction dsh applies to the list row).
+ *
+ * @param {Record<string, any>} raw `sessions.list.byId[id]`
+ * @returns {boolean}
+ */
+function startedFromRaw(raw) {
+  const metadataBlank = isRecord(raw.projectionValues)
+    ? raw.projectionValues.sessionListMetadata?.blank
+    : undefined
+  return metadataBlank === false || raw.blank !== true
+}
+
+/**
+ * Whether one session's conversation has started, read straight from the
+ * session snapshot.
+ *
+ * Exposed for callers that need *only* that bit: a pane body can subscribe to a
+ * boolean instead of the whole list, so an unrelated session's update does not
+ * re-render every mounted conversation.
+ *
+ * @param {unknown} sessionsSnapshot `sessions.list` snapshot
+ * @param {unknown} sessionId
+ * @returns {boolean|undefined} undefined when the catalog has no row
+ */
+function sessionStartedOf(sessionsSnapshot, sessionId) {
+  if (!isRecord(sessionsSnapshot) || typeof sessionId !== 'string' || sessionId === '') return undefined
+  const raw = sessionsSnapshot.byId?.[sessionId]
+  if (!isRecord(raw)) return undefined
+  return startedFromRaw(raw)
+}
+
+/**
  * One entry of the status map, which is a `Map` in the shell and a plain record
  * in tests and future projections.
  *
@@ -177,13 +213,10 @@ function buildCatalog(input) {
     if (cached !== undefined) return cached
     const raw = sessionsSnapshot?.byId?.[sessionId]
     if (!isRecord(raw)) return undefined
-    const metadataBlank = isRecord(raw.projectionValues)
-      ? raw.projectionValues.sessionListMetadata?.blank
-      : undefined
     const row = Object.freeze({
       id: typeof raw.id === 'string' && raw.id !== '' ? raw.id : sessionId,
       title: textOf(raw.title),
-      started: metadataBlank === false || raw.blank !== true,
+      started: startedFromRaw(raw),
       archived: archived.has(sessionId),
       updatedAt: typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
       // A subagent session is a child conversation: it notifies through its
@@ -563,6 +596,7 @@ module.exports = {
   openCatalog,
   readCatalogs,
   phaseReady,
+  sessionStartedOf,
   readStatusEntry,
   SESSIONS_SERVICE,
   WORKSPACES_SERVICE,

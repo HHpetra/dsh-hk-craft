@@ -51,6 +51,19 @@ const { projectWorkspaceSection, visibleWorkspaceIdOf } = require('./workspace-s
 const { workspaceOrderOf } = require('./workspace-order.js')
 
 /**
+ * Enabled-workspace sets already computed for one pane snapshot.
+ *
+ * A store tick rebuilds the catalog and re-renders the section, but the pane
+ * controller snapshot only moves when the layouts move. Caching on that
+ * snapshot keeps the per-workspace storage probes from repeating on every
+ * unrelated tick; the workspace inventory is part of the key, so adding or
+ * deleting a workspace still recomputes.
+ *
+ * @type {WeakMap<object, {signature: string, enabled: Set<string>}>}
+ */
+const enabledCache = new WeakMap()
+
+/**
  * The enabled-workspace set for one projection, or `undefined` when it cannot be
  * known.
  *
@@ -63,20 +76,29 @@ const { workspaceOrderOf } = require('./workspace-order.js')
  *
  * @param {any} catalog the read model
  * @param {{ isWorkspaceEnabled?: (workspaceId: string) => boolean } | null | undefined} panes
+ * @param {unknown} [paneSnapshot] the controller snapshot the projection came from
  * @returns {Set<string> | undefined}
  */
-function enabledWorkspacesOf(catalog, panes) {
+function enabledWorkspacesOf(catalog, panes, paneSnapshot) {
   if (panes === null || panes === undefined) return undefined
   if (typeof panes.isWorkspaceEnabled !== 'function') return undefined
   if (catalog === null || catalog === undefined) return undefined
+  const workspaces = catalog.workspaces()
+  const signature = workspaces.map((workspace) => workspace.id).join('\u0000')
+  const cacheable = paneSnapshot !== null && typeof paneSnapshot === 'object'
+  if (cacheable) {
+    const cached = enabledCache.get(paneSnapshot)
+    if (cached !== undefined && cached.signature === signature) return cached.enabled
+  }
   const enabled = new Set()
   try {
-    for (const workspace of catalog.workspaces()) {
+    for (const workspace of workspaces) {
       if (panes.isWorkspaceEnabled(workspace.id)) enabled.add(workspace.id)
     }
   } catch (_error) {
     return undefined
   }
+  if (cacheable) enabledCache.set(paneSnapshot, { signature, enabled })
   return enabled
 }
 
@@ -98,7 +120,7 @@ function enabledWorkspacesOf(catalog, panes) {
 function sectionModel(catalog, panes, paneSnapshot) {
   return projectWorkspaceSection(
     catalog,
-    enabledWorkspacesOf(catalog, panes),
+    enabledWorkspacesOf(catalog, panes, paneSnapshot),
     visibleWorkspaceIdOf(paneSnapshot),
   )
 }

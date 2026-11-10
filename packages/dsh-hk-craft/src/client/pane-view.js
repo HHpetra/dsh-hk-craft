@@ -21,7 +21,7 @@
  */
 
 const { createTranslator, react } = require('./react-and-translator.js')
-const { openCatalog } = require('./catalog.js')
+const { sessionStartedOf } = require('./catalog.js')
 const {
   CONTENT_FACTORY,
   PANE_SLOT,
@@ -139,6 +139,7 @@ function PaneWorkspace({
   rightbarExpanded = false,
   rightbarTools = [],
   error = null,
+  mountingFocusedOnly = false,
   kit,
   t,
   seats,
@@ -193,12 +194,14 @@ function PaneWorkspace({
       geometry.panes.map((paneRect) => {
         const pane = layout.panes[paneRect.paneId]
         if (pane === undefined) return null
+        const focusedPane = visible && paneRect.paneId === layout.activePaneId
         return h(PaneFrame, {
           key: paneRect.paneId,
           controller,
           pane,
           rect: paneRect,
-          focused: visible && paneRect.paneId === layout.activePaneId,
+          focused: focusedPane,
+          bodyAllowed: !mountingFocusedOnly || focusedPane,
           kit,
           t,
           seats,
@@ -291,6 +294,7 @@ function createPaneHost(controller, options = {}) {
             rightbarExpanded: state.rightbarExpanded === true,
             rightbarTools: Array.isArray(state.rightbarTools) ? state.rightbarTools : [],
             error: state.error,
+            mountingFocusedOnly: state.mountFocusedOnly === true,
             kit: props,
             t,
             seats,
@@ -398,13 +402,14 @@ function createPaneBody(controller) {
     // call order cannot change with `sessionId`. The catalog then inverts the
     // row's `blank` bit once, and this reads it back for the factory's
     // hero/settling derivation, which wants the raw flag.
-    const sessionsSnapshot =
-      typeof props.useSessions === 'function' ? props.useSessions((snapshot) => snapshot) : undefined
-    const summaryRow =
-      sessionsSnapshot === undefined || sessionId === undefined
-        ? undefined
-        : openCatalog({ sessions: sessionsSnapshot }).session(sessionId)
-    const summaryBlank = summaryRow === undefined ? undefined : summaryRow.started === false
+    // Only the started bit is read here. Selecting it — rather than the whole
+    // list — keeps an update to any other session from re-rendering this
+    // pane's conversation; a missing row stays "unknown", as before.
+    const summaryStarted =
+      typeof props.useSessions === 'function'
+        ? props.useSessions((snapshot) => sessionStartedOf(snapshot, sessionId))
+        : undefined
+    const summaryBlank = summaryStarted === undefined ? undefined : summaryStarted === false
     const { phase, hero } = derivePanePhase({ sessionId, session, summaryBlank })
     const sessionReady = session !== undefined
     React.useEffect(() => {
