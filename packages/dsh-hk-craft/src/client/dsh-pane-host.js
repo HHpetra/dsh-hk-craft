@@ -408,6 +408,15 @@ function createPaneController(ctx, options = {}) {
   /** Deferred retry for an explicit reveal that the shell had not applied yet. */
   let revealRetryTimer = null
   /**
+   * The cold start wanted to reveal but `uiSession` was not attached yet.
+   *
+   * `uiWorkspace` and `uiSession` resolve independently, so the settlement can
+   * run before the plugin can read the shell's current. The attach hook replays
+   * this one deferred reveal; without it the right bar stays on the Session dsh
+   * started with, and a tool opened from it uses that workspace's directory.
+   */
+  let revealDeferred = false
+  /**
    * Last `mainView` counts read from the session list. A 新会话 retains
    * `mainView` on the new session without moving the sticky current, so a
    * count that grows on a session no pane holds is that arrival. `null` until
@@ -1672,6 +1681,13 @@ function createPaneController(ctx, options = {}) {
    */
   function markBootRevealSettled() {
     if (!openBootRevealGate()) return
+    if (sessionCurrent === null) {
+      // No `uiSession.current` to compare against yet. The attach hook replays
+      // this once the shell current becomes readable; before that there is
+      // nothing a reveal could move.
+      revealDeferred = true
+      return
+    }
     revealFocusedPane()
   }
 
@@ -1747,7 +1763,8 @@ function createPaneController(ctx, options = {}) {
    */
   function revealFocusedPane(request = {}) {
     if (revealing || routingDepth > 0 || disposed || !snapshot.active) return false
-    if (request?.force === true) {
+    const forced = request?.force === true
+    if (forced) {
       // An explicit user action is allowed to move current during the cold
       // start, and must be allowed to retry a pair an earlier automatic attempt
       // gave up on: that earlier attempt may have run before the shell could
@@ -1756,6 +1773,7 @@ function createPaneController(ctx, options = {}) {
       revealMiss = null
     } else if (!bootRevealSettled) return false
     if (sessionCurrent === null) return false
+    revealDeferred = false
     const focused = focusedPane()
     const sessionId = focused?.sessionId
     if (typeof sessionId !== 'string' || sessionId === '') return false
@@ -1765,23 +1783,38 @@ function createPaneController(ctx, options = {}) {
       return false
     }
     const miss = `${sessionId}\0${currentId ?? ''}`
-    if (revealMiss === miss) return false
+    if (!forced && revealMiss === miss) return false
     const face = uiWorkspaceFace()
     if (face == null || typeof face.openSession !== 'function') return false
-    revealMiss = miss
+    let opened = false
     revealing = true
     try {
       // Call through the face: `openSession` is a prototype method and reads
       // `this.replaceMain`, so a detached call throws instead of navigating.
       face.openSession(sessionId)
+      opened = true
+      /**
+       * Remember the pair only once the shell accepted the navigation. Its
+       * refusal is not "already settled": a cold start can call this before
+       * `sessions.list` publishes a restored Session (`sessions.retain:
+       * unknown session <id>`). Keeping the miss then silences every later
+       * automatic reveal for that pair, and the right bar stays on the Session
+       * this plugin replaced — the workspace its terminal then opens in.
+       */
+      revealMiss = miss
     } catch (error) {
       console.error('[dsh-hk-craft] failed to show the focused session in the right bar', error)
-      return false
+      revealMiss = null
     } finally {
       revealing = false
     }
-    if (currentSessionId() === sessionId) revealMiss = null
-    return true
+    if (opened && currentSessionId() === sessionId) revealMiss = null
+    // A shell that refused the navigation (`sessions.retain: unknown session`
+    // while its list is still loading) has not been moved at all: ask again on
+    // the next frames until it can. A call it accepted but did not apply is
+    // the loop `revealMiss` exists for, so that case is not retried here.
+    if (!forced && !opened && bootRevealSettled) scheduleFocusedReveal()
+    return opened
   }
 
   /**
@@ -2277,6 +2310,13 @@ function createPaneController(ctx, options = {}) {
         unsubscribe()
         if (sessionCurrent === current) sessionCurrent = null
       }
+      // `uiWorkspace` and `uiSession` resolve independently, so the boot
+      // settlement can run before this face exists. That attempt could not
+      // read the shell current and deferred itself; replay it now.
+      if (revealDeferred && bootRevealSettled) {
+        revealDeferred = false
+        revealFocusedPane()
+      }
       return unsubscribeCurrent
     },
     /**
@@ -2308,6 +2348,7 @@ function createPaneController(ctx, options = {}) {
       disposed = true
       clearBootRevealTimer()
       clearRevealRetry()
+      revealDeferred = false
       unsubscribeCurrent()
       unsubscribeCurrent = () => {}
       sessionCurrent = null

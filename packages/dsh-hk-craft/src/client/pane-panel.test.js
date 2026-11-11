@@ -232,7 +232,34 @@ test('openTool waits for the bar to adopt the focused Session before opening', a
   panel.dispose()
 })
 
-test('openTool falls back to the mounted Session when the bar never adopts the target', async () => {
+test('openTool never opens the tool on the Session the bar still shows', async () => {
+  // Opening there is exactly the bug the wait exists to prevent: a terminal in
+  // the workspace the user just left. A bar that never reaches the target is
+  // reported instead of being used as a fallback.
+  const patches = []
+  const panel = createRightbar({
+    publish: (patch) => patches.push(patch),
+    retryDelayMs: 1,
+    retryAttempts: 3,
+  })
+  const calls = []
+  panel.attach({
+    screen: () => undefined,
+    mounted: { getSnapshot: () => 'session-a' },
+    isExpanded: () => false,
+    toggleExpanded() {},
+    openTabIn: (sessionId, kind) => calls.push([sessionId, kind]),
+    openTab: (kind) => calls.push(['mounted', kind]),
+  })
+
+  assert.equal(panel.openTool('terminal', 'session-b'), true)
+  await waitFor(() => patches.some((patch) => typeof patch.error === 'string'))
+  assert.deepEqual(calls, [], 'no page is created in the previous workspace')
+  assert.match(patches.at(-1).error, /session-a/)
+  panel.dispose()
+})
+
+test('openTool still opens on the mounted Session when the bar reports none', async () => {
   const panel = createRightbar({ publish: () => {}, retryDelayMs: 1, retryAttempts: 3 })
   const calls = []
   panel.attach({
@@ -245,7 +272,7 @@ test('openTool falls back to the mounted Session when the bar never adopts the t
 
   assert.equal(panel.openTool('terminal', 'session-b'), true)
   await waitFor(() => calls.length > 0)
-  assert.deepEqual(calls, [['mounted', 'terminal']], 'a stuck bar still opens the tool it shows')
+  assert.deepEqual(calls, [['mounted', 'terminal']], 'nothing to disagree with, so the click still works')
   panel.dispose()
 })
 

@@ -158,6 +158,28 @@ function createRightbar({
     return true
   }
 
+  /**
+   * The Session the bar itself says it is on, when that is readable.
+   *
+   * @returns {string|undefined}
+   */
+  function mountedSessionId() {
+    try {
+      if (typeof service?.screen === 'function') {
+        const screen = service.screen()
+        if (screen !== undefined) return screen.sessionId
+      }
+      const mounted = service?.mounted
+      if (mounted != null && typeof mounted.getSnapshot === 'function') {
+        const value = mounted.getSnapshot()
+        if (typeof value === 'string' && value !== '') return value
+      }
+    } catch (_error) {
+      return undefined
+    }
+    return undefined
+  }
+
   function expand() {
     if (readExpanded() || typeof service?.toggleExpanded !== 'function') return
     try {
@@ -272,8 +294,10 @@ function createRightbar({
      * is minted one render later. So the open waits for adoption, asking the
      * kernel to reveal the focused pane again on every wait; only then does it
      * expand the bar, which is why a click never flashes the previous
-     * workspace's page. A shell that never adopts the Session (no navigation
-     * face) falls back to the mounted open instead of doing nothing.
+     * workspace's page. A shell with no per-Session open falls back to the
+     * mounted open. A bar that never reaches the target is reported instead of
+     * being opened on whatever Session it still shows — that page would carry
+     * the previous workspace's directory.
      *
      * @param {string} kind - native tab kind (files, terminal, …)
      * @param {string} [sessionId] - focused pane's Session, when known
@@ -295,6 +319,19 @@ function createRightbar({
           return
         }
         if (attempts >= retryAttempts) {
+          // Opening on the mounted Session while it names another conversation
+          // is exactly the bug this wait exists to prevent: a terminal in the
+          // workspace the user just left. Only fall back when the bar reports
+          // no Session at all (nothing to open on either way).
+          const shown = mountedSessionId()
+          if (shown !== undefined && shown !== target) {
+            announceError(
+              new Error(
+                `the right bar stayed on ${shown}, so ${kind} was not opened for ${target}`,
+              ),
+            )
+            return
+          }
           placeOnMounted(kind)
           return
         }

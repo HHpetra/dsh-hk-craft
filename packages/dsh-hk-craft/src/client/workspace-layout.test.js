@@ -1404,6 +1404,48 @@ function bootRows() {
   }
 }
 
+/**
+ * A shell current whose first `openSession` calls are refused.
+ *
+ * `sessions.retain` throws while the session list has not published a restored
+ * id, so the shell's own navigation can refuse even though the plugin already
+ * shows the conversation.
+ *
+ * @param {string} [initialKey]
+ * @param {{refusals?: number}} [options]
+ */
+function refusingCurrent(initialKey = 'native-old', { refusals = 1 } = {}) {
+  let key = initialKey
+  let remaining = refusals
+  const attempts = []
+  const opened = []
+  const listeners = new Set()
+  const notify = () => {
+    for (const listener of [...listeners]) listener()
+  }
+  const current = {
+    opened,
+    getSnapshot: () => ({ key }),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+  const uiWorkspace = {
+    openSession(sessionId) {
+      attempts.push(sessionId)
+      if (remaining > 0) {
+        remaining -= 1
+        throw new Error(`sessions.retain: unknown session ${sessionId}`)
+      }
+      opened.push(sessionId)
+      key = sessionId
+      notify()
+    },
+  }
+  return { current, uiWorkspace, attempts }
+}
+
 /** One restored workspace with a single pane showing `s1`. */
 function restoredSinglePane() {
   return memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 's1')) })
@@ -1531,6 +1573,82 @@ test('a user focus during the cold-start window reveals immediately', () => {
 
   assert.deepEqual(boot.shell.current.opened, ['s1'])
   boot.controller.dispose()
+})
+
+test('a reveal that ran before the shell current was readable is replayed when it attaches', () => {
+  // `uiWorkspace` and `uiSession` resolve independently. When the restore
+  // settles first, the reveal cannot read `uiSession.current` and does
+  // nothing; nothing else used to ask again, so the right bar stayed on the
+  // startup Session and its terminal opened in that workspace.
+  const { controller } = readyController({
+    storage: restoredSinglePane(),
+    rows: bootRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'native-old'] }],
+  })
+  const shell = refusingCurrent('native-old', { refusals: 0 })
+  controller.attachWorkspace(shell.uiWorkspace)
+
+  assert.equal(controller.activate(), true)
+  assert.deepEqual(shell.attempts, [], 'the reveal has no current to compare with yet')
+
+  controller.attachSessionSelection(shell.current)
+
+  assert.deepEqual(shell.attempts, ['s1'], 'the bar follows the pane once current is readable')
+  assert.equal(shell.current.getSnapshot().key, 's1')
+  controller.dispose()
+})
+
+test('a reveal the shell refuses is retried once it can move', async () => {
+  // A cold start can ask the shell to show a restored Session before its list
+  // publishes that id; `sessions.retain` throws instead of navigating. The
+  // refusal must not be remembered as settled, or the bar never follows the
+  // pane and a tool opened from it uses the startup workspace's directory.
+  const { controller } = readyController({
+    storage: restoredSinglePane(),
+    rows: bootRows(),
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'native-old'] }],
+  })
+  const shell = refusingCurrent('native-old', { refusals: 1 })
+  controller.attachWorkspace(shell.uiWorkspace)
+  controller.attachSessionSelection(shell.current)
+
+  assert.equal(controller.activate(), true)
+  assert.deepEqual(shell.attempts, ['s1'], 'the settled cold start asks once')
+  assert.deepEqual(shell.current.opened, [], 'the shell refused the not-yet-publishable Session')
+  assert.equal(shell.current.getSnapshot().key, 'native-old')
+
+  await new Promise((resolve) => setTimeout(resolve, 300))
+
+  assert.deepEqual(shell.current.opened, ['s1'], 'the bounded follow-up moves current when it can')
+  assert.equal(shell.current.getSnapshot().key, 's1')
+  controller.dispose()
+})
+
+test('a cold start that reveals before the session list publishes it recovers when the list lands', () => {
+  // The regression this test pins: the restore runs while the session list is
+  // still empty (`complete()` only checks the two phases), the settlement
+  // reveals the restored session and the shell refuses it. The pane reference
+  // is re-acquired when the list arrives; the reveal used to be remembered as
+  // settled, so the right bar stayed on the startup Session, and a terminal
+  // opened from it ran in that workspace.
+  const { fake, controller } = readyController({
+    storage: restoredSinglePane(),
+    rows: {},
+    sessionsPhase: 'ready',
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 'native-old'] }],
+    retainThrowsUnknown: true,
+  })
+  const shell = refusingCurrent('native-old', { refusals: 1 })
+  controller.attachWorkspace(shell.uiWorkspace)
+  controller.attachSessionSelection(shell.current)
+
+  assert.equal(controller.activate(), false, 'the too-early pane retain cannot succeed')
+  fake.setSessions(bootRows(), 'ready')
+
+  assert.equal(shell.attempts[0], 's1', 'the settlement asked for the restored Session')
+  assert.deepEqual(shell.current.opened, ['s1'], 'the list landing retries the refused reveal')
+  assert.equal(shell.current.getSnapshot().key, 's1')
+  controller.dispose()
 })
 
 test('a catalog that never reports ready still lets the deadline reveal the pane', async () => {
