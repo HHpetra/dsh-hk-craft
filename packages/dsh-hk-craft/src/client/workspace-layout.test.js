@@ -83,6 +83,7 @@ function fakeCtx({
   workspacesPhase = 'ready',
   sessionsPhase = 'ready',
   selectPanelFails = false,
+  retainThrowsUnknown = false,
 } = {}) {
   const calls = { retain: [], selectPanel: [], create: [], interrupt: [] }
   const references = []
@@ -127,6 +128,12 @@ function fakeCtx({
       return {}
     },
     retain(sessionId, options) {
+      // Upstream `SessionManager.resolveTarget` throws for an id the session
+      // list has not published yet, which is the state during a cold start.
+      if (retainThrowsUnknown && sessionRows[sessionId] === undefined) {
+        calls.retain.push({ sessionId, options })
+        throw new Error(`sessions.retain: unknown session ${sessionId}`)
+      }
       const reference = {
         sessionId,
         options,
@@ -315,6 +322,48 @@ test('boot rebuilds the focused workspace tree, ratios, focus and per-pane view'
   assert.equal(state.activePaneId, 'p2')
   assert.equal(state.sessionId, 's2')
   assert.deepEqual(liveMainView(fake).map((reference) => reference.sessionId), ['s2'])
+  controller.dispose()
+})
+
+test('a restored pane whose session the list has not published yet recovers when it arrives', () => {
+  // The real `sessions.retain` throws `unknown session <id>` for an id the
+  // session list does not hold yet (`SessionManager.resolveTarget`), and the
+  // plugin restores its panes before that first list lands. The pane then has no
+  // retained reference and the view renders the "no conversation selected"
+  // fallback; the layout itself never changes again, so nothing used to retry
+  // the acquire and the pane stayed empty for the whole process.
+  const layout = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: layout })
+  const { fake, controller } = readyController({
+    storage,
+    rows: {},
+    sessionsPhase: 'pending',
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1'] }],
+    retainThrowsUnknown: true,
+  })
+
+  assert.equal(controller.activate(), false, 'the too-early retain cannot succeed')
+  const early = controller.getSnapshot()
+  assert.equal(early.active, true, 'the restored tree is still the view')
+  assert.deepEqual(Object.keys(early.panes), ['p1'])
+  assert.match(early.error, /unknown session s1/)
+  assert.equal(early.restoringPanes, true, 'the pane is opening, not permanently empty')
+  assert.equal(controller.layout.paneReference('p1'), undefined)
+
+  fake.setSessions({ s1: { id: 's1', title: 'Pane', blank: false, updatedAt: 10 } }, 'ready')
+
+  const recovered = controller.getSnapshot()
+  assert.equal(recovered.error, null, 'the list arriving is a retry, not a permanent failure')
+  assert.equal(recovered.restoringPanes, false)
+  assert.equal(controller.layout.paneReference('p1')?.sessionId, 's1')
+  assert.deepEqual(
+    livePaneRefs(fake).map((reference) => reference.sessionId),
+    ['s1'],
+  )
+  assert.deepEqual(
+    liveMainView(fake).map((reference) => reference.sessionId),
+    ['s1'],
+  )
   controller.dispose()
 })
 

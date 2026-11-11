@@ -445,6 +445,7 @@ function createPaneController(ctx, options = {}) {
     active: false,
     sessionId: null,
     mountFocusedOnly: false,
+    restoringPanes: false,
     probe: probeConversationContent(slots),
     error: null,
     rightbarAvailable: false,
@@ -498,6 +499,34 @@ function createPaneController(ctx, options = {}) {
     revealFocusedPane()
   }
 
+  /**
+   * Whether at least one restored pane is still waiting for the session list.
+   *
+   * The view renders a pane whose reference is missing as "no conversation
+   * selected", which is the truth for a closed or pruned pane but a lie while
+   * the cold start is only waiting for `sessions.list`: the shell cannot retain
+   * an id it has not published yet (`acquireMissingPaneReferences` retries once
+   * it can). This bit lets the view say "opening" for that window instead.
+   *
+   * @returns {boolean}
+   */
+  function panesAwaitingCatalog(active) {
+    if (!active) return false
+    let complete
+    try {
+      complete = catalogNow().complete()
+    } catch (_error) {
+      return false
+    }
+    if (complete === true) return false
+    for (const value of Object.values(book.allLayouts())) {
+      for (const paneId of Object.keys(value.panes)) {
+        if (refs.get(paneId) === undefined) return true
+      }
+    }
+    return false
+  }
+
   /** The snapshot fields that mirror the active layout tree. */
   function statePatch(active) {
     const value = book.activeLayout()
@@ -510,6 +539,7 @@ function createPaneController(ctx, options = {}) {
       activePaneId: value.activePaneId,
       sessionId: active && focused !== undefined ? focused.sessionId : null,
       mountFocusedOnly,
+      restoringPanes: panesAwaitingCatalog(active),
     }
   }
 
@@ -1079,6 +1109,7 @@ function createPaneController(ctx, options = {}) {
       const dispose = list.subscribe(() => {
         pruneLoadedWorkspaces()
         settleBootWorkspace()
+        acquireMissingPaneReferences()
         if (sessionsList) noteNewSessionArrivals()
       })
       if (typeof dispose === 'function') {
@@ -1152,6 +1183,36 @@ function createPaneController(ctx, options = {}) {
       return
     }
     markBootRevealSettled()
+  }
+
+  /**
+   * Retry the pane references a cold start could not take.
+   *
+   * `sessions.retain` throws `unknown session <id>` for a session the shell's
+   * list has not published yet, and the restore runs before that first list.
+   * The failed transaction leaves the restored panes in the layout with no
+   * retained reference, and the view renders each of them as "no conversation
+   * selected". The tree itself never changes again in that state — focusing an
+   * already-focused pane is a no-op and a same-workspace switch returns early —
+   * so nothing used to re-acquire them and a restart could stay empty.
+   *
+   * Both catalogs being readable is the point where the id is known, so the
+   * acquire pass runs from the list subscription. A session that is really gone
+   * is pruned before this runs and leaves no missing pane; an unchanged failure
+   * publishes nothing, because `emit` drops a patch that changes no field.
+   *
+   * @returns {boolean} whether every loaded pane now holds a reference
+   */
+  function acquireMissingPaneReferences() {
+    if (disposed || !registered || !snapshot.active) return false
+    if (catalogNow().complete() !== true) return false
+    const missing = Object.values(book.allLayouts()).some((value) =>
+      Object.keys(value.panes).some((paneId) => refs.get(paneId) === undefined),
+    )
+    if (!missing) return false
+    const { failure } = reconcileAll(book.allLayouts())
+    emit({ ...statePatch(snapshot.active), error: failure })
+    return failure === null
   }
 
   /** The catalog row of one session, or undefined when the shell no longer lists it. */
@@ -2263,6 +2324,7 @@ function createPaneController(ctx, options = {}) {
         active: false,
         sessionId: null,
         mountFocusedOnly: false,
+        restoringPanes: false,
         error: null,
         workspaceId: null,
         layouts: {},

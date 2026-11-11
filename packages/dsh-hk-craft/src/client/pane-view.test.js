@@ -311,6 +311,34 @@ test('keyboard focus inside a pane focuses that pane', () => {
   })
 })
 
+test('a pane still waiting for the session list says it is opening', () => {
+  withFakeReact(fakeReact, () => {
+    const controller = headerController()
+    // A restored pane has no reference until the shell can retain it.
+    controller.layout.paneReference = () => undefined
+    const props = {
+      controller,
+      pane: pane('p1', 's1'),
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      focused: true,
+      kit: { SessionProvider: () => null, renderSlot: () => null },
+      t: (key) => key,
+    }
+
+    const fallbackOf = (element) =>
+      elementsOf(element).filter((node) => typeof node.props?.text === 'string').at(-1)
+
+    const restoring = PaneFrame({ ...props, restoring: true })
+    assert.equal(fallbackOf(restoring).props.text, 'pane.opening.title')
+    assert.equal(fallbackOf(restoring).props.detail, 'pane.opening.body')
+
+    // Outside that window the same empty reference is the real "nothing here".
+    const settled = PaneFrame({ ...props, restoring: false })
+    assert.equal(fallbackOf(settled).props.text, 'pane.empty.title')
+    assert.equal(fallbackOf(settled).props.detail, 'pane.empty.body')
+  })
+})
+
 test('pressing an already focused pane reveals its session before the click', () => {
   withFakeReact(fakeReact, () => {
     const revealed = []

@@ -25,6 +25,8 @@ const zh = {
   'pane.view.trajectory': '轨迹',
   'pane.empty.title': '未选择会话',
   'pane.empty.body': '请先在 dsh 中打开或恢复一个会话，再切回窗格视图。',
+  'pane.opening.title': '正在打开会话…',
+  'pane.opening.body': '正在等待 dsh 加载会话列表，窗格会自动恢复，不需要重新打开。',
   'pane.empty.workspace.title': '这个工作区还没有打开的窗格',
   'pane.empty.workspace.body':
     '新开一个会话占第一格；之后从当前窗格向右分栏，默认最多 4 格（可在 HK Craft 设置中调整）。',
@@ -184,6 +186,9 @@ const en = {
   'pane.view.trajectory': 'Trajectory',
   'pane.empty.title': 'No conversation selected',
   'pane.empty.body': 'Open or resume a conversation in dsh, then switch back to the pane view.',
+  'pane.opening.title': 'Opening the conversation…',
+  'pane.opening.body':
+    'Waiting for dsh to load its session list; the pane recovers on its own.',
   'pane.empty.workspace.title': 'No panes open in this workspace',
   'pane.empty.workspace.body':
     'Start a conversation to occupy the first pane; later conversations split the focused pane to the right, up to 4 panes by default (change it in HK Craft settings).',

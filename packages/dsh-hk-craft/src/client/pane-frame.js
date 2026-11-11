@@ -88,9 +88,9 @@ function PaneViewToggle({ controller, pane, t }) {
  * layout change. Only a session replacement resets the conversation subtree (the
  * boundary below is keyed by session id).
  *
- * @param {{ controller: any, pane: object, rect: object, focused: boolean, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
+ * @param {{ controller: any, pane: object, rect: object, focused: boolean, bodyAllowed?: boolean, restoring?: boolean, kit: any, t: (key: string) => string, seats?: Record<string, Function>|null }} props
  */
-function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, kit, t, seats }) {
+function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, restoring = false, kit, t, seats }) {
   const React = react()
   const h = React.createElement
   const reference = controller.layout.paneReference(pane.paneId)
@@ -192,10 +192,14 @@ function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, kit, t
   const body = React.useMemo(() => {
     if (!bodyAllowed) return null
     if (reference === undefined) {
+      // A restored pane has no reference until the shell can retain it, and the
+      // cold start runs before `sessions.list` publishes those ids. Saying "no
+      // conversation selected" there is wrong: the pane is opening, and the
+      // kernel re-acquires it as soon as both catalogs are readable.
       return h(PaneFallback, {
         t,
-        text: t('pane.empty.title'),
-        detail: t('pane.empty.body'),
+        text: t(restoring ? 'pane.opening.title' : 'pane.empty.title'),
+        detail: t(restoring ? 'pane.opening.body' : 'pane.empty.body'),
         label: t('pane.close'),
         onBack: close,
       })
@@ -225,7 +229,7 @@ function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, kit, t
       },
       h(kit.SessionProvider, { session: reference }, kit.renderSlot(PANE_SLOT, {})),
     )
-  }, [reference, pane.sessionId, kit, t, controller, bodyAllowed])
+  }, [reference, pane.sessionId, kit, t, controller, bodyAllowed, restoring])
 
   return h(
     'div',
