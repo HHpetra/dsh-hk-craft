@@ -453,6 +453,67 @@ the lights.
 
 ---
 
+## Session history open (`openState`)
+
+**Provider:** `@deepseek-ai/dsh-api-session-controller` (`Session.open` /
+`doOpen`, reachable through `reference.binding.session`) and
+`@deepseek-ai/dsh-client-ui-chat` (the transcript hint).
+
+**Semantics:** a Session opens its history lazily, from the first reference:
+`ClientSessions.retain()` calls `manager.get(id).open()`. `open()` is
+idempotent — `openState === "open"` resolves at once, and an in-flight
+`openPromise` is returned as is — and `doOpen` drives the rest:
+`openState = "loading"`, open the event stream (`new SessionEventStream(...)`
+`await events.open(HISTORY_PAGE_OPTIONS)`), then `openState = "open"`.
+
+The state machine has exactly two exits from `"loading"`: a successful open, and
+a **Remote** failure (`isRemoteFailure(error)`, i.e. `error.isDSHRemoteError`),
+which sets `openState = "error"` and `openError`. Any other failure is rethrown
+by `doOpen` and the `finally` block only marks the store dirty, so the Session
+**stays in `"loading"` for the rest of that client generation**. That covers
+every transport-level failure: the mux carrier being lost (`RemoteStreamClient`
+fails each logical stream with a `RemoteStreamCarrierError`), a socket that
+closes or is rejected before it opens (401/403/409 upgrade, `maintain()`
+rejecting its waiters), and a heartbeat termination. `openPromise` is cleared in
+`open()`'s `finally`, but nothing calls `open()` again: a reference that already
+exists does not re-retain, and `resync()` is only triggered by a subagent
+address change (`configureSubagent`). The Chat view renders `chat.loadingHistory`
+("载入历史…") for as long as `openState` is `"loading"`, with no affordance, so
+the conversation looks like it will never load.
+
+Two consequences matter here:
+
+- **A second `retain()` is the retry trigger.** `open()` re-runs `doOpen` when
+  `openPromise` is null, so taking one extra reference (and releasing it) reopens
+  a history that failed. It is not a retry for an open that is still in flight:
+  that returns the same pending promise.
+- **`Session.resync()` is the rebuild.** It bumps `openGeneration`, disposes the
+  stream, sets `"cold"` and opens again. It is the only way out of a hung
+  `openPromise`. Upstream calls it only for an address change, so a plugin that
+  wants it has to call it on the Session object.
+
+**Why we rely on it:** split panes keep every pane of every loaded workspace
+retained, so a restart opens several histories at once at the busiest moment of
+the boot — precisely when the stream carrier can be replaced or refused. Native
+dsh opens one history, so it rarely meets this state; the plugin met it as "the
+workspace opened by default shows 载入历史… forever after a restart" while every
+other workspace recovered on its first switch (a new client generation for that
+Session). The pane kernel therefore watches `openState` of its retained panes and
+spends a bounded budget per session (`pane-open-recovery.js`): a fresh `retain()`
+for an open that already failed, `resync()` for one that is still in flight,
+then it gives up until that session is replaced. The watchdog is a poll because
+the shell publishes no event for this state.
+
+**Verified:** `open()`, `doOpen`, `resync`, `ClientSessions.retain` and the
+carrier failure paths were read in the 0.2.2-rc.1 bundles
+(`dsh-api-session-controller/lib/client.js`, `dsh-api-gateway/src/client/*.ts`),
+and the `chat.loadingHistory` gate in `dsh-client-ui-chat/lib/client.js`.
+Runtime probe: in the Desktop shell, close the Remote stream socket once
+(devtools) while a pane is opening, and confirm the pane recovers within a few
+seconds instead of staying on "载入历史…".
+
+---
+
 ## Completion unread
 
 **Provider:** `@deepseek-ai/dsh-client-ui-session` (`sessionStatus` map).

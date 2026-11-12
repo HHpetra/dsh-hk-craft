@@ -84,6 +84,7 @@ function fakeCtx({
   sessionsPhase = 'ready',
   selectPanelFails = false,
   retainThrowsUnknown = false,
+  sessionObjects = {},
 } = {}) {
   const calls = { retain: [], selectPanel: [], create: [], interrupt: [] }
   const references = []
@@ -134,9 +135,14 @@ function fakeCtx({
         calls.retain.push({ sessionId, options })
         throw new Error(`sessions.retain: unknown session ${sessionId}`)
       }
+      // `ClientSessions.retain` opens the Session's history as the reference is
+      // built, which is what the plugin's open watch retries through.
+      const session = sessionObjects[sessionId]
+      if (session !== undefined && typeof session.open === 'function') session.open()
       const reference = {
         sessionId,
         options,
+        binding: { sessionId, session },
         released: false,
         release() {
           this.released = true
@@ -191,6 +197,11 @@ function fakeCtx({
       for (const listener of [...sessionListeners]) listener()
     },
   }
+}
+
+/** Wait for real timers: the open watch is a poll and takes a few ticks. */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** Retained references still holding dsh's single "current session" slot. */
@@ -899,6 +910,142 @@ test('the workspace shown at startup waits for the session catalog before saying
   )
   assert.equal(controller.getSnapshot().workspaceId, 'w1')
   assert.equal(controller.getSnapshot().sessionId, 's1')
+  controller.dispose()
+})
+
+test('a pane whose history never opened is reopened instead of staying on 载入历史…', async () => {
+  // Upstream `Session.doOpen` leaves `openState` in "loading" when its event
+  // stream fails on a transport error (carrier lost at boot, socket closed
+  // before it opened), and nothing in the shell calls `open()` again: the Chat
+  // view then shows "载入历史…" for the rest of the client generation. A fresh
+  // `retain()` is the shell's own retry trigger.
+  const stuck = {
+    openState: 'loading',
+    openPromise: null,
+    opens: 0,
+    recovered: false,
+    open() {
+      this.opens += 1
+      if (this.recovered) this.openState = 'open'
+    },
+  }
+  const layout = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: layout })
+  const { controller, fake } = readyController({
+    storage,
+    rows: { s1: { id: 's1', blank: false, updatedAt: 10 } },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1'] }],
+    sessionObjects: { s1: stuck },
+    controllerOptions: {
+      openWatchIntervalMs: 5,
+      openRecovery: { stallMs: 10, maxOpenRetries: 3, maxResyncs: 1 },
+    },
+  })
+
+  assert.equal(controller.activate(), true)
+  assert.equal(stuck.openState, 'loading', 'the first open failed and left loading behind')
+  assert.equal(fake.calls.retain.filter((call) => call.options?.source === 'hkcraftOpenRetry').length, 0)
+  // The transport is healthy again by the time the watch looks.
+  stuck.recovered = true
+
+  await delay(60)
+
+  assert.equal(stuck.openState, 'open', 'the watch reopened the history')
+  const retries = fake.calls.retain.filter((call) => call.options?.source === 'hkcraftOpenRetry')
+  assert.equal(retries.length, 1, 'one retry is enough once the open succeeds')
+  assert.equal(controller.layout.paneReference('p1')?.sessionId, 's1')
+  assert.deepEqual(
+    livePaneRefs(fake).filter((reference) => !reference.released).map((ref) => ref.sessionId),
+    ['s1'],
+    'the retry reference is released again; the pane keeps its own',
+  )
+  controller.dispose()
+})
+
+test('an open that keeps failing is retried a bounded number of times', async () => {
+  const stuck = { openState: 'loading', openPromise: null, opens: 0, open() { this.opens += 1 } }
+  const layout = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: layout })
+  const { controller, fake } = readyController({
+    storage,
+    rows: { s1: { id: 's1', blank: false, updatedAt: 10 } },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1'] }],
+    sessionObjects: { s1: stuck },
+    controllerOptions: {
+      openWatchIntervalMs: 5,
+      openRecovery: { stallMs: 5, maxOpenRetries: 2, maxResyncs: 0 },
+    },
+  })
+
+  controller.activate()
+  await delay(80)
+
+  const retries = () =>
+    fake.calls.retain.filter((call) => call.options?.source === 'hkcraftOpenRetry').length
+  assert.equal(retries(), 2, 'the budget is spent exactly once per allowed retry')
+  const settled = retries()
+  await delay(60)
+  assert.equal(retries(), settled, 'a given-up session is not retried again')
+  controller.dispose()
+})
+
+test('an open that is still in flight is rebuilt through the Session resync', async () => {
+  // `open()` returns the same pending promise, so a hung open needs the
+  // Session's own rebuild rather than another retain.
+  const resynced = []
+  const hanging = {
+    openState: 'loading',
+    openPromise: Promise.resolve(),
+    open() {},
+    resync() {
+      resynced.push('resync')
+      this.openState = 'open'
+      this.openPromise = null
+    },
+  }
+  const layout = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: layout })
+  const { fake, controller } = readyController({
+    storage,
+    rows: { s1: { id: 's1', blank: false, updatedAt: 10 } },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1'] }],
+    sessionObjects: { s1: hanging },
+    controllerOptions: {
+      openWatchIntervalMs: 5,
+      openRecovery: { stallMs: 10, maxOpenRetries: 3, maxResyncs: 1 },
+    },
+  })
+
+  controller.activate()
+  await delay(60)
+
+  assert.deepEqual(resynced, ['resync'])
+  assert.equal(
+    fake.calls.retain.filter((call) => call.options?.source === 'hkcraftOpenRetry').length,
+    0,
+    'a pending open is never handed to a plain retry',
+  )
+  controller.dispose()
+})
+
+test('the open watch never touches a session that reports no open state', async () => {
+  const plain = { opens: 0, open() { this.opens += 1 } }
+  const layout = openPane(createLayout('w1'), pane('p1', 's1'))
+  const storage = memoryStorage({ w1: layout })
+  const { controller, fake } = readyController({
+    storage,
+    rows: { s1: { id: 's1', blank: false, updatedAt: 10 } },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1'] }],
+    sessionObjects: { s1: plain },
+    controllerOptions: { openWatchIntervalMs: 5 },
+  })
+
+  controller.activate()
+  const opensAfterActivate = plain.opens
+  await delay(40)
+
+  assert.equal(plain.opens, opensAfterActivate, 'only the pane retention opened it')
+  assert.equal(fake.calls.retain.filter((call) => call.options?.source === 'hkcraftOpenRetry').length, 0)
   controller.dispose()
 })
 

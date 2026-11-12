@@ -40,11 +40,16 @@
  *   controls, and there is no expanded observable — `#sidebar-right-toggle`.
  *   The service pair and the three snapshot fields it produces belong to
  *   `pane-panel.js`, not to this file.
+ * - A Session opens its history lazily and leaves `openState: "loading"` only on
+ *   success or on an RPC failure; a transport failure leaves it stuck there for
+ *   the rest of the client generation, so the pane kernel reopens it itself
+ *   (`pane-open-recovery.js`) — `#session-history-open-openstate`.
  */
 
 const { listWorkspaceConversations } = require('./dsh-sessions.js')
 const { isWorkspaceConversation, nativeConversationId } = require('./dsh-workspaces.js')
 const { openCatalog, readCatalogs } = require('./catalog.js')
+const { DEFAULT_POLICY, decideOpenRecovery } = require('./pane-open-recovery.js')
 const layoutTree = require('./layout-tree.js')
 const { hasLayoutKey } = require('./layout-store.js')
 const { createPaneLayouts, UNSCOPED_WORKSPACE } = require('./pane-layouts.js')
@@ -74,6 +79,18 @@ const MAIN_SOURCE = 'mainView'
  * the rule: a settled restore opens the gate as soon as both catalogs are ready.
  */
 const BOOT_REVEAL_TIMEOUT_MS = 4000
+
+/**
+ * Retain source for the extra reference that re-runs a pane's `Session.open()`.
+ *
+ * It is not a view: it exists for the duration of one call, so it never counts
+ * as `mainView` and never reaches zero on its own (the pane's own reference is
+ * what keeps the session alive).
+ */
+const OPEN_RETRY_SOURCE = 'hkcraftOpenRetry'
+
+/** How often the open watch reads each pane's Session state. */
+const OPEN_WATCH_INTERVAL_MS = 1200
 
 /**
  * Probe the `conversation.content` Factory through the public slots snapshot.
@@ -249,12 +266,22 @@ function subscribeList(list, listener) {
  * re-runs if the catalog was still loading when the layout was first read.
  *
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
- * @param {{ nextPaneId?: () => string, storage?: any, viewSwitch?: any, closeInterruptTimeoutMs?: number }} [options]
+ * @param {{
+ *   nextPaneId?: () => string,
+ *   storage?: any,
+ *   viewSwitch?: any,
+ *   closeInterruptTimeoutMs?: number,
+ *   openWatchIntervalMs?: number,
+ *   openRecovery?: { stallMs?: number, maxOpenRetries?: number, maxResyncs?: number },
+ * }} [options]
  *   `nextPaneId` is a deterministic id factory and `storage` a storage seam for
  *   tests (defaults to `browserStorage()`); `viewSwitch` is the conversation View
  *   adapter (ticket 07 — `dsh-view-switch.js`, tests inject a fake);
  *   `closeInterruptTimeoutMs` bounds how long the close confirmation waits for
- *   the Host's interrupt answer (a test seam, default `pane-close.js`)
+ *   the Host's interrupt answer (a test seam, default `pane-close.js`);
+ *   `openWatchIntervalMs` and `openRecovery` are the open watch's seams
+ *   (defaults `OPEN_WATCH_INTERVAL_MS` and `pane-open-recovery.js`) — the
+ *   interval also keeps the poll out of a test's event loop
  * @returns {any}
  */
 function createPaneController(ctx, options = {}) {
@@ -419,6 +446,25 @@ function createPaneController(ctx, options = {}) {
    */
   let revealDeferred = false
   /**
+   * Panes whose Session never finished opening its history
+   * (`pane-open-recovery.js`).
+   *
+   * A Session reports `openState: "loading"` while it opens its event stream and
+   * leaves that state only on success or on an RPC failure. A transport failure
+   * (a carrier lost at boot, a socket that closes before it opens, a replaced
+   * connection generation) is rethrown and leaves it in `"loading"` for the rest
+   * of the client generation: the Chat view keeps rendering its "载入历史…"
+   * hint, and the shell only calls `open()` again from a fresh `retain()`. Our
+   * restart restores and retains every pane at once, which is when a carrier
+   * hiccup is most likely, so the conversation that was on screen came back
+   * unreadable until its pane was closed and reopened.
+   *
+   * @type {Map<string, {since: number, openRetries: number, resyncs: number, givenUp: boolean}>}
+   */
+  const openWatch = new Map()
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let openWatchTimer = null
+  /**
    * Last `mainView` counts read from the session list. A 新会话 retains
    * `mainView` on the new session without moving the sticky current, so a
    * count that grows on a session no pane holds is that arrival. `null` until
@@ -507,6 +553,10 @@ function createPaneController(ctx, options = {}) {
     if (!changed) return
     snapshot = Object.freeze(next)
     for (const listener of [...listeners]) listener()
+    // A publish follows every retain, so this is where a pane's first open gets
+    // watched. The scan itself waits one interval, which is what lets a normal
+    // open finish before the watch spends any budget on it.
+    scheduleOpenScan(true)
     revealFocusedPane()
   }
 
@@ -588,6 +638,185 @@ function createPaneController(ctx, options = {}) {
     const reference = sessions.retain(sessionId, { source })
     watchReference(reference)
     return reference
+  }
+
+  /**
+   * The recovery policy, with the test seam and the shell's own budgets merged.
+   *
+   * @returns {typeof DEFAULT_POLICY}
+   */
+  function openPolicy() {
+    const configured = options?.openRecovery
+    if (configured === null || typeof configured !== 'object') return DEFAULT_POLICY
+    return {
+      stallMs: Number.isFinite(configured.stallMs) ? configured.stallMs : DEFAULT_POLICY.stallMs,
+      maxOpenRetries: Number.isInteger(configured.maxOpenRetries)
+        ? configured.maxOpenRetries
+        : DEFAULT_POLICY.maxOpenRetries,
+      maxResyncs: Number.isInteger(configured.maxResyncs)
+        ? configured.maxResyncs
+        : DEFAULT_POLICY.maxResyncs,
+    }
+  }
+
+  /**
+   * The `Session` behind one pane reference, when the shell exposes it.
+   *
+   * `binding.session` is the same object `dsh-sessions.js` reads its event window
+   * from; a released or malformed reference reads as "no Session", which the
+   * watch leaves alone.
+   *
+   * @param {{pane?: {binding?: {session?: any}}}} held
+   * @returns {any}
+   */
+  function sessionOfHeld(held) {
+    try {
+      return held?.pane?.binding?.session
+    } catch (_error) {
+      return undefined
+    }
+  }
+
+  /**
+   * Ask the shell to open one pane's history again.
+   *
+   * A fresh retention is the shell's own retry trigger: `ClientSessions.retain`
+   * calls `Session.open()`, which reruns `doOpen` because the failed attempt
+   * cleared `openPromise`
+   * (`docs/upstream-contracts.md#session-history-open-openstate`).
+   * The extra reference exists for the length of that call — releasing it at
+   * once leaves the pane's own reference in place, so the session never drops
+   * to zero references and its client generation is not torn down.
+   *
+   * @param {string} sessionId
+   */
+  function retryPaneOpen(sessionId) {
+    if (typeof sessions?.retain !== 'function') return
+    let reference
+    try {
+      reference = sessions.retain(sessionId, { source: OPEN_RETRY_SOURCE })
+    } catch (_error) {
+      // Unknown to the shell (pruned between the scan and now) or refused. The
+      // next scan reads the same state and spends the next budget slot.
+      return
+    }
+    try {
+      reference?.release?.()
+    } catch (_error) {
+      // A reference that is already gone needs no release.
+    }
+  }
+
+  /**
+   * Rebuild one pane's history source, for an open that is still in flight.
+   *
+   * `Session.resync()` invalidates the in-flight open, disposes its stream and
+   * opens a new one. That is the only way out of a hung `openPromise`: calling
+   * `open()` again would just return the same pending promise.
+   *
+   * @param {any} session
+   */
+  function resyncPaneOpen(session) {
+    if (session === null || typeof session !== 'object') return
+    // The open may have landed between the scan's read and this call; resyncing
+    // a working history would throw away a good window for nothing.
+    if (session.openState !== 'loading') return
+    const resync = session.resync
+    if (typeof resync !== 'function') return
+    try {
+      void Promise.resolve(resync.call(session)).catch(() => {})
+    } catch (_error) {
+      // A shell whose resync throws leaves the pane exactly as it was.
+    }
+  }
+
+  /**
+   * One pass of the open watch: act on every pane Session that is still
+   * opening, and forget the ones that are not.
+   *
+   * Only retained panes are read, once per session id, so a session shown in two
+   * panes spends one budget. A pane that is no longer loaded leaves the map (its
+   * entry is dropped below), and a session that has moved past `"loading"`
+   * leaves it through `idle`.
+   */
+  function scanPaneOpenStates() {
+    openWatchTimer = null
+    if (disposed || !registered || !snapshot.active) {
+      openWatch.clear()
+      return
+    }
+    const now = Date.now()
+    const policy = openPolicy()
+    const seen = new Set()
+    for (const held of refs.values()) {
+      const sessionId = held.sessionId
+      if (typeof sessionId !== 'string' || sessionId === '' || seen.has(sessionId)) continue
+      seen.add(sessionId)
+      const session = sessionOfHeld(held)
+      const decision = decideOpenRecovery(openWatch.get(sessionId), session, now, policy)
+      if (decision.entry === null) openWatch.delete(sessionId)
+      else openWatch.set(sessionId, decision.entry)
+      if (decision.action === 'retry-open') retryPaneOpen(sessionId)
+      else if (decision.action === 'resync') resyncPaneOpen(session)
+    }
+    for (const sessionId of [...openWatch.keys()]) {
+      if (!seen.has(sessionId)) openWatch.delete(sessionId)
+    }
+    scheduleOpenScan()
+  }
+
+  /**
+   * Whether any watched Session still has budget to spend.
+   *
+   * A given-up entry stays in the map (so the same failure is not retried on
+   * every publish) but must not keep the poll alive: an all-given-up workspace
+   * holds no timer. The entry leaves the map on the first scan that sees its
+   * Session open, gone, or no longer retained.
+   *
+   * @returns {boolean}
+   */
+  function openWatchArmed() {
+    for (const entry of openWatch.values()) {
+      if (entry.givenUp !== true) return true
+    }
+    return false
+  }
+
+  /**
+   * Keep the watch running while any pane Session still has budget left.
+   *
+   * Reading `openState` is the only way to notice a history that never opened
+   * (the shell publishes no failure event for it), so the watch is a poll: one
+   * timer for the whole plugin, cheap enough at this interval, and `unref`d so a
+   * Node test process is not held open by it.
+   *
+   * `force` arms the scan that fills an empty watch from the panes just
+   * retained; without it the watch only re-arms itself while something is
+   * still opening, and a workspace whose histories all opened holds no timer.
+   */
+  function scheduleOpenScan(force = false) {
+    if (disposed || openWatchTimer !== null) return
+    if (!force && !openWatchArmed()) return
+    if (refs.size === 0) return
+    if (typeof setTimeout !== 'function') return
+    const configured = options?.openWatchIntervalMs
+    const interval = Number.isFinite(configured) ? Math.max(0, configured) : OPEN_WATCH_INTERVAL_MS
+    const handle = setTimeout(scanPaneOpenStates, interval)
+    if (typeof handle?.unref === 'function') handle.unref()
+    openWatchTimer = handle
+  }
+
+  /** Drop the watch and its timer, e.g. when the panes are released. */
+  function stopOpenScan() {
+    if (openWatchTimer !== null) {
+      try {
+        clearTimeout(openWatchTimer)
+      } catch (_error) {
+        // A disposed host may already have torn the timer registry down.
+      }
+      openWatchTimer = null
+    }
+    openWatch.clear()
   }
 
   function releaseOne(reference) {
@@ -2351,6 +2580,7 @@ function createPaneController(ctx, options = {}) {
       disposed = true
       clearBootRevealTimer()
       clearRevealRetry()
+      stopOpenScan()
       revealDeferred = false
       unsubscribeCurrent()
       unsubscribeCurrent = () => {}
