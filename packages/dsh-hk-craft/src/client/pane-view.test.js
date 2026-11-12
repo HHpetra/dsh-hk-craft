@@ -776,6 +776,45 @@ test('the strip opens each native right-bar tool from its icon', () => {
   })
 })
 
+test('the strip asks the controller to open a tool for the workspace on screen', () => {
+  withFakeReact(fakeReact, () => {
+    const calls = []
+    const controller = {
+      close: { request: () => {} },
+      budget: { newPane: () => {} },
+      focusPane: () => {},
+      swapPanes: () => {},
+      openVisibleTool: (kind) => calls.push(kind),
+      revealFocusedSession: () => {
+        throw new Error('the click must not reveal a pane the controller has not checked')
+      },
+      panel: {
+        openTool: () => {
+          throw new Error('the click must not pass the strip session straight to the bar')
+        },
+      },
+    }
+    const state = {
+      root: { kind: 'leaf', paneId: 'p1' },
+      panes: { p1: { paneId: 'p1', sessionId: 's1', view: 'chat' } },
+      activePaneId: 'p1',
+    }
+    const t = (key) => zh[key] ?? key
+    const view = PaneStrip({
+      controller,
+      state,
+      rightbarAvailable: true,
+      rightbarExpanded: true,
+      rightbarTools: [{ kind: 'terminal', entryId: 'new', providerId: 'terminal', title: '终端', icon: null }],
+      kit: {},
+      t,
+    })
+    const terminal = elementWhere(view, (node) => node.props?.['data-hkcraft-rightbar-tool'] === 'terminal')
+    terminal.props.onClick()
+    assert.deepEqual(calls, ['terminal'])
+  })
+})
+
 test('the strip hides the rightbar toggle when the service is absent', () => {
   withFakeReact(fakeReact, () => {
     const { button } = stripWithRightbar({ available: false, expanded: false })

@@ -313,9 +313,14 @@ function PaneStrip({
                   'data-hkcraft-rightbar-tool': tool.kind,
                   style: stripRightbarStyle,
                   onClick: () => {
-                    // An explicit tool click must land on the pane the user is
-                    // looking at, even when the shell current still names the
-                    // workspace left a moment ago.
+                    // The terminal starts in the Session's directory. The
+                    // controller picks a Session of the workspace on screen;
+                    // a focused pane left over from another workspace would
+                    // otherwise open every terminal in that one directory.
+                    if (typeof controller.openVisibleTool === 'function') {
+                      controller.openVisibleTool(tool.kind)
+                      return
+                    }
                     controller.revealFocusedSession?.()
                     const focused = state.activePaneId == null ? undefined : state.panes?.[state.activePaneId]
                     controller.panel.openTool(tool.kind, focused?.sessionId)

@@ -1205,6 +1205,76 @@ test('the first restore still drops a finished conversation the catalog no longe
   controller.dispose()
 })
 
+test('a running session from another workspace does not keep this workspace terminal', () => {
+  // The right bar starts the terminal in the focused Session's directory.
+  // A running turn used to stay in the pane after a workspace switch even
+  // when the catalog assigns that Session to the workspace just left, so
+  // every workspace opened its terminal in that one directory.
+  const storage = memoryStorage({
+    w1: openPane(createLayout('w1'), pane('p1', 's1')),
+    w2: openPane(createLayout('w2'), pane('p2', 's1')),
+  })
+  const rows = {
+    s1: { id: 's1', blank: false, running: true, updatedAt: 1, cwd: 'C:\\w1' },
+    s3: { id: 's3', blank: false, running: false, updatedAt: 10, cwd: 'C:\\w2' },
+    s4: { id: 's4', blank: false, running: false, updatedAt: 20, cwd: 'C:\\w2' },
+  }
+  const { controller } = readyController({ storage, rows })
+  const listeners = new Set()
+  let key = 's1'
+  const opened = []
+  const current = {
+    getSnapshot: () => ({ key }),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    setKey(next) {
+      key = next
+      for (const listener of listeners) listener()
+    },
+  }
+  // Sticky: openSession is attempted, but current stays on s1 while that
+  // Session still holds a mainView the shell did not drop.
+  controller.attachWorkspace({
+    openSession(sessionId) {
+      opened.push(sessionId)
+    },
+  })
+  controller.attachSessionSelection(current)
+
+  assert.equal(controller.activate('s1'), true)
+  assert.equal(controller.switchWorkspace('w2'), true)
+
+  assert.equal(controller.getSnapshot().workspaceId, 'w2')
+  assert.equal(controller.getSnapshot().sessionId, 's4')
+  assert.notEqual(controller.getSnapshot().panes.p2.sessionId, 's1')
+
+  current.setKey('s1')
+  assert.equal(controller.getSnapshot().workspaceId, 'w2', 'the unchanged current must not navigate back')
+  assert.equal(controller.getSnapshot().sessionId, 's4')
+
+  const terminals = []
+  controller.panel.attach({
+    isExpanded: () => false,
+    toggleExpanded() {},
+    screen() {
+      return { sessionId: controller.getSnapshot().sessionId, surface: {} }
+    },
+    openTabIn(sessionId, kind) {
+      terminals.push([sessionId, kind, rows[sessionId]?.cwd])
+    },
+    openTab(kind) {
+      terminals.push(['mounted', kind, rows[key]?.cwd])
+    },
+  })
+
+  assert.equal(controller.openVisibleTool('terminal'), true)
+  assert.deepEqual(terminals, [['s4', 'terminal', 'C:\\w2']])
+  assert.equal(opened.includes('s1'), false)
+  controller.dispose()
+})
+
 test('switching workspace does not replace a running conversation that is not started yet', () => {
   const storage = memoryStorage({
     w1: openPane(createLayout('w1'), pane('p1', 's1')),

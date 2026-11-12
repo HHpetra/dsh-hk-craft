@@ -434,6 +434,20 @@ function createPaneController(ctx, options = {}) {
    * @type {string|null}
    */
   let revealMiss = null
+  /**
+   * The shell current this kernel has already decided belongs to another
+   * workspace than the one on screen.
+   *
+   * `uiSession.current` stays on a Session for as long as that Session still
+   * holds any `mainView`. A workspace switch can release this plugin's hold
+   * and still leave the native one, so current keeps naming the workspace the
+   * user just left. The next list notification must not treat that unchanged
+   * id as a navigation: following it focuses that Session's pane and the
+   * terminal opens in its directory again.
+   *
+   * @type {string|null}
+   */
+  let followedCurrent = null
   /** Deferred retry for an explicit reveal that the shell had not applied yet. */
   let revealRetryTimer = null
   /**
@@ -1563,9 +1577,17 @@ function createPaneController(ctx, options = {}) {
    * @returns {boolean} whether the layout changed
    */
   function keepsFocusedSession(catalog, workspaceId, sessionId) {
+    // A session the catalog assigns to another workspace does not belong on
+    // this tree, even while it is running. Keeping it is how every workspace's
+    // terminal starts in that one directory: the right bar opens the tool in
+    // the focused pane's Session, and the shell starts the process in that
+    // Session's directory.
+    const owner = catalog.workspaceOf(sessionId)?.id
+    if (owner !== undefined && owner !== workspaceId) return false
     // A turn that is still running has to stay put even when this snapshot has
     // dropped it from membership. Replacing it is how an in-progress
-    // conversation lands on a finished one.
+    // conversation lands on a finished one. A session with no owner is that
+    // gap; a session owned by another workspace was handled above.
     if (isSessionRunning(sessionId)) return true
     if (catalog.memberIds(workspaceId).includes(sessionId) !== true) return false
     return catalog.session(sessionId)?.archived !== true
@@ -2155,7 +2177,10 @@ function createPaneController(ctx, options = {}) {
         newSessionGuard = null
       }
     }
-    if (focused !== null && focused.sessionId === sessionId) return
+    if (focused !== null && focused.sessionId === sessionId) {
+      followedCurrent = sessionId
+      return
+    }
     if (
       focused !== null &&
       isSessionRunning(focused.sessionId) &&
@@ -2166,21 +2191,89 @@ function createPaneController(ctx, options = {}) {
       revealFocusedPane()
       return
     }
+    const owner = workspaceOf(sessionId)
+    const visible = book.getActiveWorkspaceId()
+    const foreign = owner !== undefined && visible !== null && owner !== visible
+    // The same current that already named the workspace we left is not a new
+    // navigation. Following it again puts that workspace's directory back on
+    // the terminal. Ask the bar to show the pane on screen instead.
+    if (foreign && sessionId === followedCurrent) {
+      revealFocusedPane()
+      return
+    }
     routingDepth += 1
+    let pullBack = false
     try {
       const holder = book.locatePaneIn(sessionId)
       if (holder !== null) {
+        followedCurrent = sessionId
         layoutRuntime.layout.focusPane(holder.paneId)
         return
       }
+      // A session of another workspace has no pane here. Copying it into the
+      // tree on screen would make this workspace's terminal start in that
+      // other directory. Leave the tree and pull the bar back onto it.
+      // `revealFocusedPane` refuses while `routingDepth` is raised, so the
+      // pull happens after this turn releases the guard.
+      if (foreign) {
+        pullBack = true
+        return
+      }
       if (book.activeLayout().activePaneId !== null) {
+        followedCurrent = sessionId
         layoutRuntime.layout.replaceFocusedSession(sessionId)
         return
       }
+      followedCurrent = sessionId
       activateValue(sessionId)
     } finally {
       routingDepth -= 1
     }
+    if (pullBack) revealFocusedPane()
+  }
+
+  /**
+   * Remember a shell current that still names a workspace other than the one
+   * on screen, so a later notification of that same id does not navigate back
+   * to it.
+   */
+  function noteStickyForeignCurrent() {
+    const sessionId = currentSessionId()
+    if (sessionId === null) return
+    const owner = workspaceOf(sessionId)
+    const visible = book.getActiveWorkspaceId()
+    if (owner !== undefined && visible !== null && owner !== visible) followedCurrent = sessionId
+  }
+
+  /**
+   * Open one right-bar tool for the workspace on screen.
+   *
+   * The terminal process starts in the Session's directory. A focused pane
+   * that still holds another workspace's Session — a running turn that used
+   * to be kept across the switch — would therefore open every workspace's
+   * terminal in that one directory. Correct the pane first, and refuse the
+   * open while the pane still names the other workspace.
+   *
+   * @param {string} kind
+   * @returns {boolean}
+   */
+  function openVisibleTool(kind) {
+    if (disposed || typeof kind !== 'string' || kind === '') return false
+    const workspaceId = book.getActiveWorkspaceId()
+    if (typeof workspaceId === 'string' && workspaceId !== '') {
+      const focused = focusedPane()
+      const owner = focused === null ? undefined : workspaceOf(focused.sessionId)
+      if (focused !== null && owner !== undefined && owner !== workspaceId) {
+        focusOrOpenWorkspaceConversation(workspaceId)
+      }
+    }
+    const sessionId = focusedPane()?.sessionId
+    const owner = typeof sessionId === 'string' ? workspaceOf(sessionId) : undefined
+    const visible = book.getActiveWorkspaceId()
+    if (owner !== undefined && visible !== null && owner !== visible) return false
+    noteStickyForeignCurrent()
+    revealFocusedSessionValue()
+    return panel.openTool(kind, sessionId)
   }
 
   /**
@@ -2460,6 +2553,7 @@ function createPaneController(ctx, options = {}) {
       focusOrOpenWorkspaceConversation(workspaceId)
       revealFocusedPane()
       scheduleFocusedReveal()
+      noteStickyForeignCurrent()
       return true
     },
     /**
@@ -2573,6 +2667,16 @@ function createPaneController(ctx, options = {}) {
      */
     revealFocusedSession() {
       return revealFocusedSessionValue()
+    },
+    /**
+     * Open a right-bar tool (the terminal, files, …) for the workspace on
+     * screen. See `openVisibleTool`.
+     *
+     * @param {string} kind
+     * @returns {boolean}
+     */
+    openVisibleTool(kind) {
+      return openVisibleTool(kind)
     },
     /** Plugin unload: release everything. Unregistering the shadow hands `conversation` back. */
     dispose() {
