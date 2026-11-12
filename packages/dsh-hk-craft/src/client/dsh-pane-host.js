@@ -369,6 +369,17 @@ function createPaneController(ctx, options = {}) {
    */
   let bootRestored = false
   /**
+   * Startup still owns the screen.
+   *
+   * Once both catalogs are ready, dsh's `restoreSelection` retains `mainView`
+   * on the selection it saved and publishes that id as current. Both signals
+   * are also how a later user action opens a conversation, so they cannot be
+   * ignored forever. They are ignored only until the microtask after this
+   * cold start settles — the shell's restore runs inside that turn, a click
+   * cannot. An explicit user action releases the window immediately.
+   */
+  let absorbShellRestore = true
+  /**
    * Whether the plugin may move dsh's current session onto the focused pane.
    *
    * Closed from the first activation until the cold-start restore settles, so
@@ -1151,6 +1162,7 @@ function createPaneController(ctx, options = {}) {
     }
     // Creating a conversation is always a user action (/clear, 新会话, a split
     // entry); the right bar may follow it even during the cold-start window.
+    releaseShellRestoreAbsorb()
     openBootRevealGate()
     const sessionId =
       workspaceId === undefined ? await sessions.create({}) : await sessions.create({ workspaceId })
@@ -1824,6 +1836,11 @@ function createPaneController(ctx, options = {}) {
     if (disposed || !registered || !snapshot.active) return false
     if (typeof sessionId !== 'string' || sessionId === '') return false
     if (book.locatePaneIn(sessionId) !== null) return false
+    // The shell's startup restore grows `mainView` on the saved selection.
+    // That selection has already started (or its summary is still blank and
+    // the persisted metadata says so). A 新会话 is a blank session, and it
+    // still lands here during this window.
+    if (absorbShellRestore && !blankArrival(sessionId)) return false
     notePendingMembership(sessionId)
     const stickyId = currentSessionId()
     returnToPanesValue()
@@ -1910,6 +1927,43 @@ function createPaneController(ctx, options = {}) {
   }
 
   /**
+   * Whether `sessionId` is a blank 新会话 rather than a conversation that has
+   * already started.
+   *
+   * Unknown rows are not treated as blank: a restore can notify before the
+   * row is readable, and placing that id would swap out the restored pane.
+   *
+   * @param {string} sessionId
+   * @returns {boolean}
+   */
+  function blankArrival(sessionId) {
+    try {
+      const row = catalogNow().session(sessionId)
+      return row !== undefined && row.started !== true
+    } catch {
+      return false
+    }
+  }
+
+  /** Drop the startup guard. Explicit user actions call this immediately. */
+  function releaseShellRestoreAbsorb() {
+    absorbShellRestore = false
+  }
+
+  /**
+   * Drop the startup guard on the next microtask.
+   *
+   * The shell's `replaceMain` notifies the session list synchronously, inside
+   * the same turn that settles the cold start. A click cannot land before
+   * that microtask, so the saved selection is absorbed and a later open is not.
+   */
+  function scheduleShellRestoreAbsorbRelease() {
+    queueMicrotask(() => {
+      absorbShellRestore = false
+    })
+  }
+
+  /**
    * Let the plugin move dsh's current session, without navigating yet.
    *
    * Explicit user actions (activating a session from the empty state, switching
@@ -1934,7 +1988,9 @@ function createPaneController(ctx, options = {}) {
    * restore lands (both catalogs ready) and from the deadline.
    */
   function markBootRevealSettled() {
-    if (!openBootRevealGate()) return
+    const opened = openBootRevealGate()
+    if (opened) scheduleShellRestoreAbsorbRelease()
+    if (!opened) return
     if (sessionCurrent === null) {
       // No `uiSession.current` to compare against yet. The attach hook replays
       // this once the shell current becomes readable; before that there is
@@ -2023,6 +2079,7 @@ function createPaneController(ctx, options = {}) {
       // start, and must be allowed to retry a pair an earlier automatic attempt
       // gave up on: that earlier attempt may have run before the shell could
       // mount the Session view.
+      releaseShellRestoreAbsorb()
       openBootRevealGate()
       revealMiss = null
     } else if (!bootRevealSettled) return false
@@ -2181,6 +2238,12 @@ function createPaneController(ctx, options = {}) {
       followedCurrent = sessionId
       return
     }
+    if (absorbShellRestore && focused !== null && focused.sessionId !== sessionId) {
+      // The shell just published the selection it saved at startup. Keep the
+      // restored pane and point the bar back at it.
+      revealFocusedPane()
+      return
+    }
     if (
       focused !== null &&
       isSessionRunning(focused.sessionId) &&
@@ -2328,6 +2391,7 @@ function createPaneController(ctx, options = {}) {
       bootOwned = false
       // A user action, not the cold start: its reveal must not wait for the
       // restore to settle, and it mounts every pane at once.
+      releaseShellRestoreAbsorb()
       openBootRevealGate()
       if (mountFocusedOnly) {
         mountFocusedOnly = false
@@ -2548,6 +2612,7 @@ function createPaneController(ctx, options = {}) {
       }
       // An explicit user switch: let the right bar follow this workspace's
       // focused pane from now on, even before both catalogs are ready.
+      releaseShellRestoreAbsorb()
       openBootRevealGate()
       if (catalogNow().complete()) bootSettled = true
       focusOrOpenWorkspaceConversation(workspaceId)

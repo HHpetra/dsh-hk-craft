@@ -450,6 +450,101 @@ test('a plugin reload restores the workspace it was showing, not the shell curre
   second.controller.dispose()
 })
 
+test('a shell restore that retains mainView on an older conversation does not replace the restored pane', () => {
+  // ui-workspace `restoreSelection` calls `replaceMain` once both catalogs are
+  // ready, which retains `mainView` on the saved selection. That count grows
+  // after this plugin has already restored the pane the user was looking at.
+  // The growth is the same signal as 新会话, but the saved selection is a
+  // conversation that has already started, so it must not take the pane.
+  const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'live')) })
+  const rows = {
+    live: { id: 'live', blank: false, updatedAt: 50 },
+    old: { id: 'old', blank: false, updatedAt: 1 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['live', 'old'] }]
+  const { controller, fake } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+  assert.equal(controller.getSnapshot().sessionId, 'live')
+
+  fake.setSessions({
+    live: { id: 'live', blank: false, updatedAt: 50, retainedBy: { mainView: 1 } },
+    old: { id: 'old', blank: false, updatedAt: 1, retainedBy: { mainView: 1 } },
+  })
+
+  assert.equal(controller.getSnapshot().sessionId, 'live')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'live')
+  controller.dispose()
+})
+
+test('a shell restore whose summary is still blank does not replace the restored pane when metadata says it started', () => {
+  // A host reconnect can publish the saved selection as `blank: true` until
+  // `sessionListMetadata` arrives. That stale bit is not a 新会话.
+  const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'live')) })
+  const rows = {
+    live: { id: 'live', blank: false, updatedAt: 50 },
+    old: { id: 'old', blank: true, updatedAt: 1 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['live', 'old'] }]
+  const { controller, fake } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+
+  fake.setSessions({
+    live: { id: 'live', blank: false, updatedAt: 50, retainedBy: { mainView: 1 } },
+    old: {
+      id: 'old',
+      blank: true,
+      updatedAt: 1,
+      retainedBy: { mainView: 1 },
+      projectionValues: { sessionListMetadata: { blank: false, lastPromptAt: 1 } },
+    },
+  })
+
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'live')
+  controller.dispose()
+})
+
+test('a blank 新会话 that gains mainView during startup still replaces the focused pane', () => {
+  const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'live')) })
+  const rows = {
+    live: { id: 'live', blank: false, updatedAt: 50 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['live', 'fresh'] }]
+  const { controller, fake } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+
+  fake.setSessions({
+    live: { id: 'live', blank: false, updatedAt: 50, retainedBy: { mainView: 1 } },
+    fresh: { id: 'fresh', blank: true, updatedAt: 60, retainedBy: { mainView: 1 } },
+  })
+
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'fresh')
+  controller.dispose()
+})
+
+test('after startup settles, opening an existing conversation through mainView still replaces the pane', async () => {
+  const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'live')) })
+  const rows = {
+    live: { id: 'live', blank: false, updatedAt: 50 },
+    old: { id: 'old', blank: false, updatedAt: 1 },
+  }
+  const workspaces = [{ workspaceId: 'w1', sessionIds: ['live', 'old'] }]
+  const { controller, fake } = readyController({ storage, rows, workspaces })
+
+  assert.equal(controller.activate(), true)
+  await new Promise((resolve) => setImmediate(resolve))
+
+  fake.setSessions({
+    live: { id: 'live', blank: false, updatedAt: 50, retainedBy: { mainView: 1 } },
+    old: { id: 'old', blank: false, updatedAt: 1, retainedBy: { mainView: 1 } },
+  })
+
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 'old')
+  controller.dispose()
+})
+
 test('a plugin reload keeps a restored blank conversation instead of opening older history', () => {
   const storage = memoryStorage({ w1: openPane(createLayout('w1'), pane('p1', 'draft')) })
   assert.equal(writeActiveWorkspace(storage, 'w1'), true)
@@ -1689,6 +1784,22 @@ test('the cold start does not move the shell current while the catalogs are stil
   assert.equal(boot.controller.activate(), true)
   assert.equal(boot.controller.getSnapshot().sessionId, 's1', 'the restore still shows its own pane')
   assert.deepEqual(boot.shell.current.opened, [], 'navigation waits for the restore to settle')
+  boot.controller.dispose()
+})
+
+test('the shell current published at startup does not replace the restored pane', () => {
+  // Catalogs are already ready, so the cold start settles inside `activate`.
+  // dsh then points current at the selection it saved, which is an older
+  // conversation than the pane. That notification is not a user navigation.
+  const boot = bootWithCurrent({ catalogPhase: 'ready' })
+
+  assert.equal(boot.controller.activate(), true)
+  assert.equal(boot.controller.getSnapshot().sessionId, 's1')
+
+  boot.shell.current.setKey('native-old')
+
+  assert.equal(boot.controller.getSnapshot().sessionId, 's1')
+  assert.equal(boot.controller.getSnapshot().panes.p1.sessionId, 's1')
   boot.controller.dispose()
 })
 
