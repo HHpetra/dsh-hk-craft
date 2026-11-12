@@ -365,6 +365,49 @@ test('pressing an already focused pane reveals its session before the click', ()
   })
 })
 
+test('pressing a pane close control closes that pane before focus can move', () => {
+  withFakeReact(fakeReact, () => {
+    const calls = []
+    const controller = headerController({ calls })
+    controller.layout.focusPane = (paneId) => calls.push(['focus', paneId])
+    controller.revealFocusedSession = () => {
+      calls.push(['reveal'])
+      return true
+    }
+    const frame = PaneFrame({
+      controller,
+      pane: pane('p2', 's2'),
+      rect: { x: 0.5, y: 0, width: 0.5, height: 1 },
+      focused: false,
+      kit: { SessionProvider: () => null, renderSlot: () => null },
+      t: (key) => key,
+    })
+    const event = {
+      target: {
+        closest(selector) {
+          return selector === '[data-hkcraft-pane-close]' ? {} : null
+        },
+      },
+      preventDefault() {
+        calls.push(['prevent'])
+      },
+      stopPropagation() {
+        calls.push(['stop'])
+      },
+    }
+
+    frame.props.onPointerDownCapture(event)
+
+    // A running sibling steals focus on pointerdown and the later click never
+    // lands on this button. The press itself has to close the pane the user hit.
+    assert.deepEqual(calls, [
+      ['prevent'],
+      ['stop'],
+      ['close', 'p2'],
+    ])
+  })
+})
+
 test('focusing a strip tab focuses that pane', () => {
   withFakeReact(fakeReact, () => {
     const calls = []
@@ -403,6 +446,50 @@ test('focusing a strip tab focuses that pane', () => {
     const tab = elementWhere(view, (node) => node.props?.['data-hkcraft-strip-item'] === 'p2')
     tab.props.onFocus()
     assert.deepEqual(calls, ['p2'])
+  })
+})
+
+test('pressing a strip close control closes that pane and does not focus it', () => {
+  withFakeReact(fakeReact, () => {
+    const calls = []
+    const controller = {
+      close: { request: (paneId) => calls.push(['close', paneId]) },
+      budget: { newPane: () => {} },
+      layout: {
+        focusPane: (paneId) => calls.push(['focus', paneId]),
+        swapPanes: () => {},
+      },
+    }
+    const state = {
+      root: {
+        kind: 'split',
+        dir: 'row',
+        ratio: 0.5,
+        a: { kind: 'leaf', paneId: 'p1' },
+        b: { kind: 'leaf', paneId: 'p2' },
+      },
+      panes: {
+        p1: { paneId: 'p1', sessionId: 's1', view: 'chat' },
+        p2: { paneId: 'p2', sessionId: 's2', view: 'chat' },
+      },
+      activePaneId: 'p1',
+    }
+    const view = PaneStrip({
+      controller,
+      state,
+      maxPanes: 4,
+      kit: {
+        useSessions: (selector) => selector({ byId: { s1: { title: 'One' }, s2: { title: 'Two' } } }),
+        useSessionStatus: (selector) => selector({}),
+      },
+      t: (key) => key,
+    })
+    const button = elementWhere(view, (node) => node.props?.['data-hkcraft-strip-close'] === 'p2')
+    button.props.onPointerDown({
+      preventDefault() {},
+      stopPropagation() {},
+    })
+    assert.deepEqual(calls, [['close', 'p2']])
   })
 })
 

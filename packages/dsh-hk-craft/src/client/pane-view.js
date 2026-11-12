@@ -76,8 +76,10 @@ const PANE_CONTENT_OCCURRENCE = 'embedded'
  * Only the visible workspace mounts this, so a hidden tree cannot answer a
  * chord. The bindings come from `pane-shortcuts.js`, which is also the source
  * of every tooltip/hint, so the UI can never advertise a different chord.
- * Shell modal layers own the keyboard while they are open — the shell's own
- * shortcut service blocks background commands the same way.
+ * A real modal (`aria-modal`) owns the keyboard while it is open — the shell's
+ * own shortcut service blocks background commands the same way. The running-pane
+ * confirmation is not one of those: it must not swallow the chord that closes
+ * a different pane.
  *
  * `Mod+N` is not in this table: it is identical to `/clear` (spec D8) and is
  * bound by `commands.js` while split mode is active, so it also works when

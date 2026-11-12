@@ -236,6 +236,14 @@ function PaneStrip({
                 ? 'color-mix(in srgb, currentColor 12%, transparent)'
                 : undefined,
           },
+          onPointerDown: (event) => {
+            // Same reason as the pane header: commit the close on the press.
+            // A later click is retargeted once a running sibling takes focus
+            // back, and this entry would stay open.
+            event.preventDefault?.()
+            event.stopPropagation?.()
+            closeEntry(entry)
+          },
           onClick: (event) => {
             event.stopPropagation()
             closeEntry(entry)

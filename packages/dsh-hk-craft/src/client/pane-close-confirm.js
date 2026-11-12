@@ -9,9 +9,14 @@
  * Three ways out, because the interrupt is a request the Host may refuse: close
  * after a successful interrupt, dismiss without touching the session, or — once
  * the interrupt has failed and `closeError` is set — close the pane anyway and
- * let the turn keep running in the background (ADR-0021). Escape and a click on
- * the backdrop are the dismiss route, so the full-screen overlay can never trap
- * the user on its own.
+ * let the turn keep running in the background (ADR-0021).
+ *
+ * The dialog is not a modal mask. A full-screen overlay, even a dismissable
+ * one, sits on top of every other pane for as long as it is open — including
+ * the whole interrupt wait, while Cancel used to be disabled — so a running
+ * turn made the other sessions unclosable. The card floats and does not take
+ * pointer events outside itself. Escape still dismisses, including while the
+ * interrupt is in flight.
  */
 
 const { react } = require('./react-and-translator.js')
@@ -22,7 +27,6 @@ const {
   closeActionsStyle,
   closeDialogStyle,
   closeErrorStyle,
-  closeOverlayStyle,
   closeTitleStyle,
 } = require('./pane-styles.js')
 
@@ -43,8 +47,8 @@ function PaneCloseConfirm({ controller, t }) {
   const cancel = () => controller.close.cancel()
   const failed = state.closeError !== null && state.closeError !== undefined
 
-  // Escape dismisses; the flow itself refuses while the interrupt is in flight,
-  // and the bounded wait in `pane-close.js` always hands control back.
+  // Escape dismisses, including while the interrupt is still in flight. The
+  // close flow drops the staged pane, so a late Host answer does not close it.
   React.useEffect(() => {
     if (pending === null || pending === undefined) return undefined
     if (typeof document === 'undefined') return undefined
@@ -73,23 +77,23 @@ function PaneCloseConfirm({ controller, t }) {
   }
   const force = () => controller.close.force()
 
-  const onBackdrop = (event) => {
-    // Only the backdrop itself, never a bubbled click from the dialog body.
-    if (event?.target !== event?.currentTarget) return
-    cancel()
-  }
-
   return h(
     'div',
-    { style: closeOverlayStyle, onClick: onBackdrop },
+    {
+      // A dock, not a mask: the box is only as large as the card, and the
+      // wrapper itself ignores hits. Close buttons on the other panes stay
+      // under the pointer while this confirmation is up.
+      'data-hkcraft-pane-close-dock': '',
+      style: closeDockStyle,
+    },
     h(
       'div',
       {
         role: 'dialog',
-        'aria-modal': 'true',
+        'aria-modal': 'false',
         'aria-label': t('pane.close.confirm.title'),
         'data-hkcraft-dialog': 'pane-close',
-        style: closeDialogStyle,
+        style: { ...closeDialogStyle, pointerEvents: 'auto', width: '100%' },
         onClick: (event) => event?.stopPropagation?.(),
       },
       pending.title === undefined ? null : h('div', { style: closeTitleStyle }, pending.title),
@@ -125,7 +129,6 @@ function PaneCloseConfirm({ controller, t }) {
             ref: cancelRef,
             className: 'hk-button hk-button--quiet',
             style: buttonStyle,
-            disabled: state.closeBusy,
             onClick: cancel,
           },
           t('pane.close.confirm.cancel'),
@@ -159,6 +162,22 @@ function PaneCloseConfirm({ controller, t }) {
       ),
     ),
   )
+}
+
+/**
+ * The confirmation floats at the bottom of the viewport.
+ *
+ * Top-anchored cards cover pane headers, which is where the other sessions'
+ * close buttons live. The wrapper does not receive hits; only the card does.
+ */
+const closeDockStyle = {
+  position: 'fixed',
+  zIndex: 2147483000,
+  left: '50%',
+  bottom: 24,
+  transform: 'translateX(-50%)',
+  width: 'min(440px, calc(100vw - 32px))',
+  pointerEvents: 'none',
 }
 
 module.exports = { PaneCloseConfirm }

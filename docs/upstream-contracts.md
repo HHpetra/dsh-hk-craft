@@ -292,14 +292,17 @@ pane is released (spec D4). This is the same public route the stop button uses;
 releasing a client reference is not a substitute.
 
 **Refusals must not trap.** A refused or unanswered cancel used to keep the pane
-and the full-screen confirmation overlay up forever, so every other pane became
-unclosable. The close flow now prefers the object layer, classifies the answer,
+and a full-screen confirmation overlay up, so every other pane became
+unclosable. The close flow prefers the object layer, classifies the answer,
 and treats the "nothing left to stop" codes (`session/not-running`,
 `session/not-found`, and the `not attached` message) as a successful close. Any
 other refusal — and a cancel that does not answer within 5 s — clears the busy
 state, reports the reason, and offers `close anyway`, which releases the pane
-without stopping the turn (ADR-0021). Escape and a backdrop click dismiss the
-dialog as well.
+without stopping the turn (ADR-0021). The confirmation is a floating card, not
+a modal mask: it does not take pointer events outside itself, and it is not
+`aria-modal`, so the other panes' close controls keep working while it is
+open. Escape dismisses it, including while the interrupt is still in flight;
+that late answer then does not close the pane.
 
 **Verified:** stop-button path and the RPC were read in ui-conversation and the
 session controller, and the Host's cancel/refusal paths were read in

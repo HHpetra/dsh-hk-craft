@@ -294,19 +294,28 @@ test('a pane that went inactive during the interrupt is not closed from a hidden
   flow.dispose()
 })
 
-test('cancel dismisses the dialog but refuses while the interrupt is in flight', async () => {
-  const { flow } = withFlow({
+test('cancel dismisses the dialog while the interrupt is in flight, and the late answer closes nothing', async () => {
+  let finish = () => {}
+  const { flow, calls } = withFlow({
     running: true,
-    sessions: sessionsWith({ outcome: () => new Promise(() => {}) }),
+    sessions: sessionsWith({
+      outcome: () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ok: true })
+        }),
+    }),
   })
   flow.request('p1')
+  const pending = flow.confirm()
+  assert.equal(flow.snapshotPatch().closeBusy, true)
+
   assert.equal(flow.cancel(), true)
   assert.equal(flow.snapshotPatch().pendingClose, null)
+  assert.equal(flow.snapshotPatch().closeBusy, false)
 
-  flow.request('p1')
-  void flow.confirm()
-  assert.equal(flow.snapshotPatch().closeBusy, true)
-  assert.equal(flow.cancel(), false)
+  finish()
+  assert.equal(await pending, false)
+  assert.deepEqual(calls.close, [])
   flow.dispose()
 })
 

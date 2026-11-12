@@ -111,6 +111,19 @@ function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, restor
     // shell current can name another session without a layout change.
     controller.revealFocusedSession?.()
   }
+  const onPointerDownCapture = (event) => {
+    // The press has to close this pane before focus moves. A running sibling
+    // wins focus back on this same pointerdown (`syncCurrent`), the button is
+    // no longer the mouseup target, and the click never arrives — so every
+    // other pane looks unclosable while one turn is still running.
+    if (!pressedCloseControl(event?.target)) {
+      focus()
+      return
+    }
+    event.preventDefault?.()
+    event.stopPropagation?.()
+    close()
+  }
 
   const frameStyle = {
     position: 'absolute',
@@ -237,12 +250,26 @@ function PaneFrame({ controller, pane, rect, focused, bodyAllowed = true, restor
       style: frameStyle,
       'data-hkcraft-pane': pane.paneId,
       'data-hkcraft-pane-active': focused ? 'true' : 'false',
-      onPointerDownCapture: focus,
+      onPointerDownCapture,
       onFocusCapture: focus,
     },
     header,
     h('div', { style: bodyStyle }, body),
   )
+}
+
+/**
+ * Whether this pointerdown landed on a pane's close control.
+ *
+ * The target may be the button or the text node inside it. Either one has to
+ * close that pane instead of focusing it.
+ *
+ * @param {any} target
+ * @returns {boolean}
+ */
+function pressedCloseControl(target) {
+  const node = target?.nodeType === 3 ? target.parentElement : target
+  return typeof node?.closest === 'function' && node.closest('[data-hkcraft-pane-close]') !== null
 }
 
 module.exports = { PaneFrame, PaneViewToggle }

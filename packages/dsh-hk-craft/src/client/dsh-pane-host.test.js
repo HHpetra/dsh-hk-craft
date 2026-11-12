@@ -1201,6 +1201,33 @@ test('focusing another pane releases the old main view and takes the new one', a
   controller.dispose()
 })
 
+test('an idle pane closes while a sibling session is still running', async () => {
+  const { fake, controller } = await readyController({
+    created: ['s2'],
+    rows: {
+      s1: { id: 's1', running: true, blank: false, updatedAt: 100 },
+      s2: { id: 's2', running: false, blank: false, updatedAt: 1 },
+    },
+    workspaces: [{ workspaceId: 'w1', sessionIds: ['s1', 's2'] }],
+  })
+  await controller.budget.split('p1', 'row')
+  // The new pane is focused. The running turn is the other one.
+  assert.equal(controller.getSnapshot().activePaneId, 'p2')
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+
+  assert.equal(controller.close.request('p2'), true)
+
+  assert.equal(controller.getSnapshot().panes.p2, undefined)
+  assert.equal(controller.getSnapshot().panes.p1.sessionId, 's1')
+  assert.equal(controller.getSnapshot().pendingClose, null)
+  assert.deepEqual(fake.calls.interrupt, [])
+
+  // The running pane still asks before it closes; the idle one did not.
+  assert.equal(controller.close.request('p1'), false)
+  assert.equal(controller.getSnapshot().pendingClose.paneId, 'p1')
+  controller.dispose()
+})
+
 test('closing a pane releases both of its references and promotes the sibling', async () => {
   const { fake, controller } = await readyController({ created: ['s2'] })
   await controller.budget.split('p1', 'row')

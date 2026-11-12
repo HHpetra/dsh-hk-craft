@@ -364,10 +364,17 @@ function createCloseFlow(deps) {
     return closed
   }
 
-  /** Dismiss the staged close without changing the session or the layout. */
+  /**
+   * Dismiss the staged close without changing the session or the layout.
+   *
+   * This stays available while the interrupt is in flight. A late Host answer
+   * then sees that the staged pane is gone and does not close it; refusing the
+   * dismiss until the answer arrived left the confirmation up for the whole
+   * wait, and every other pane's close control sat behind it.
+   */
   function cancel() {
-    if (isDisposed() || pendingClose === null || closeBusy) return false
-    write({ pendingClose: null, closeError: null })
+    if (isDisposed() || pendingClose === null) return false
+    write({ pendingClose: null, closeBusy: false, closeError: null })
     return true
   }
 
