@@ -13,7 +13,7 @@ const {
   derivePanePhase,
   createPaneController,
 } = require('./dsh-pane-host.js')
-const { interruptSession } = require('./pane-close.js')
+const { interruptSession, nothingToInterrupt } = require('./pane-close.js')
 const { PANE_SETTINGS_KEY, PANE_SETTINGS_VERSION } = require('./pane-budget.js')
 const { createLayout, openPane, split: splitLayout, resize: resizeLayout, leaves } = require('./layout-tree.js')
 const { encodeLayout, layoutKey } = require('./layout-store.js')
@@ -66,7 +66,35 @@ test('probe stays optimistic when the shell exposes no snapshot capability', () 
   assert.equal(probe.status, 'unknown')
 })
 
-test('interruptSession uses the same scoped conversation.cancel as the stop button', async () => {
+test('interruptSession prefers the session binding, whose answer is structured', async () => {
+  const calls = []
+  const sessions = {
+    binding(sessionId) {
+      calls.push(['binding', sessionId])
+      return {
+        session: {
+          cancel() {
+            calls.push(['cancel'])
+            // The object layer answers `{ ok, value }` instead of throwing, and it
+            // already routes a subagent child through its own interrupt RPC.
+            return Promise.resolve({ ok: true, value: { accepted: true } })
+          },
+        },
+      }
+    },
+    scope() {
+      throw new Error('the binding must win when both routes exist')
+    },
+  }
+
+  assert.deepEqual(await interruptSession(sessions, 's1'), { ok: true, code: null, message: null })
+  assert.deepEqual(calls, [
+    ['binding', 's1'],
+    ['cancel'],
+  ])
+})
+
+test('interruptSession falls back to the scoped conversation.cancel the stop button uses', async () => {
   const calls = []
   const sessions = {
     scope(sessionId) {
@@ -85,60 +113,65 @@ test('interruptSession uses the same scoped conversation.cancel as the stop butt
     },
   }
 
-  await interruptSession(sessions, 's1')
+  assert.deepEqual(await interruptSession(sessions, 's1'), { ok: true, code: null, message: null })
   assert.deepEqual(calls, [['scope', 's1'], ['cancel']])
 })
 
-test('interruptSession falls back to the session cancel binding', async () => {
-  const calls = []
+test('interruptSession reports a Host refusal instead of throwing', async () => {
   const sessions = {
-    scope: () => ({ get: () => undefined }),
-    binding(sessionId) {
-      return {
-        session: {
-          cancel() {
-            calls.push(sessionId)
-            return Promise.resolve({ ok: true })
-          },
-        },
-      }
-    },
+    binding: () => ({
+      session: {
+        cancel: () =>
+          Promise.resolve({
+            ok: false,
+            error: { code: 'session/not-found', message: 'session "s1" not found (not attached)' },
+          }),
+      },
+    }),
   }
 
-  await interruptSession(sessions, 's1')
-  assert.deepEqual(calls, ['s1'])
+  assert.deepEqual(await interruptSession(sessions, 's1'), {
+    ok: false,
+    code: 'session/not-found',
+    message: 'session "s1" not found (not attached)',
+  })
 })
 
-test('interruptSession turns a scoped cancel failure into a rejection', async () => {
+test('interruptSession reads the refusal code out of a thrown action error', async () => {
+  const sessions = {
+    scope: () => ({
+      get: () => ({
+        cancel: () =>
+          Promise.reject(new Error('conversation.cancel failed: session/agent-busy: owned by subagent routing')),
+      }),
+    }),
+  }
+
+  const outcome = await interruptSession(sessions, 's1')
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.code, 'session/agent-busy')
+  assert.match(outcome.message, /owned by subagent routing/)
+})
+
+test('interruptSession reports a missing public route instead of silently succeeding', async () => {
+  const outcome = await interruptSession({}, 's1')
+
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.message, /public interrupt/)
+})
+
+test('a scoped refusal of session/not-running counts as nothing left to interrupt', async () => {
   const sessions = {
     scope: () => ({
       get: () => ({
         cancel: () => Promise.resolve({ ok: false, error: { code: 'session/not-running', message: 'no turn' } }),
       }),
     }),
-    binding() {
-      throw new Error('binding must not run when the scoped route exists')
-    },
   }
 
-  await assert.rejects(() => interruptSession(sessions, 's1'), /no turn/)
-})
-
-test('interruptSession turns a binding failure result into a rejection', async () => {
-  const sessions = {
-    scope: () => ({ get: () => undefined }),
-    binding: () => ({
-      session: {
-        cancel: () => Promise.resolve({ ok: false, error: { code: 'session/not-running', message: 'no turn' } }),
-      },
-    }),
-  }
-
-  await assert.rejects(() => interruptSession(sessions, 's1'), /no turn/)
-})
-
-test('interruptSession reports a missing public route instead of silently succeeding', async () => {
-  await assert.rejects(() => interruptSession({}, 's1'), /public interrupt/)
+  const outcome = await interruptSession(sessions, 's1')
+  assert.equal(outcome.code, 'session/not-running')
+  assert.equal(nothingToInterrupt(outcome), true)
 })
 
 test('pane phase follows the native Conversation phase derivation', () => {
@@ -262,6 +295,21 @@ function fakeControllerCtx({
       for (const listener of [...listeners]) listener()
     },
   }
+  /**
+   * One cancel answer, shared by the two public routes so a test states only what
+   * the Host does. `deferredInterrupts` hands the test the settle callbacks.
+   */
+  const answerInterrupt = () => {
+    if (deferredInterrupts !== null) {
+      return new Promise((resolve, reject) => {
+        deferredInterrupts.push({ resolve, reject })
+      })
+    }
+    if (interruptFailure) {
+      return Promise.resolve({ ok: false, error: { code: 'session/agent-busy', message: 'interrupt failed' } })
+    }
+    return Promise.resolve({ ok: true })
+  }
   const sessions = {
     list: {
       getSnapshot: () => ({ byId: rows }),
@@ -299,13 +347,7 @@ function fakeControllerCtx({
           return {
             cancel() {
               calls.interrupt.push({ sessionId, route: 'conversation' })
-              if (deferredInterrupts !== null) {
-                return new Promise((resolve, reject) => {
-                  deferredInterrupts.push({ resolve, reject })
-                })
-              }
-              if (interruptFailure) return Promise.reject(new Error('interrupt failed'))
-              return Promise.resolve({ ok: true })
+              return answerInterrupt()
             },
           }
         },
@@ -316,8 +358,7 @@ function fakeControllerCtx({
         session: {
           cancel() {
             calls.interrupt.push({ sessionId, route: 'binding' })
-            if (interruptFailure) return Promise.resolve({ ok: false, error: { message: 'interrupt failed' } })
-            return Promise.resolve({ ok: true })
+            return answerInterrupt()
           },
         },
       }
@@ -1257,7 +1298,7 @@ test('confirming interrupts the turn once, then releases the pane and keeps the 
   assert.equal(await controller.close.confirm(), true)
 
   const state = controller.getSnapshot()
-  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'binding' }])
   assert.equal(state.pendingClose, null)
   assert.equal(state.closeBusy, false)
   assert.equal(state.root, null)
@@ -1268,7 +1309,7 @@ test('confirming interrupts the turn once, then releases the pane and keeps the 
   // is still in the host list snapshot.
   assert.equal(fake.rows.s1.running, true)
   assert.equal(await controller.close.confirm(), false)
-  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'binding' }])
   controller.dispose()
 })
 
@@ -1283,7 +1324,7 @@ test('a second confirm while the interrupt is in flight is ignored', async () =>
   const first = controller.close.confirm()
   assert.equal(controller.getSnapshot().closeBusy, true)
   assert.equal(await controller.close.confirm(), false)
-  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'conversation' }])
+  assert.deepEqual(fake.calls.interrupt, [{ sessionId: 's1', route: 'binding' }])
 
   deferred[0].resolve({ ok: true })
   assert.equal(await first, true)
@@ -1315,9 +1356,51 @@ test('a failed interrupt keeps the pane mounted, its references and the dialog e
   assert.equal(await controller.close.confirm(), true)
   assert.equal(controller.getSnapshot().root, null)
   assert.deepEqual(fake.calls.interrupt, [
-    { sessionId: 's1', route: 'conversation' },
-    { sessionId: 's1', route: 'conversation' },
+    { sessionId: 's1', route: 'binding' },
+    { sessionId: 's1', route: 'binding' },
   ])
+  controller.dispose()
+})
+
+test('a stale running bit whose Host has no attached session still closes the pane', async () => {
+  // `session/not-found` is the Host's "no Agent is attached" answer: there is no
+  // turn left to stop, so the close is not a failed interrupt.
+  const fake = fakeControllerCtx({ factorySnapshot: FACTORY_PRESENT, rows: runningRows() })
+  fake.ctx.sessions.binding = () => ({
+    session: {
+      cancel: () =>
+        Promise.resolve({
+          ok: false,
+          error: { code: 'session/not-found', message: 'session "s1" not found (not attached)' },
+        }),
+    },
+  })
+  const controller = createPaneController(fake.ctx, { nextPaneId: () => 'p1' })
+  controller.markRegistered()
+  controller.activate('s1')
+  assert.equal(controller.close.request('p1'), false)
+
+  assert.equal(await controller.close.confirm(), true)
+  assert.equal(controller.getSnapshot().root, null)
+  assert.equal(controller.getSnapshot().closeError, null)
+  assert.equal(livePaneRefs(fake).length, 0)
+  controller.dispose()
+})
+
+test('force closes a pane whose interrupt the Host refuses, leaving the turn to the sidebar', async () => {
+  const { fake, controller } = await readyController({
+    rows: runningRows(),
+    interruptFails: true,
+  })
+  controller.close.request('p1')
+  assert.equal(await controller.close.confirm(), false)
+  assert.match(controller.getSnapshot().closeError, /interrupt failed/)
+
+  assert.equal(controller.close.force(), true)
+  assert.equal(controller.getSnapshot().root, null)
+  assert.equal(controller.getSnapshot().closeBusy, false)
+  assert.equal(controller.getSnapshot().closeError, null)
+  assert.equal(livePaneRefs(fake).length, 0)
   controller.dispose()
 })
 

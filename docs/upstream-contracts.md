@@ -276,19 +276,35 @@ the bar already shows that session does not call `openSession`.
 **Provider:** `@deepseek-ai/dsh-api-session-controller` (`sessions.scope`) and
 `@deepseek-ai/dsh-client-ui-conversation` (the stop button).
 
-**Semantics:** the shell's stop action resolves the session-scoped face as
-`sessions.scope(id).get("conversation")` and calls `cancel()` on it. That
-`cancel()` forwards to `sessions.binding(id).session.cancel()`, the Host RPC
-`remote.session.cancel({ sessionId })`. The binding form reports failure as
-`{ ok: false, error }` instead of throwing.
+**Semantics:** `sessions.binding(id).session.cancel()` is the object-layer call and
+answers with the RPC envelope `{ ok, value }` / `{ ok: false, error }` instead of
+throwing; it already routes a subagent child through
+`remote.subagents.interruptByParent`. `sessions.scope(id).get("conversation")`
+(resolved by the shell's stop button) is the action-layer equivalent: its
+`cancel()` forwards to that same method and **throws** on `{ ok: false }`. The
+Host's `session.cancel` only refuses with `session/not-found` (no attached Agent,
+so no live turn), `session/agent-busy` (the identity is owned by subagent
+routing) or a transport error; `agent.cancel()` itself returns immediately and
+does not wait for the turn to unwind.
 
 **Why we rely on it:** closing a running pane must stop the turn before the
 pane is released (spec D4). This is the same public route the stop button uses;
 releasing a client reference is not a substitute.
 
+**Refusals must not trap.** A refused or unanswered cancel used to keep the pane
+and the full-screen confirmation overlay up forever, so every other pane became
+unclosable. The close flow now prefers the object layer, classifies the answer,
+and treats the "nothing left to stop" codes (`session/not-running`,
+`session/not-found`, and the `not attached` message) as a successful close. Any
+other refusal — and a cancel that does not answer within 5 s — clears the busy
+state, reports the reason, and offers `close anyway`, which releases the pane
+without stopping the turn (ADR-0021). Escape and a backdrop click dismiss the
+dialog as well.
+
 **Verified:** stop-button path and the RPC were read in ui-conversation and the
-session controller. Runtime probe: close a streaming pane, confirm the host
-turn stops and history is kept.
+session controller, and the Host's cancel/refusal paths were read in
+`dsh-api-session-controller` and `dsh-agent-loop` (0.2.2-rc.1). Runtime probe:
+close a streaming pane, confirm the host turn stops and history is kept.
 
 ---
 

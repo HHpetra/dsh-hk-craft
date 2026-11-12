@@ -19,6 +19,9 @@ const zh = {
   'pane.close.confirm.action': '中断并关闭',
   'pane.close.confirm.busy': '正在中断…',
   'pane.close.confirm.error': '中断失败',
+  'pane.close.confirm.force': '仍然关闭',
+  'pane.close.confirm.force.hint':
+    '会话可能仍在后台运行；关掉窗格不会停止它，之后可在侧栏里停止这段会话。',
   'pane.splitRight': '向右分割',
   'pane.view.title': '切换此窗格的视图',
   'pane.view.chat': '对话',
@@ -180,6 +183,9 @@ const en = {
   'pane.close.confirm.action': 'Interrupt and close',
   'pane.close.confirm.busy': 'Interrupting…',
   'pane.close.confirm.error': 'Could not interrupt',
+  'pane.close.confirm.force': 'Close anyway',
+  'pane.close.confirm.force.hint':
+    'The conversation may keep running in the background; closing the pane does not stop it. You can stop it from the sidebar.',
   'pane.splitRight': 'Split right',
   'pane.view.title': 'Switch this pane\'s view',
   'pane.view.chat': 'Chat',

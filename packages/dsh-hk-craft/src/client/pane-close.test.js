@@ -6,28 +6,65 @@ const assert = require('node:assert/strict')
 const { createCloseFlow } = require('./pane-close.js')
 
 /**
+ * A session face whose binding reports what the test wants.
+ *
+ * `outcome` is the `session.cancel()` answer: `{ ok: true }`, `{ ok: false, error }`,
+ * a promise, or a function returning one.
+ */
+function sessionsWith({ outcome = { ok: true }, failWith = null } = {}) {
+  const calls = []
+  const answer = () => {
+    if (failWith !== null) return Promise.reject(failWith)
+    return Promise.resolve(typeof outcome === 'function' ? outcome() : outcome)
+  }
+  return {
+    calls,
+    binding(sessionId) {
+      calls.push(['binding', sessionId])
+      return {
+        session: {
+          cancel() {
+            calls.push(['cancel', sessionId])
+            return answer()
+          },
+        },
+      }
+    },
+    scope() {
+      throw new Error('the binding route must be preferred when it exists')
+    },
+  }
+}
+
+/**
  * The close holder with every callback it takes, so each test only states the
  * part it is about.
  */
-function withFlow({ running = false, close = true, sessions, active = true } = {}) {
+function withFlow({ running = false, close = true, sessions, interruptTimeoutMs } = {}) {
   const patches = []
   const calls = { close: [], interrupt: [] }
   const panes = new Map([
     ['p1', { paneId: 'p1', sessionId: 's1', view: 'chat' }],
     ['p2', { paneId: 'p2', sessionId: 's2', view: 'chat' }],
   ])
-  const flow = createCloseFlow({
-    sessions: sessions ?? {
-      scope: (sessionId) => ({
+  const face = sessions ?? sessionsWith()
+  // Keep the routes a test cares about visible without restating every method.
+  const sessionFace = {
+    binding: face.binding,
+    scope:
+      face.scope ??
+      ((sessionId) => ({
         get: () => ({
           cancel() {
             calls.interrupt.push(sessionId)
             return Promise.resolve({ ok: true })
           },
         }),
-      }),
-    },
-    getSnapshot: () => ({ active }),
+      })),
+  }
+  const flow = createCloseFlow({
+    sessions: sessionFace,
+    getSnapshot: () => ({ active: true }),
     publish: (patch) => patches.push(patch ?? {}),
     isDisposed: () => false,
     locatePane: (paneId) => (panes.has(paneId) ? { workspaceId: 'w1', pane: panes.get(paneId) } : null),
@@ -43,8 +80,9 @@ function withFlow({ running = false, close = true, sessions, active = true } = {
       calls.close.push(paneId)
       return close
     },
+    ...(interruptTimeoutMs === undefined ? {} : { interruptTimeoutMs }),
   })
-  return { flow, patches, calls }
+  return { flow, patches, calls, face }
 }
 
 test('an idle pane closes immediately and leaves nothing staged', () => {
@@ -95,35 +133,128 @@ test('bySession finds the pane that holds the conversation', () => {
   flow.dispose()
 })
 
-test('confirm interrupts first, then closes the staged pane', async () => {
-  const { flow, calls } = withFlow({ running: true })
+test('confirm stops the turn through the session binding, then closes the pane', async () => {
+  const { flow, calls, face } = withFlow({ running: true })
   flow.request('p1')
 
   assert.equal(await flow.confirm(), true)
-  assert.deepEqual(calls.interrupt, ['s1'])
+  assert.deepEqual(face.calls, [
+    ['binding', 's1'],
+    ['cancel', 's1'],
+  ])
   assert.deepEqual(calls.close, ['p1'])
   assert.deepEqual(flow.snapshotPatch(), { pendingClose: null, closeBusy: false, closeError: null })
   flow.dispose()
 })
 
-test('a failed interrupt keeps the pane mounted and reports the reason', async () => {
+test('without a binding the scoped conversation face is the interrupt route', async () => {
+  const interrupted = []
   const { flow, calls } = withFlow({
     running: true,
     sessions: {
-      scope: () => ({
+      scope: (sessionId) => ({
         get: () => ({
-          cancel: () => Promise.reject(new Error('no turn to cancel')),
+          cancel() {
+            interrupted.push(sessionId)
+            return Promise.resolve({ ok: true })
+          },
         }),
       }),
     },
   })
   flow.request('p1')
 
+  assert.equal(await flow.confirm(), true)
+  assert.deepEqual(interrupted, ['s1'])
+  assert.deepEqual(calls.close, ['p1'])
+  flow.dispose()
+})
+
+test('a Host that reports no attached session closes the pane instead of trapping it', async () => {
+  // The client can hold a stale `running` bit; the Host answers that no Agent is
+  // attached, so there is no turn left to stop.
+  const { flow, calls } = withFlow({
+    running: true,
+    sessions: sessionsWith({
+      outcome: { ok: false, error: { code: 'session/not-found', message: 'session "s1" not found (not attached)' } },
+    }),
+  })
+  flow.request('p1')
+
+  assert.equal(await flow.confirm(), true)
+  assert.deepEqual(calls.close, ['p1'])
+  assert.deepEqual(flow.snapshotPatch(), { pendingClose: null, closeBusy: false, closeError: null })
+  flow.dispose()
+})
+
+test('a refused interrupt keeps the pane and reports the reason', async () => {
+  const { flow, calls } = withFlow({
+    running: true,
+    sessions: sessionsWith({
+      outcome: { ok: false, error: { code: 'session/agent-busy', message: 'owned by subagent routing' } },
+    }),
+  })
+  flow.request('p1')
+
   assert.equal(await flow.confirm(), false)
   assert.deepEqual(calls.close, [])
-  assert.match(flow.snapshotPatch().closeError, /no turn to cancel/)
-  // The dialog stays open with the same pane, so the user can retry or cancel.
+  assert.match(flow.snapshotPatch().closeError, /owned by subagent routing/)
+  // The dialog stays open with the same pane, so the user can retry, cancel, or
+  // close without stopping the turn.
   assert.equal(flow.snapshotPatch().pendingClose?.paneId, 'p1')
+  assert.equal(flow.snapshotPatch().closeBusy, false)
+  flow.dispose()
+})
+
+test('force closes the staged pane without stopping its turn', async () => {
+  const { flow, calls } = withFlow({
+    running: true,
+    sessions: sessionsWith({
+      outcome: { ok: false, error: { code: 'session/agent-busy', message: 'owned by subagent routing' } },
+    }),
+  })
+  flow.request('p1')
+  await flow.confirm()
+
+  assert.equal(flow.force(), true)
+  assert.deepEqual(calls.close, ['p1'])
+  assert.deepEqual(flow.snapshotPatch(), { pendingClose: null, closeBusy: false, closeError: null })
+  flow.dispose()
+})
+
+test('force is refused before anything is staged', () => {
+  const { flow, calls } = withFlow({ running: true })
+
+  assert.equal(flow.force(), false)
+  assert.deepEqual(calls.close, [])
+  flow.dispose()
+})
+
+test('a Host that never answers hands control back instead of staying busy', async () => {
+  const { flow } = withFlow({
+    running: true,
+    interruptTimeoutMs: 20,
+    sessions: sessionsWith({ outcome: () => new Promise(() => {}) }),
+  })
+  flow.request('p1')
+
+  assert.equal(await flow.confirm(), false)
+  assert.equal(flow.snapshotPatch().closeBusy, false)
+  assert.match(flow.snapshotPatch().closeError, /did not answer/)
+  assert.equal(flow.snapshotPatch().pendingClose?.paneId, 'p1')
+  flow.dispose()
+})
+
+test('a transport failure rejects into a reported close error, not a rejection', async () => {
+  const { flow, calls } = withFlow({
+    running: true,
+    sessions: sessionsWith({ failWith: new Error('gateway/closed: socket closed') }),
+  })
+  flow.request('p1')
+
+  assert.equal(await flow.confirm(), false)
+  assert.match(flow.snapshotPatch().closeError, /socket closed/)
+  assert.deepEqual(calls.close, [])
   flow.dispose()
 })
 
@@ -134,13 +265,13 @@ test('a pane that went inactive during the interrupt is not closed from a hidden
   const closed = []
   const flow = createCloseFlow({
     sessions: {
-      scope: () => ({
-        get: () => ({
+      binding: () => ({
+        session: {
           cancel: () => {
             live.active = false
             return Promise.resolve({ ok: true })
           },
-        }),
+        },
       }),
     },
     getSnapshot: () => ({ active: live.active }),
@@ -166,13 +297,7 @@ test('a pane that went inactive during the interrupt is not closed from a hidden
 test('cancel dismisses the dialog but refuses while the interrupt is in flight', async () => {
   const { flow } = withFlow({
     running: true,
-    sessions: {
-      scope: () => ({
-        get: () => ({
-          cancel: () => new Promise(() => {}),
-        }),
-      }),
-    },
+    sessions: sessionsWith({ outcome: () => new Promise(() => {}) }),
   })
   flow.request('p1')
   assert.equal(flow.cancel(), true)
@@ -182,6 +307,28 @@ test('cancel dismisses the dialog but refuses while the interrupt is in flight',
   void flow.confirm()
   assert.equal(flow.snapshotPatch().closeBusy, true)
   assert.equal(flow.cancel(), false)
+  flow.dispose()
+})
+
+test('an interrupt that lands after the dialog was dismissed closes nothing', async () => {
+  let finish = () => {}
+  const { flow, calls } = withFlow({
+    running: true,
+    sessions: sessionsWith({
+      outcome: () => new Promise((resolve) => {
+        finish = () => resolve({ ok: true })
+      }),
+    }),
+  })
+  flow.request('p1')
+  const pending = flow.confirm()
+  // A workspace switch (or teardown) drops the staged close while the Host is
+  // still answering; the reply must not reconcile an inactive/other pane.
+  flow.clear()
+  finish()
+
+  assert.equal(await pending, false)
+  assert.deepEqual(calls.close, [])
   flow.dispose()
 })
 

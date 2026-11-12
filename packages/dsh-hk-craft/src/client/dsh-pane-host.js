@@ -249,10 +249,12 @@ function subscribeList(list, listener) {
  * re-runs if the catalog was still loading when the layout was first read.
  *
  * @param {{ sessions: any, layout: any, slots: any, workspaces?: any, get?: (name: string) => any }} ctx
- * @param {{ nextPaneId?: () => string, storage?: any, viewSwitch?: any }} [options]
+ * @param {{ nextPaneId?: () => string, storage?: any, viewSwitch?: any, closeInterruptTimeoutMs?: number }} [options]
  *   `nextPaneId` is a deterministic id factory and `storage` a storage seam for
  *   tests (defaults to `browserStorage()`); `viewSwitch` is the conversation View
- *   adapter (ticket 07 — `dsh-view-switch.js`, tests inject a fake)
+ *   adapter (ticket 07 — `dsh-view-switch.js`, tests inject a fake);
+ *   `closeInterruptTimeoutMs` bounds how long the close confirmation waits for
+ *   the Host's interrupt answer (a test seam, default `pane-close.js`)
  * @returns {any}
  */
 function createPaneController(ctx, options = {}) {
@@ -1259,6 +1261,7 @@ function createPaneController(ctx, options = {}) {
     rowOf,
     isSessionRunning,
     closePane: (paneId) => closePaneValue(paneId),
+    interruptTimeoutMs: options?.closeInterruptTimeoutMs,
   })
 
   // The layout operations and the View switch (`pane-layout.js`). Two faces over
